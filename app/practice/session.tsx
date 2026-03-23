@@ -107,8 +107,11 @@ export default function SessionScreen() {
               editable={!submitted}
               textAlignVertical="top"
               scrollEnabled={false}
+              maxLength={3000}
             />
-            <Text style={styles.charCount}>{answerText.length} characters</Text>
+            <Text style={[styles.charCount, answerText.length >= 2800 && styles.charCountWarn]}>
+              {answerText.length} / 3000
+            </Text>
           </View>
 
           <Button
@@ -164,6 +167,7 @@ const styles = StyleSheet.create({
     lineHeight: 26,
   },
   charCount: { ...text.caption, color: colors.neutral[300], textAlign: 'right', marginTop: 6 },
+  charCountWarn: { color: colors.error },
   errorText: { ...text.bodySm, color: colors.error, textAlign: 'center', marginTop: 12 },
   savedHint: { ...text.caption, color: colors.neutral[300], textAlign: 'center', marginTop: 12 },
 });

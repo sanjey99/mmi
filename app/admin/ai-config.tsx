@@ -212,6 +212,13 @@ export default function AIConfigScreen() {
               autoCorrect={false}
               keyboardType="url"
             />
+            {baseUrl.startsWith('http://') &&
+              !baseUrl.includes('localhost') &&
+              !baseUrl.includes('127.0.0.1') && (
+              <Text style={styles.httpsWarning}>
+                ⚠️ Non-HTTPS URLs are insecure in production. Use HTTPS for remote providers.
+              </Text>
+            )}
           </>
         )}
 
@@ -277,6 +284,7 @@ const styles = StyleSheet.create({
   providerLabelSelected: { color: colors.teal[600] },
   providerDesc: { ...text.caption, color: colors.neutral[500], marginTop: 2 },
 
+  httpsWarning: { ...text.bodySm, color: '#B45309', marginTop: 6 },
   examplesCard: { marginTop: 20, marginBottom: 8 },
   examplesTitle: { ...text.headingSm, color: colors.teal[600], marginBottom: 12 },
   exampleRow: { marginBottom: 10 },

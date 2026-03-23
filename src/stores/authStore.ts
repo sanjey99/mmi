@@ -1,9 +1,10 @@
 import { create } from 'zustand';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Profile } from '../types';
 
 interface AuthState {
-  session: any | null;
+  session: Session | null;
   profile: Profile | null;
   loading: boolean;
   init: () => Promise<void>;
@@ -55,7 +56,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!user) return;
     const { data } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, full_name, avatar_url, university_target, entry_year, daily_goal, streak_current, streak_longest, streak_last_date, onboarding_complete, is_admin, created_at, updated_at')
       .eq('id', user.id)
       .single();
     if (data) set({ profile: data as Profile });
@@ -68,7 +69,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       .from('profiles')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', user.id)
-      .select()
+      .select('id, full_name, avatar_url, university_target, entry_year, daily_goal, streak_current, streak_longest, streak_last_date, onboarding_complete, is_admin, created_at, updated_at')
       .single();
     if (error) throw error;
     if (data) set({ profile: data as Profile });
