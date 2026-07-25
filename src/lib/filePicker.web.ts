@@ -13,11 +13,35 @@ export async function pickFile(
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = mimeTypes.join(',');
+    input.style.display = 'none';
+    document.body.appendChild(input);
+
+    let settled = false;
+    const settle = (value: PickedFile | null) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('focus', onWindowFocus);
+      input.remove();
+      resolve(value);
+    };
+
+    // <input type="file"> has no native 'cancel' event — if the user
+    // dismisses the OS dialog without choosing a file, 'change' never
+    // fires. The dialog closing always refocuses the window, so use
+    // that as the cancel signal: give 'change' a moment to fire first
+    // (it fires before focus returns in every evergreen browser), and
+    // settle to null if no file showed up.
+    const onWindowFocus = () => {
+      setTimeout(() => {
+        if (!settled && !input.files?.length) settle(null);
+      }, 300);
+    };
+    window.addEventListener('focus', onWindowFocus);
 
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) {
-        resolve(null);
+        settle(null);
         return;
       }
 
@@ -26,17 +50,14 @@ export async function pickFile(
         const raw = reader.result as string;
         // readAsDataURL yields "data:<mime>;base64,<data>" — strip the prefix.
         const content = encoding === 'base64' ? raw.split(',')[1] : raw;
-        resolve({ name: file.name, content });
+        settle({ name: file.name, content });
       };
-      reader.onerror = () => resolve(null);
+      reader.onerror = () => settle(null);
 
       if (encoding === 'base64') reader.readAsDataURL(file);
       else reader.readAsText(file);
     };
 
-    // No native 'cancel' event for <input type="file"> in all browsers;
-    // if the user dismisses the dialog without choosing a file, onchange
-    // simply never fires and the promise stays pending until they retry.
     input.click();
   });
 }
