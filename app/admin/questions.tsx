@@ -22,8 +22,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import { pickFile } from '../../src/lib/filePicker';
 import { importQuestionsFromCSV } from '../../src/lib/questions';
 import { Button } from '../../src/components/ui/Button';
 import { Card } from '../../src/components/ui/Card';
@@ -41,24 +40,18 @@ export default function AdminQuestionsScreen() {
 
   const handlePickFile = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/plain', 'application/csv'],
-        copyToCacheDirectory: true,
-      });
+      const picked = await pickFile(['text/csv', 'text/plain', 'application/csv'], 'utf8');
+      if (!picked) return;
 
-      if (result.canceled) return;
-
-      const file = result.assets[0];
-      setFileName(file.name);
+      setFileName(picked.name);
       setStatus('parsing');
       setImportResult(null);
       setErrorMsg(null);
 
-      const content = await FileSystem.readAsStringAsync(file.uri);
-      setCsvContent(content);
+      setCsvContent(picked.content);
 
       // Build a preview (first 3 data rows)
-      const lines = content.split('\n').filter(l => l.trim());
+      const lines = picked.content.split('\n').filter(l => l.trim());
       const headerLine = lines[0] ?? '';
       const previewLines = lines.slice(1, 4);
       setPreview([headerLine, ...previewLines]);

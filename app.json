@@ -22,6 +22,11 @@
       },
       "package": "com.interviewstation.app"
     },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
     "scheme": "interview-station",
     "plugins": [
       "expo-router",
