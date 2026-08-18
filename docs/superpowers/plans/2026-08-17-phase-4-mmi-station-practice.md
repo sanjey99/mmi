@@ -240,7 +240,7 @@ npm test -- --run tests/integration/mmiContentSchema.integration.test.ts
 
 **Purpose:** PostgreSQL RLS filters rows, not columns. A student-safe API must explicitly project allowed fields and prevent relationship expansion or `select('*')` from revealing assessor-only content.
 
-- [ ] Write the text-contract test first and require the migration to revoke direct client access to all assessor-bearing base tables:
+- [x] Write the text-contract test first and require the migration to revoke direct client access to all assessor-bearing base tables:
 
 ```ts
 expect(sql).toMatch(/revoke\s+all\s+on\s+public\.mmi_stations/i);
@@ -249,9 +249,9 @@ expect(sql).toMatch(/model_answer_cached/);
 expect(studentProjection).not.toMatch(/model_answer_cached|actor_persona|background_info/i);
 ```
 
-- [ ] Write integration tests first for authenticated student and authenticated admin JWTs. Both roles must fail to read hidden fields through base-table reads, `select('*')`, guessed IDs, filters, and relationship expansion.
+- [x] Write integration tests first for authenticated student and authenticated admin JWTs. Both roles must fail to read hidden fields through base-table reads, `select('*')`, guessed IDs, filters, and relationship expansion.
 
-- [ ] In the migration, revoke direct `anon`/`authenticated` reads of the base tables and add two `SECURITY DEFINER` RPCs with `SET search_path = public, pg_temp`, explicit authorization, fixed return types, and `REVOKE ALL ... FROM PUBLIC` before granting only `authenticated`:
+- [x] In the migration, revoke direct `anon`/`authenticated` reads of the base tables and add three `SECURITY DEFINER` RPCs with `SET search_path = public, pg_temp`, explicit authorization, fixed return types, and `REVOKE ALL ... FROM PUBLIC` before granting only `authenticated`:
 
 ```sql
 create function public.list_mmi_station_cards(
@@ -338,9 +338,9 @@ as $$
 $$;
 ```
 
-- [ ] Reconcile the sample casts above with the Task 1 catalog result (especially `uni_tags` and status enums) without changing the declared return columns or assessor-field exclusion boundary. Implement AND-combined filters. Search only public title/topic/scenario-preview fields using escaped `ILIKE`; clamp `p_limit` to `1..50`, clamp offset to non-negative, and return a stable `station_kind, station_id` order after the selected user sort.
+- [x] Reconcile the sample casts above with the Task 1 catalog result (especially `uni_tags` and status enums) without changing the declared return columns or assessor-field exclusion boundary. Implement AND-combined filters. Search only public title/topic/scenario-preview fields using escaped `ILIKE`; clamp `p_limit` to `1..50`, clamp offset to non-negative, and return a stable `station_kind, station_id` order after the selected user sort.
 
-- [ ] Add `public.get_mmi_station_preview(p_kind text, p_station_id text)` returning:
+- [x] Add `public.get_mmi_station_preview(p_kind text, p_station_id text)` returning:
 
 ```sql
 (station_kind, station_id, title, category, topic, difficulty,
@@ -349,15 +349,26 @@ $$;
 
 For standard stations, `student_brief` may contain the published scenario. For role-play, it may contain the student-facing title/brief and `opening_line`; it must never contain `actor_persona` or `background_info`. No sub-question text is returned by the preview API.
 
-- [ ] Add `public.get_next_mmi_station_preview(p_kind text, p_station_id text)` using the same safe projection and stable `(title, station_kind, station_id)` ordering. It excludes the current identity, returns the next published card with one wrap at the end, returns no row when no alternative exists, and never creates an attempt. This supports the summary's **Next station** action without becoming an MMI Circuit.
+- [x] Add `public.get_next_mmi_station_preview(p_kind text, p_station_id text)` using the same safe projection and stable `(title, station_kind, station_id)` ordering. It excludes the current identity, returns the next published card with one wrap at the end, returns no row when no alternative exists, and never creates an attempt. This supports the summary's **Next station** action without becoming an MMI Circuit.
 
-- [ ] Add statement-level tests proving `model_answer_cached`, `actor_persona`, `background_info`, rubric text, draft rows, and future prompt text never appear in JSON responses.
+- [x] Add statement-level tests proving `model_answer_cached`, `actor_persona`, `background_info`, rubric text, draft rows, and future prompt text never appear in JSON responses.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
-npm test -- --run tests/mmiStudentContentPolicy.test.ts tests/integration/mmiContentSecurity.integration.test.ts
+MMI_CONTENT_SECURITY_INTEGRATION_REQUIRED=1 npm test -- \
+  tests/mmiStudentContentPolicy.test.ts \
+  tests/integration/mmiContentSecurity.integration.test.ts
 ```
+
+#### Task 2 audit record — 2026-08-18
+
+- TDD RED was captured before the migration existed: all five SQL-contract assertions failed, and the disposable pre-Task-2 database failed all seven RPC behavior assertions because the functions were absent. The direct-denial assertion already passed in the local harness; the hosted Task 1 audit remains the evidence that its broader privilege baseline could expose assessor-bearing columns.
+- A clean disposable local reset applied migrations through `20260817001000_mmi_student_content_api.sql`. With `MMI_CONTENT_SECURITY_INTEGRATION_REQUIRED=1` preventing a missing-credential false pass, the selected Task 2 suite then passed `14/14`, and the complete Node suite passed `19/19` after an explicit, successful reapplication of the Task 2 migration.
+- Authenticated student and admin fixtures were both denied direct base-table reads, guessed-ID reads, hidden-field filters, `select('*')`, and relationship expansion. Anonymous callers were denied all three RPCs. RPC-level `select('*')` returned only the fixed safe tuple, while hidden-field filtering and relationship expansion failed.
+- Discovery returns published standard stations with at least one prompt and published role-play stations only. Filters combine with AND semantics; `%` and `_` are treated literally; limit and offset are clamped; card and next-station ordering is stable. Missing, draft, guessed, and unsupported station identities fail closed.
+- Response assertions recursively checked both field names and synthetic hidden-value markers. No cached model answer, role-play persona/background, rubric marker, draft content, current prompt, or future prompt appeared in a card or preview response.
+- The migration was reviewed as a privilege-hardening change: it contains no table drop, truncation, content-row update/delete, secret value, dependency, or lockfile change. It was not applied to hosted Supabase, and no function, secret, or external resource was deployed or modified.
 
 ---
 
