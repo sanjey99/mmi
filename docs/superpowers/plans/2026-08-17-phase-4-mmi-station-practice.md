@@ -501,9 +501,9 @@ Dimension aggregates average only non-null scores. Do not call an LLM for the su
 
 **Purpose:** Keep business rules testable without React Native, Supabase, or a provider. Client and server types mirror the shared contracts at the top of this plan.
 
-- [ ] Write `mmiContracts.test.ts` first. Cover valid standard and role-play identities and reject blank IDs, unexpected keys, transcripts shorter than 20 or longer than 12,000 Unicode code points, invalid UUID idempotency keys, invalid weights, unknown/duplicated safety-critical omission IDs, and malformed model output. The internal provider result may contain rubric safety-item IDs; the public `MmiAssessment` must contain only mapped student-safe feedback, never `assessor_criterion` or raw rubric text.
+- [x] Write `mmiContracts.test.ts` first. Cover valid standard and role-play identities and reject blank IDs, unexpected keys, transcripts shorter than 20 or longer than 12,000 Unicode code points, invalid UUID idempotency keys, invalid weights, unknown/duplicated safety-critical omission IDs, and malformed model output. The internal provider result may contain rubric safety-item IDs; the public `MmiAssessment` must contain only mapped student-safe feedback, never `assessor_criterion` or raw rubric text.
 
-- [ ] Implement a strict parser that constructs a new object and rejects unknown provider keys rather than spreading untrusted JSON:
+- [x] Implement a strict parser that constructs a new object and rejects unknown provider keys rather than spreading untrusted JSON:
 
 ```ts
 export function parseProviderAssessment(
@@ -514,9 +514,9 @@ export function parseProviderAssessment(
 }
 ```
 
-- [ ] Write `mmiAggregation.test.ts` first for zero-weight dimensions, rounding, all-N/A rejection, and alternate weight distributions.
+- [x] Write `mmiAggregation.test.ts` first for zero-weight dimensions, rounding, all-N/A rejection, and alternate weight distributions.
 
-- [ ] Implement server-owned percentage calculation:
+- [x] Implement server-owned percentage calculation:
 
 ```ts
 export function calculateOverallPct(
@@ -537,7 +537,7 @@ export function calculateOverallPct(
 
 This preserves the existing Interview Station convention documented in `score-answer`: a weighted 1–5 score maps to 20–100% via `score × 20`.
 
-- [ ] Write `mmiMachine.test.ts` first for this explicit lifecycle:
+- [x] Write `mmiMachine.test.ts` first for this explicit lifecycle:
 
 ```text
 idle -> loadingAttempt -> preparing -> readyToRecord -> recording
@@ -547,17 +547,29 @@ any network action -> recoverableError -> its prior retryable state
 in-progress state -> abandoned
 ```
 
-- [ ] Implement pure `transition(state, event): State` using immutable objects. Reject invalid actions, especially `feedback -> submitting`, `feedback -> recording`, and any transition that would resubmit an already scored prompt.
+- [x] Implement pure `transition(state, event): State` using immutable objects. Reject invalid actions, especially `feedback -> submitting`, `feedback -> recording`, and any transition that would resubmit an already scored prompt.
 
-- [ ] Keep the copies in `src/features/mmi/types.ts` and `_shared/mmiContracts.ts` structurally identical. Add a compile-time fixture in the test so drift fails typecheck.
+- [x] Keep the copies in `src/features/mmi/types.ts` and `_shared/mmiContracts.ts` structurally identical. Add a compile-time fixture in the test so drift fails typecheck.
 
-- [ ] Define `MMI_SCORING_CONTRACTS` as an immutable version-keyed registry in `_shared/mmiScoringContract.ts`, initially containing `'2026-08-17.1'` with its UK medical-school assessor instructions and strict response schema/parser version. Attempt creation copies that exact contract into the service-only prompt snapshot. Scoring uses the snapshot plus the matching retained parser; changing instructions/schema requires a new registry entry and eval baseline, and entries referenced by persisted attempts are never overwritten or deleted. Add a compatibility test proving a version-1 attempt still scores after a synthetic version-2 entry becomes current.
+- [x] Define `MMI_SCORING_CONTRACTS` as an immutable version-keyed registry in `_shared/mmiScoringContract.ts`, initially containing `'2026-08-17.1'` with its UK medical-school assessor instructions and strict response schema/parser version. Attempt creation copies that exact contract into the service-only prompt snapshot. Scoring uses the snapshot plus the matching retained parser; changing instructions/schema requires a new registry entry and eval baseline, and entries referenced by persisted attempts are never overwritten or deleted. Add a compatibility test proving a version-1 attempt still scores after a synthetic version-2 entry becomes current.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 npm test -- --run tests/mmiContracts.test.ts tests/mmiMachine.test.ts tests/mmiAggregation.test.ts
 ```
+
+#### Task 4 audit record — 2026-08-20
+
+- Fresh TDD RED mutations first proved that the unsafe provider boundary accepted provider prose, rejected the intended score/code/span shape, and required hidden inputs for public mapping. Subsequent independent-review mutations covered Task 3 persistence drift, caller-forged percentages, N/A score coupling, hostile Unicode, mutable allowlists and snapshots, retained-version catalog expansion, and schema/catalog framework mismatches.
+- `ProviderAssessment` now contains only strict dimension scores, one transcript code-point evidence reference per applicable dimension, clinician-rubric strength/improvement codes, safety-item omission IDs, and an approved framework enum. Exact-key parsers reject prose, extra fields, unknown or duplicate codes, invalid spans, zero-weight scores, and semantically unusable transcripts.
+- `MmiAssessment` is constructed only through an unforgeable server context. Evidence is sliced from the reviewed transcript; strengths, improvements, safety guidance, and framework tips resolve from clinician-approved, version-pinned templates. Provider prose, hidden context, rubric criteria, internal codes/IDs, vocal-delivery claims, and caller-supplied percentages have no public output field or mapping path.
+- Public dimension results serialize exactly as Task 3 requires: `{ score, applicable, evidence, improvement }`. Safety guidance uses the existing student-safe `improvements` field, and the overall percentage is computed internally from validated scores and snapshotted weights.
+- Rubric code/dimension/kind/template mappings live in the already-snapshotted rubric criteria JSON. The immutable `'2026-08-17.1'` scoring snapshot pins its response schema, retained parser, template texts, template kinds, and framework tips. Synthetic later versions prove that adding a new template or changing wording cannot rewrite or invalidate a retained v1 attempt; parser-compatible schemas must have an own pinned tip for every selectable framework.
+- Lifecycle and aggregation stay pure and immutable. Tests explicitly reject `feedback -> submit`, `feedback -> startRecording`, scored resubmission, non-null zero-weight scores, invalid scores, non-unit weight totals, invalid retry provenance, and unsafe prompt progression.
+- Final verification passed: the complete Node suite reported `35/35` passing with three environment-gated Supabase suites visibly skipped; the focused Task 4 suite reported `23/23`; native coverage reported `98.52%` lines, `84.63%` branches, and `98.82%` functions; and the explicit eight-file TypeScript gate produced no diagnostics.
+- A new independent correctness/security review resolved every finding and returned READY with no CRITICAL, HIGH, MEDIUM, or LOW findings. GitNexus reports aggregate CRITICAL blast radius because the eight implementation files introduce foundational contract/registry/lifecycle flows; its refreshed change report is confined to the expected Task 4 symbols and flows.
+- Task 4 changed only its eight declared implementation/test files plus this ledger update. It added no dependency or lockfile change, no secret, and no Task 5 file. Existing dependency advisories and full-repository TypeScript/module-mode warnings are pre-existing and were not changed or suppressed.
 
 ---
 
