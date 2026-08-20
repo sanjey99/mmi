@@ -382,7 +382,7 @@ MMI_CONTENT_SECURITY_INTEGRATION_REQUIRED=1 npm test -- \
 
 **Purpose:** The MMI lifecycle needs its own persistence and authorization model. Client roles receive read-only access to their own safe results; Edge Functions make all state changes with service credentials after JWT authorization.
 
-- [ ] Write RED tests for schema invariants:
+- [x] Write RED tests for schema invariants:
 
   - exactly one rubric target: standard sub-question or role-play station;
   - one active rubric version per target;
@@ -394,7 +394,7 @@ MMI_CONTENT_SECURITY_INTEGRATION_REQUIRED=1 npm test -- \
   - the next prompt is not current until the student explicitly acknowledges feedback;
   - cross-user reads and all direct client writes are denied.
 
-- [ ] Create these enums:
+- [x] Create these enums:
 
 ```sql
 create type public.mmi_station_kind as enum ('standard', 'roleplay');
@@ -405,7 +405,7 @@ create type public.mmi_rubric_status as enum ('draft', 'active', 'retired');
 create type public.mmi_transcript_retention_mode as enum ('account_lifetime', 'fixed_days');
 ```
 
-- [ ] Create `mmi_scoring_rubrics` with:
+- [x] Create `mmi_scoring_rubrics` with:
 
 ```text
 id uuid PK
@@ -423,7 +423,7 @@ created_at / updated_at timestamptz
 
 Use a CHECK for exactly one target, require both clinician-review fields before `active`, add target-specific unique indexes on `(standard_sub_q_id, version)` and `(roleplay_station_id, version)`, and add partial unique indexes so only one `active` rubric exists per target. Validate each safety item as `{ id, assessor_criterion, student_feedback }`, where only `student_feedback` may be copied into a student result. Once a rubric is active or retired, a trigger prevents edits to its criteria, weights, safety items, target, or version; correction requires a new version. Direct client access is denied.
 
-- [ ] Create `mmi_attempts` with:
+- [x] Create `mmi_attempts` with:
 
 ```text
 id uuid PK
@@ -445,25 +445,25 @@ overall_pct numeric nullable CHECK 0..100
 
 Use a CHECK for exactly one station target. `content_snapshot` contains only IDs, content versions, and student-safe display text; never copy hidden actor context or rubric instructions into this client-readable row.
 
-- [ ] Create `mmi_prompt_attempts` with a duplicated `station_kind`, the discriminated prompt identity, nullable reviewed transcript, validated public dimension-result JSON (`applicable` but no exact weights), persisted feedback, pinned rubric ID/version, global scoring-contract version, score percentage, `free_text_purged_at`, and timestamps. Add `UNIQUE (id, station_kind)` to `mmi_attempts` and a composite FK `(attempt_id, station_kind)` so the local CHECK can require `standard_sub_q_id` only when `station_kind = 'standard'` and require it to be null for role-play. Do not attempt a cross-table lookup from a PostgreSQL CHECK; the completion RPC separately verifies the snapshot/attempt relationship while holding the attempt lock.
+- [x] Create `mmi_prompt_attempts` with a duplicated `station_kind`, the discriminated prompt identity, nullable reviewed transcript, validated public dimension-result JSON (`applicable` but no exact weights), persisted feedback, pinned rubric ID/version, global scoring-contract version, score percentage, `free_text_purged_at`, and timestamps. Add `UNIQUE (id, station_kind)` to `mmi_attempts` and a composite FK `(attempt_id, station_kind)` so the local CHECK can require `standard_sub_q_id` only when `station_kind = 'standard'` and require it to be null for role-play. Do not attempt a cross-table lookup from a PostgreSQL CHECK; the completion RPC separately verifies the snapshot/attempt relationship while holding the attempt lock. The persistence trigger also fails closed if result identity, rubric provenance, or scoring-contract version differs from the pinned snapshot.
 
-- [ ] Create service-readable/student-safe `mmi_privacy_notices` with immutable `version`, processor name, notice text, `retention_mode`, nullable positive `retention_days`, `published_at`, and one active version. The active CHECK requires days only for `fixed_days`. Expose it through `public.get_active_mmi_privacy_notice()` with a fixed return type of `(version, processor_name, notice_text, retention_mode, retention_days)`; clients cannot insert/update the table. The RPC returns no row when release privacy configuration is absent, which makes starting an attempt fail closed.
+- [x] Create service-readable/student-safe `mmi_privacy_notices` with immutable `version`, processor name, notice text, `retention_mode`, nullable positive `retention_days`, `published_at`, and one active version. The active CHECK requires days only for `fixed_days`. Expose it through `public.get_active_mmi_privacy_notice()` with a fixed return type of `(version, processor_name, notice_text, retention_mode, retention_days)`; clients cannot insert/update the table. The RPC returns no row when release privacy configuration is absent, which makes starting an attempt fail closed.
 
-- [ ] Create service-only `mmi_attempt_prompt_snapshots` rows at attempt start, keyed by `(attempt_id, prompt_order)`. Each row pins the prompt identity/text, timing, hidden reference/actor context, rubric ID/version, rubric criteria/weights/safety items, content version, global scoring-contract version, and exact immutable global contract/schema snapshot used for that attempt. Revoke all client access so future prompt text, scorer instructions, and assessor context cannot be selected even by the attempt owner.
+- [x] Create service-only `mmi_attempt_prompt_snapshots` rows at attempt start, keyed by `(attempt_id, prompt_order)`. Each row pins the prompt identity/text, timing, hidden reference/actor context, rubric ID/version, rubric criteria/weights/safety items, content version, global scoring-contract version, and exact immutable global contract/schema snapshot used for that attempt. Revoke all client access so future prompt text, scorer instructions, and assessor context cannot be selected even by the attempt owner.
 
-- [ ] Create `mmi_scoring_claims` with `user_id`, `attempt_id`, `idempotency_key uuid`, prompt identity, `request_digest`, status, `lease_token uuid`, `lease_expires_at`, provider-attempt count, safe error code, timestamps, and nullable `prompt_attempt_id`. Never store the raw transcript or provider response body in a claim. Purge expired completed/failed claims after 30 days, after the attempt-level one-submission constraint is authoritative.
+- [x] Create `mmi_scoring_claims` with `user_id`, `attempt_id`, `idempotency_key uuid`, prompt identity, `request_digest`, status, `lease_token uuid`, `lease_expires_at`, provider-attempt count, safe error code, timestamps, and nullable `prompt_attempt_id`. Never store the raw transcript or provider response body in a claim. Purge expired completed/failed claims after 30 days, after the attempt-level one-submission constraint is authoritative.
 
-- [ ] Create service-only `mmi_transcription_events` with `user_id`, `attempt_id`, byte count, MIME type, safe outcome code, and timestamp. It exists only for rate limiting/cost auditing and contains no audio URI, bytes, transcript, or provider body.
+- [x] Create service-only `mmi_transcription_events` with `user_id`, `attempt_id`, byte count, MIME type, safe outcome code, and timestamp. It exists only for rate limiting/cost auditing and contains no audio URI, bytes, transcript, or provider body.
 
-- [ ] Add service-only `claim_mmi_transcription_attempt(p_user_id uuid, p_attempt_id uuid, p_byte_count integer, p_mime_type text)`. It takes a transaction-scoped per-user advisory lock, atomically enforces both count/byte windows across all the user's attempts, and inserts the event before returning its ID. A companion `complete_mmi_transcription_attempt(p_event_id uuid, p_safe_outcome_code text)` records only a safe outcome. Add a cross-attempt concurrency test at the limit boundary.
+- [x] Add service-only `claim_mmi_transcription_attempt(p_user_id uuid, p_attempt_id uuid, p_byte_count integer, p_mime_type text)`. It takes a transaction-scoped per-user advisory lock, atomically enforces both count/byte windows across all the user's attempts, and inserts the event before returning its ID. A companion `complete_mmi_transcription_attempt(p_event_id uuid, p_safe_outcome_code text)` records only a safe outcome. Add a cross-attempt concurrency test at the limit boundary.
 
-- [ ] Create `purge_expired_mmi_private_text()` as a service-only function and schedule it daily with Supabase Cron. It joins each attempt to the immutable notice version that user acknowledged. In `fixed_days` mode it nulls the reviewed transcript and transcript-derived free text (evidence, strengths, improvements, tips) after that notice's configured period while retaining numeric scores and setting `free_text_purged_at`; in `account_lifetime` mode the existing profile cascade is the deletion mechanism. The same job deletes scoring claims and transcription events older than 30 days. Tests must cover both modes and prove no audio was ever present to purge.
+- [x] Create `purge_expired_mmi_private_text()` as a service-only function and schedule it daily with Supabase Cron. It joins each attempt to the immutable notice version that user acknowledged. In `fixed_days` mode it nulls the reviewed transcript and transcript-derived free text (evidence, strengths, improvements, tips) after that notice's configured period while retaining numeric scores and setting `free_text_purged_at`; in `account_lifetime` mode the existing profile cascade is the deletion mechanism. The same job deletes scoring claims and transcription events older than 30 days. Tests must cover both modes and prove no audio was ever present to purge.
 
-- [ ] For every function added in this migration, set a fixed `search_path` and explicitly revoke default execution from `PUBLIC`. Grant `get_active_mmi_privacy_notice()` only to `authenticated`; grant purge/maintenance functions only to `service_role` (the Cron job owner may execute as database owner). Add negative normal-JWT invocation tests.
+- [x] For every function added in this migration, set a fixed `search_path` and explicitly revoke default execution from `PUBLIC`. Grant `get_active_mmi_privacy_notice()` only to `authenticated`; grant purge/maintenance functions only to `service_role` (the Cron job owner may execute as database owner). Add negative normal-JWT invocation tests.
 
-- [ ] Enable RLS. Grant authenticated clients `SELECT` only on their own `mmi_attempts` and `mmi_prompt_attempts`. Add no direct client `INSERT`, `UPDATE`, or `DELETE` policy. Rubrics, prompt snapshots, scoring claims, and transcription events remain service-role only.
+- [x] Enable RLS. Grant authenticated clients `SELECT` only on their own `mmi_attempts` and `mmi_prompt_attempts`. Add no direct client `INSERT`, `UPDATE`, or `DELETE` policy. Rubrics, prompt snapshots, scoring claims, and transcription events remain service-role only.
 
-- [ ] Add deterministic aggregate SQL used at completion:
+- [x] Add deterministic aggregate SQL used at completion:
 
 ```sql
 round(sum(overall_pct)::numeric / nullif(count(*), 0), 1)
@@ -471,7 +471,18 @@ round(sum(overall_pct)::numeric / nullif(count(*), 0), 1)
 
 Dimension aggregates average only non-null scores. Do not call an LLM for the summary.
 
-- [ ] Rerun the persistence tests for GREEN and confirm migrations apply cleanly from an empty local database.
+- [x] Rerun the persistence tests for GREEN and confirm migrations apply cleanly from an empty local database.
+
+#### Task 3 audit record — 2026-08-20
+
+- TDD RED was captured before implementation: all seven SQL-policy assertions failed because the migration was absent, and the disposable Task 2 database failed setup with `PGRST205` because `mmi_privacy_notices` did not exist.
+- After security review, new RED policy assertions drove exact allowlists, NULL-safe snapshot identity, exact `1..N` prompt membership, insert-time result provenance, append-only results, snapshot deletion protection, same-attempt claim foreign keys, lifecycle enforcement, database-normalized retention timestamps, a score-preserving canonical purge transition, purge-state consistency, and indexed bounded retention batches.
+- A clean disposable Task 2 database accepted `20260817002000_mmi_practice_persistence.sql`; the Task 3 integration suite passed `8/8`, the complete Node suite passed `34/34`, and an explicit reapplication of the final migration completed successfully.
+- Database-backed counterexamples reject terminal attempt inserts, cross-attempt completed-claim links, malformed feedback arrays, mismatched discriminated identities, backward progression, incomplete completion, post-completion result edits, future retention timestamps, pre-set or score-changing purge markers, purged-text reintroduction, cross-user reads, direct client writes, and normal-JWT maintenance calls.
+- Retention tests invoke the same function Cron calls and prove fixed-day transcript-derived text is purged while numeric history remains, account-lifetime text remains for profile-cascade deletion, and expired claims/events are deleted. Separate manual catalog inspection found one active daily Cron definition owned by `postgres`; no test claims to have observed a scheduler tick.
+- Catalog inspection confirmed RLS on all seven tables, no client privileges on private tables, authenticated `SELECT` only on attempts/results, fixed-search-path RPCs with the intended execution grants, and no `CREATE` privilege on `public` for `anon`, `authenticated`, or `service_role`. No privacy notice or rubric content was seeded, so release remains fail closed pending approved content.
+- `npx tsc --noEmit` remains red only on pre-existing app, admin import, UI token, RadarChart, and Deno typing failures; no Task 3 file appears in the final diagnostic list.
+- The migration contains no table/schema/database drop, truncation, unscoped content mutation, secret value, dependency, or lockfile change. It was not applied to hosted Supabase, and no function, secret, deployment, or external resource was modified.
 
 ---
 
