@@ -28,10 +28,11 @@ function canonicalJson(value: unknown): string {
 }
 
 export async function normalizeMmiSubmission(input: {
-  promptKind: string; stationId: string; subQuestionId?: string; transcript: string;
+  attemptId: string; promptKind: string; stationId: string; subQuestionId?: string; transcript: string;
 }): Promise<{ transcript: string; digest: string }> {
   const transcript = normalizeReviewedTranscript(input.transcript);
   const payload = canonicalJson({
+    attemptId: input.attemptId,
     promptKind: input.promptKind,
     stationId: input.stationId,
     subQuestionId: input.subQuestionId ?? null,

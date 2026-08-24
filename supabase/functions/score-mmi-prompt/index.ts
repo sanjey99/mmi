@@ -4,7 +4,7 @@ import { callConfiguredProvider, type AiConfig } from '../_shared/aiProvider.ts'
 // @ts-ignore Edge functions deliberately import source TypeScript.
 import { createMmiPublicOutputContext, parseMmiRubric, parseSubmitMmiPromptRequest, toPublicMmiAssessment } from '../_shared/mmiContracts.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
-import { getMmiScoringContract, parseProviderAssessmentForContract } from '../_shared/mmiScoringContract.ts';
+import { getRetainedMmiScoringContract, parseProviderAssessmentForContract } from '../_shared/mmiScoringContract.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
 import { buildMmiScoringSystemPrompt, formatReviewedTranscript, normalizeMmiSubmission } from '../_shared/mmiScoring.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
   let request;
   try { request = parseSubmitMmiPromptRequest(await readBoundedJson(req, 20_000)); }
   catch (error) { return http.json({ code: 'invalid_request' }, error instanceof EdgeRequestError ? error.status : 400); }
-  const normalized = await normalizeMmiSubmission(request);
+  const normalized = await normalizeMmiSubmission({ ...request, attemptId: request.attemptId });
   const service = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: claim, error: claimError } = await service.rpc('claim_mmi_scoring_submission', {
     p_user_id: user.id, p_attempt_id: request.attemptId, p_idempotency_key: request.idempotencyKey,
@@ -84,7 +84,11 @@ Deno.serve(async (req) => {
     if (snapshotError || !snapshot) throw new Error('snapshot_unavailable');
     const pinned = snapshot as Snapshot;
     const rubric = parseMmiRubric({ version: pinned.rubric_version, criteria: pinned.rubric_criteria, dimensionWeights: pinned.rubric_dimension_weights, safetyCriticalItems: pinned.rubric_safety_critical_items });
-    const contract = getMmiScoringContract(pinned.scoring_contract_version);
+    const contract = getRetainedMmiScoringContract(
+      pinned.global_contract_snapshot,
+      pinned.scoring_contract_version,
+      pinned.response_schema_snapshot,
+    );
     const config = await providerConfig(service);
     if (!config) throw new Error('provider_unavailable');
     const outcome = await runMmiScoringOrchestration<Record<string, unknown>, Record<string, unknown>>({

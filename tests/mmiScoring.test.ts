@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 
 const scoringPath = new URL('../supabase/functions/_shared/mmiScoring.ts', import.meta.url).href;
 const { buildMmiScoringSystemPrompt, normalizeMmiSubmission } = await import(scoringPath);
+const contractPath = new URL('../supabase/functions/_shared/mmiScoringContract.ts', import.meta.url).href;
+const { createMmiScoringContractSnapshot, getRetainedMmiScoringContract } = await import(contractPath);
 
 const rubric = {
   version: 7,
@@ -47,16 +49,43 @@ describe('MMI scoring boundary', () => {
 
   it('normalizes equivalent submissions before digesting them', async () => {
     const first = await normalizeMmiSubmission({
-      promptKind: 'standard', stationId: 'station-1', subQuestionId: 'prompt-1',
+      attemptId: 'attempt-1', promptKind: 'standard', stationId: 'station-1', subQuestionId: 'prompt-1',
       transcript: ' I would  explain the plan  clearly. ',
     });
     const second = await normalizeMmiSubmission({
-      promptKind: 'standard', stationId: 'station-1', subQuestionId: 'prompt-1',
+      attemptId: 'attempt-1', promptKind: 'standard', stationId: 'station-1', subQuestionId: 'prompt-1',
       transcript: 'I would explain the plan clearly.',
     });
 
     assert.equal(first.transcript, 'I would explain the plan clearly.');
     assert.equal(first.digest, second.digest);
     assert.match(first.digest, /^[a-f0-9]{64}$/);
+  });
+
+  it('binds the digest to the attempt as well as the complete prompt identity', async () => {
+    const common = {
+      promptKind: 'standard', stationId: 'station-1', subQuestionId: 'prompt-1',
+      transcript: 'I would explain the plan clearly.',
+    };
+    const first = await normalizeMmiSubmission({ ...common, attemptId: 'attempt-1' });
+    const otherAttempt = await normalizeMmiSubmission({ ...common, attemptId: 'attempt-2' });
+    const otherPrompt = await normalizeMmiSubmission({ ...common, attemptId: 'attempt-1', subQuestionId: 'prompt-2' });
+
+    assert.notEqual(first.digest, otherAttempt.digest);
+    assert.notEqual(first.digest, otherPrompt.digest);
+  });
+
+  it('fails closed when the persisted contract version or response schema drifts', () => {
+    const retained = createMmiScoringContractSnapshot('2026-08-17.1');
+    assert.equal(
+      getRetainedMmiScoringContract(retained, retained.version, retained.responseSchema).version,
+      retained.version,
+    );
+    assert.throws(() => getRetainedMmiScoringContract(
+      { ...retained, version: 'unrecognized' }, retained.version, retained.responseSchema,
+    ));
+    assert.throws(() => getRetainedMmiScoringContract(
+      retained, retained.version, { type: 'object', additionalProperties: true },
+    ));
   });
 });

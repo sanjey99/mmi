@@ -301,6 +301,29 @@ export function getMmiScoringContract(version: string, registry: MmiScoringContr
   return contract;
 }
 
+/**
+ * Reads the contract captured with an attempt and proves it remains exactly
+ * compatible with the parser registry. The separate version and schema
+ * columns are redundancy by design: a malformed or swapped snapshot fails
+ * closed before an untrusted provider response can be accepted.
+ */
+export function getRetainedMmiScoringContract(
+  snapshot: unknown,
+  expectedVersion: string,
+  expectedResponseSchema: unknown,
+  registry: MmiScoringContractRegistry = MMI_SCORING_CONTRACTS,
+): MmiScoringContract {
+  const retained = cloneValidatedContract(snapshot, expectedVersion);
+  if (canonicalSerialize(retained.responseSchema) !== canonicalSerialize(expectedResponseSchema)) {
+    throw new Error('Retained MMI response schema does not match its snapshot');
+  }
+  const registered = getMmiScoringContract(expectedVersion, registry);
+  if (canonicalContract(retained) !== canonicalContract(registered)) {
+    throw new Error('Retained MMI scoring contract does not match registry');
+  }
+  return retained;
+}
+
 export function getCurrentMmiScoringContract(
   registry: MmiScoringContractRegistry = MMI_SCORING_CONTRACTS,
   currentVersion: string = CURRENT_MMI_SCORING_CONTRACT_VERSION,

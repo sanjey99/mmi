@@ -44,6 +44,19 @@ describe('MMI scoring deployment contracts', () => {
       assert.match(sql, new RegExp(`FUNCTION public\\.${name}[\\s\\S]*?SECURITY DEFINER[\\s\\S]*?SET search_path = public, pg_temp`, 'i'));
     }
   });
+
+  it('stores complete claim identity, per-provider attempt events, and atomic completion reservations', () => {
+    const sql = readFileSync(migrationPath, 'utf8');
+    for (const fragment of [
+      'ADD COLUMN IF NOT EXISTS station_id TEXT',
+      'ADD COLUMN IF NOT EXISTS prompt_order INTEGER',
+      'ADD COLUMN IF NOT EXISTS completion_reservation_at TIMESTAMPTZ',
+      'CREATE TABLE IF NOT EXISTS public.mmi_scoring_provider_attempts',
+      'INSERT INTO public.mmi_scoring_provider_attempts',
+      'completion_reservation_at = NULL',
+      'pg_advisory_xact_lock(hashtextextended(v_claim.user_id::TEXT, 0))',
+    ]) assert.match(sql, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  });
 });
 
 // This suite deliberately contains no fixture cleanup. A future authorized run may leave
@@ -60,6 +73,10 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
   const args = (attemptId: string, key = randomUUID(), requestDigest = digest) => ({
     p_user_id: ownerId, p_attempt_id: attemptId, p_idempotency_key: key, p_prompt_kind: 'standard',
     p_station_id: ids.standard, p_sub_question_id: ids.standardPrompt1, p_request_digest: requestDigest,
+  });
+  const argsForPrompt = (attemptId: string, subQuestionId: string, key = randomUUID(), requestDigest = digest) => ({
+    p_user_id: ownerId, p_attempt_id: attemptId, p_idempotency_key: key, p_prompt_kind: 'standard',
+    p_station_id: ids.standard, p_sub_question_id: subQuestionId, p_request_digest: requestDigest,
   });
   const assessment = {
     dimensions: Object.fromEntries(['structure', 'ethics', 'communication', 'reflection', 'nhs_awareness'].map((key) => [key, { score: 4, applicable: true, evidence: 'Synthetic evidence', improvement: 'Synthetic improvement' }])),
@@ -90,6 +107,12 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
         standard_sub_q_id: ids.standardPrompt1, request_digest: digest, lease_token: randomUUID(),
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(), provider_attempt_count: 1,
         updated_at: updatedAt,
+      });
+      const { data: claim, error } = await service.from('mmi_scoring_claims').select('id')
+        .eq('attempt_id', attempt.id).eq('user_id', userId).maybeSingle();
+      assert.equal(error, null, error?.message);
+      await insert('mmi_scoring_provider_attempts', {
+        claim_id: (claim as { id: string }).id, user_id: userId, attempted_at: updatedAt,
       });
     }
   }
@@ -156,6 +179,43 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     assert.ok((await service.rpc('fail_mmi_scoring_submission', { p_claim_id: (retry.data as any).claimId, p_lease_token: (retry.data as any).leaseToken, p_safe_error_code: 'scoring_unavailable' })).error);
   });
 
+  it('creates exactly one result, restores a completed replay after Continue, and rejects continuation after final feedback', async () => {
+    const attempt = await activeAttempt('progression');
+    const firstKey = randomUUID();
+    const first = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt1, firstKey, 'c'.repeat(64)));
+    assert.equal(first.error, null, first.error?.message);
+    const firstCompletion = await service.rpc('complete_mmi_scoring_submission', {
+      p_claim_id: (first.data as any).claimId, p_lease_token: (first.data as any).leaseToken,
+      p_transcript: 'A reviewed synthetic transcript with enough safe reasoning.', p_assessment: assessment,
+      p_rubric_id: rubricId, p_rubric_version: 1,
+    });
+    assert.equal(firstCompletion.error, null, firstCompletion.error?.message);
+    assert.equal((firstCompletion.data as any).attemptStatus, 'in_progress');
+    assert.equal((firstCompletion.data as any).hasNextPrompt, true);
+    const beforeContinue = await service.from('mmi_prompt_attempts').select('id').eq('attempt_id', attempt.id);
+    assert.equal(beforeContinue.data?.length, 1);
+
+    const advanced = await service.rpc('advance_mmi_attempt_after_feedback', { p_user_id: ownerId, p_attempt_id: attempt.id });
+    assert.equal(advanced.error, null, advanced.error?.message);
+    assert.equal((advanced.data as any).prompt.order, 2);
+    const replay = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt1, firstKey, 'c'.repeat(64)));
+    assert.equal(replay.error, null, replay.error?.message);
+    assert.equal((replay.data as any).code, 'completed');
+    const afterReplay = await service.from('mmi_prompt_attempts').select('id').eq('attempt_id', attempt.id);
+    assert.equal(afterReplay.data?.length, 1);
+
+    const final = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt2, randomUUID(), 'd'.repeat(64)));
+    assert.equal(final.error, null, final.error?.message);
+    const finalCompletion = await service.rpc('complete_mmi_scoring_submission', {
+      p_claim_id: (final.data as any).claimId, p_lease_token: (final.data as any).leaseToken,
+      p_transcript: 'A final reviewed synthetic transcript with clear reasoning.', p_assessment: assessment,
+      p_rubric_id: rubricId, p_rubric_version: 1,
+    });
+    assert.equal(finalCompletion.error, null, finalCompletion.error?.message);
+    assert.equal((finalCompletion.data as any).attemptStatus, 'completed');
+    assert.ok((await service.rpc('advance_mmi_attempt_after_feedback', { p_user_id: ownerId, p_attempt_id: attempt.id })).error);
+  });
+
   it('rejects an eligible claim after 20 real provider attempts in the rolling hour', async () => {
     const userId = await createRateLimitUser('hourly-cap');
     await seedProviderAttemptClaims(userId, 20);
@@ -203,11 +263,11 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     );
     const rateLimited = [first.data, second.data].find((result: any) => result.code === 'rate_limited') as any;
     assert.equal(rateLimited.retryAfter, 60);
-    const { data, error } = await service.from('mmi_scoring_claims')
-      .select('provider_attempt_count').eq('user_id', userId);
+    const { data, error } = await service.from('mmi_scoring_provider_attempts')
+      .select('id').eq('user_id', userId);
     assert.equal(error, null, error?.message);
     assert.equal(
-      (data ?? []).reduce((total, claim) => total + claim.provider_attempt_count, 0),
+      data?.length,
       20,
     );
   });
