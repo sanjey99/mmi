@@ -312,7 +312,7 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     };
     const preparingId = await start();
     const preparing = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: preparingId })).json();
-    assert.equal(preparing.attempt.phase, 'preparing'); assert.equal('prompt' in preparing, false); assertRealSafeResponse(preparing);
+    assert.equal(preparing.attempt.phase, 'preparing'); assert.ok(Number.isInteger(preparing.remainingSeconds)); assert.ok(preparing.remainingSeconds >= 0 && preparing.remainingSeconds <= 1); assert.equal('prompt' in preparing, false); assertRealSafeResponse(preparing);
     const activeId = await start();
     await service.from('mmi_attempts').update({ preparation_ends_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', activeId);
     await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: activeId });
@@ -331,11 +331,12 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     assert.equal(awaiting.attempt.phase, 'awaiting_continue'); assert.ok(awaiting.feedback); assert.equal('prompt' in awaiting, false); assertRealSafeResponse(awaiting);
     await service.from('mmi_attempts').update({ status: 'completed', phase: 'final_feedback', completed_at: new Date().toISOString(), overall_pct: 60 }).eq('id', scoredId);
     const final = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: scoredId })).json();
-    assert.equal(final.attempt.phase, 'final_feedback'); assert.equal(final.summaryAvailable, true); assertRealSafeResponse(final);
+    assert.equal(final.attempt.phase, 'final_feedback'); assert.ok(final.feedback); assert.equal(final.feedback.overallPct, 60); assert.equal(final.summaryAvailable, true); assertRealSafeResponse(final);
     const completedAbandon = await invoke(ownerToken, 'abandon-mmi-attempt', { attemptId: scoredId });
     assert.equal(completedAbandon.status, 409); assert.deepEqual(await completedAbandon.json(), { code: 'completed_attempt' });
-    const persisted = await service.from('mmi_prompt_attempts').select('id').eq('attempt_id', scoredId);
+    const persisted = await service.from('mmi_prompt_attempts').select('overall_pct').eq('attempt_id', scoredId);
     assert.equal(persisted.data?.length, 1);
+    assert.equal(persisted.data?.[0]?.overall_pct, 60);
   });
 
   it('abandons an owned in-progress attempt idempotently without exposing a score', async () => {
