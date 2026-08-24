@@ -1,0 +1,17 @@
+[functions.score-answer]
+verify_jwt = true
+
+[functions.manage-ai-key]
+verify_jwt = true
+
+[functions.start-mmi-attempt]
+verify_jwt = true
+
+[functions.get-mmi-attempt]
+verify_jwt = true
+
+[functions.reveal-mmi-prompt]
+verify_jwt = true
+
+[functions.abandon-mmi-attempt]
+verify_jwt = true
