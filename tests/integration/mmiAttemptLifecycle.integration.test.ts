@@ -5,6 +5,8 @@ import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode, isDisposableLocalUrl } from './mmiPersistenceFixtures.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { teardownMmiAttemptLifecycleFixtures } from './mmiAttemptLifecycleFixtures.ts';
 
 const root = process.cwd();
 const migrationPath = `${root}/supabase/migrations/20260817002500_mmi_attempt_rpcs.sql`;
@@ -47,6 +49,52 @@ function assertNoHiddenFields(value: unknown) {
 }
 
 describe('MMI authenticated attempt lifecycle contracts', () => {
+  function createTeardownRecordingService() {
+    const calls: string[] = [];
+    const service = {
+      from: (table: string) => ({
+        delete: () => ({
+          in: async (column: string, values: string[]) => { calls.push(`${table}.in(${column},${values.join(',')})`); },
+          or: async (filters: string) => { calls.push(`${table}.or(${filters})`); },
+          like: async (column: string, pattern: string) => { calls.push(`${table}.like(${column},${pattern})`); },
+        }),
+      }),
+      auth: { admin: { deleteUser: async (id: string) => { calls.push(`auth.deleteUser(${id})`); } } },
+    } as unknown as SupabaseClient;
+    return { calls, service };
+  }
+
+  it('preserves lifecycle fixtures for every non-destructive environment', async () => {
+    for (const environment of [
+      {},
+      { MMI_ATTEMPT_LIFECYCLE_PRESERVE_FIXTURES: '1' },
+      { MMI_ATTEMPT_LIFECYCLE_PRESERVE_FIXTURES: 'true' },
+      { MMI_ATTEMPT_LIFECYCLE_PRESERVE_FIXTURE: '1' },
+      { MMI_ATTEMPT_LIFECYCLE_ALLOW_DESTRUCTIVE_CLEANUP: 'DELETE_LOCAL_FIXTURE' },
+    ]) {
+      const { calls, service } = createTeardownRecordingService();
+      await teardownMmiAttemptLifecycleFixtures(service, 'owner', 'other', 'mmi-lifecycle-test', environment);
+      assert.deepEqual(calls, [], JSON.stringify(environment));
+    }
+  });
+
+  it('runs every fixture and admin cleanup only for the destructive sentinel', async () => {
+    const { calls, service } = createTeardownRecordingService();
+    await teardownMmiAttemptLifecycleFixtures(service, 'owner', 'other', 'mmi-lifecycle-test', {
+      MMI_ATTEMPT_LIFECYCLE_ALLOW_DESTRUCTIVE_CLEANUP: 'DELETE_LOCAL_FIXTURES',
+    });
+
+    assert.deepEqual(calls, [
+      'mmi_attempts.in(user_id,owner,other)',
+      'mmi_scoring_rubrics.or(standard_sub_q_id.like.mmi-lifecycle-test%,roleplay_station_id.like.mmi-lifecycle-test%)',
+      'mmi_privacy_notices.like(version,mmi-lifecycle-test%)',
+      'roleplay_stations.like(station_id,mmi-lifecycle-test%)',
+      'mmi_stations.like(station_id,mmi-lifecycle-test%)',
+      'auth.deleteUser(owner)',
+      'auth.deleteUser(other)',
+    ]);
+  });
+
   it('keeps every Edge Function JWT-verified and uses the shared HTTP boundary', () => {
     const config = read(configPath);
     for (const name of ['score-answer', 'manage-ai-key', 'start-mmi-attempt', 'get-mmi-attempt', 'reveal-mmi-prompt', 'abandon-mmi-attempt']) {
@@ -239,13 +287,7 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
 
   after(async () => {
     if (!service) return;
-    await service.from('mmi_attempts').delete().in('user_id', [ownerId, otherId]);
-    await service.from('mmi_scoring_rubrics').delete().or(`standard_sub_q_id.like.${fixturePrefix}%,roleplay_station_id.like.${fixturePrefix}%`);
-    await service.from('mmi_privacy_notices').delete().like('version', `${fixturePrefix}%`);
-    await service.from('roleplay_stations').delete().like('station_id', `${fixturePrefix}%`);
-    await service.from('mmi_stations').delete().like('station_id', `${fixturePrefix}%`);
-    await service.auth.admin.deleteUser(ownerId);
-    await service.auth.admin.deleteUser(otherId);
+    await teardownMmiAttemptLifecycleFixtures(service, ownerId, otherId, fixturePrefix);
   });
 
   it('rejects unauthenticated, draft, missing, and unreviewed starts', async () => {
