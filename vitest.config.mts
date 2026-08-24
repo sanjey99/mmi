@@ -4,7 +4,9 @@ export default defineConfig({
   test: {
     include: [
       'tests/aiConfig.test.ts',
+      'tests/aiProviderSecurity.test.ts',
       'tests/aiKeyWriteOnlyPolicy.test.ts',
+      'tests/edgeHttp.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {

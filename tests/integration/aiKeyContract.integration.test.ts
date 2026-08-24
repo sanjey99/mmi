@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -7,6 +9,7 @@ const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const testAiKey = process.env.SUPABASE_TEST_AI_KEY;
 const enabled = Boolean(url && anonKey && serviceRoleKey);
+const scoreAnswerSource = join(process.cwd(), 'supabase/functions/score-answer/index.ts');
 
 type TestUser = { id: string; client: SupabaseClient; accessToken: string };
 
@@ -88,5 +91,17 @@ run('AI key contract (isolated Supabase project only)', () => {
     });
     expect(response.status).toBe(200);
     expect((await response.json()).overall_pct).toEqual(expect.any(Number));
+  });
+});
+
+describe('score-answer AI key boundary', () => {
+  it('loads ai_api_key only in the server-side configuration query before calling the provider', async () => {
+    const source = await readFile(scoreAnswerSource, 'utf8');
+    const keyReferences = [...source.matchAll(/ai_api_key/g)].map((match) => match.index ?? -1);
+    const serviceClientReference = source.indexOf('const serviceClient = createClient');
+
+    expect(keyReferences).toHaveLength(3);
+    expect(keyReferences.every((index) => index > serviceClientReference)).toBe(true);
+    expect(source).toMatch(/\.in\('key', \['ai_provider', 'ai_model', 'ai_base_url', 'ai_api_key'\]\)/);
   });
 });
