@@ -11,16 +11,20 @@
 import { supabase } from './supabase';
 import type { Question, QuestionCategory, QuestionDifficulty } from '../types';
 import {
-  countQuestionsByCategory,
   pickRandomQuestion,
   type QuestionCounts,
 } from '../features/questions/selection';
 import { parseQuestionCsv } from '../features/questions/csv';
 import type { QuestionDraft } from '../features/questions/validation';
 import {
-  STUDENT_QUESTION_COLUMNS,
-  toStudentQuestion,
-} from '../features/questions/studentProjection';
+  createQuestionRows,
+  fetchQuestionById,
+  fetchQuestionCatalog,
+  fetchQuestionCounts,
+  type QuestionRpcClient,
+} from '../features/questions/api';
+
+const questionRpcClient = supabase as unknown as QuestionRpcClient;
 
 // ── Fetch questions ───────────────────────────────────────────────────────────
 
@@ -30,40 +34,15 @@ export async function getQuestions(opts?: {
   university?: string;
   limit?: number;
 }): Promise<Question[]> {
-  let query = supabase
-    .from('questions')
-    .select(STUDENT_QUESTION_COLUMNS)
-    .eq('is_active', true)
-    .order('created_at', { ascending: false });
-
-  if (opts?.category) query = query.eq('category', opts.category);
-  if (opts?.difficulty) query = query.eq('difficulty', opts.difficulty);
-  if (opts?.university) query = query.contains('university_tags', [opts.university]);
-  if (opts?.limit) query = query.limit(opts.limit);
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data ?? []).map(row => toStudentQuestion(row as unknown as Omit<Question, 'guidance_notes'>));
+  return fetchQuestionCatalog(questionRpcClient, opts);
 }
 
 export async function getQuestionById(questionId: string): Promise<Question | null> {
-  const { data, error } = await supabase
-    .from('questions')
-    .select(STUDENT_QUESTION_COLUMNS)
-    .eq('id', questionId)
-    .eq('is_active', true)
-    .maybeSingle();
-  if (error) throw error;
-  return data ? toStudentQuestion(data as unknown as Omit<Question, 'guidance_notes'>) : null;
+  return fetchQuestionById(questionRpcClient, questionId);
 }
 
 export async function getActiveQuestionCounts(): Promise<QuestionCounts> {
-  const { data, error } = await supabase
-    .from('questions')
-    .select('category')
-    .eq('is_active', true);
-  if (error) throw error;
-  return countQuestionsByCategory((data ?? []) as Pick<Question, 'category'>[]);
+  return fetchQuestionCounts(questionRpcClient);
 }
 
 export async function getRandomQuestion(
@@ -82,13 +61,8 @@ export interface CSVImportResult {
 }
 
 export async function createQuestionDraft(question: QuestionDraft): Promise<string> {
-  const { data, error } = await supabase
-    .from('questions')
-    .insert(question)
-    .select('id')
-    .single();
-  if (error) throw error;
-  return data.id;
+  const [questionId] = await createQuestionRows(questionRpcClient, [question]);
+  return questionId;
 }
 
 /**
@@ -99,10 +73,7 @@ export async function importQuestionsFromCSV(csvText: string): Promise<CSVImport
   const parsed = parseQuestionCsv(csvText);
   if (!parsed.rows.length) return { inserted: 0, errors: parsed.errors };
 
-  const { error } = await supabase
-    .from('questions')
-    .insert(parsed.rows.map(row => row.value));
-  if (error) throw new Error(`DB insert failed: ${error.message}`);
+  await createQuestionRows(questionRpcClient, parsed.rows.map(row => row.value));
 
   return { inserted: parsed.rows.length, errors: parsed.errors };
 }

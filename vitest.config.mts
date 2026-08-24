@@ -19,6 +19,8 @@ export default defineConfig({
       'tests/legacyScoringPolicy.test.ts',
       'tests/questionValidation.test.ts',
       'tests/questionCsv.test.ts',
+      'tests/questionApi.test.ts',
+      'tests/questionApiPolicy.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {
@@ -35,6 +37,7 @@ export default defineConfig({
         'src/features/practice/scoringApi.ts',
         'src/features/questions/validation.ts',
         'src/features/questions/csv.ts',
+        'src/features/questions/api.ts',
       ],
       exclude: [
         'supabase/functions/_shared/mmiContracts.ts',
