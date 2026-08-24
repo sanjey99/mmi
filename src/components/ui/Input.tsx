@@ -54,6 +54,7 @@ export function FloatingInput({ label, error, containerStyle, ...props }: InputP
             onBlur={() => { setFocused(false); if (!hasValue) animateLabel(0); }}
             placeholderTextColor="transparent"
             autoCapitalize="none"
+            accessibilityLabel={label}
             {...props}
           />
         </View>

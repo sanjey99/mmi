@@ -2,7 +2,7 @@
 
 A React Native + Expo app for UK medical school interview preparation. Targets MMI and panel-style interviews, with AI-powered answer scoring across 5 dimensions.
 
-**Target launch:** July 2026 · **Phase:** 3 of 6
+**Current focus:** Stabilise Phases 1–3 · **Next feature:** Phase 4 question-bank browser
 
 ---
 
@@ -24,14 +24,24 @@ npm install
 ### 2. Set up Supabase
 
 1. Create a [Supabase](https://supabase.com) project
-2. Run the migration in **SQL Editor**:
+2. Run migrations in filename order in the **SQL Editor**:
 
 ```bash
-# Copy and paste the contents of:
+# Copy and paste the contents of both files:
 supabase/migrations/001_initial.sql
+supabase/migrations/20260323000000_security_rls.sql
+supabase/migrations/20260805000000_ai_key_write_only.sql
+supabase/migrations/20260805010000_ai_key_function_only_writes.sql
 ```
 
-3. Create `.env` in the project root:
+3. Deploy the AI Edge Functions:
+
+```bash
+supabase functions deploy score-answer
+supabase functions deploy manage-ai-key
+```
+
+4. Create `.env` in the project root:
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -58,7 +68,31 @@ The first admin account can be created by setting `is_admin = true` directly in 
 npm start          # Expo dev server (scan QR with Expo Go)
 npm run android    # Android emulator
 npm run ios        # iOS simulator (Mac only)
+npm run export:web # Static web export to dist/
+npm run test:e2e  # Browser flow (requires an isolated E2E deployment)
 ```
+
+### Integration and E2E test environments
+
+The Supabase contract tests are deliberately opt-in. Never point them at the production project: they create temporary users and replace a test AI key.
+
+```env
+SUPABASE_TEST_URL=https://isolated-test-project.supabase.co
+SUPABASE_TEST_ANON_KEY=...
+SUPABASE_TEST_SERVICE_ROLE_KEY=...
+# Enables the live scoring assertion after an admin replacement.
+SUPABASE_TEST_AI_KEY=...
+
+E2E_BASE_URL=https://isolated-test-web-deployment.example
+E2E_STUDENT_EMAIL=...
+E2E_STUDENT_PASSWORD=...
+```
+
+Apply the migrations and deploy both Edge Functions to that isolated project first. `npm test -- --run` then exercises the Supabase policy/function contract; `npm run test:e2e` checks onboarding → practice → feedback → progress in a browser.
+
+### Production dependency audit
+
+`npm audit --omit=dev` currently reports 21 findings (1 critical, 7 high, 12 moderate, 1 low). The remaining findings are mainly in Expo SDK 55 / React Native tooling dependencies. A clean resolution requires an approved Expo SDK 57 migration; do not run `npm audit fix --force`. The compatible transitive upgrades should be handled as a separate, reviewed lockfile-only change after this uncommitted cleanup is parked.
 
 ---
 
@@ -138,10 +172,10 @@ Valid difficulties: `foundation | intermediate | advanced`
 | Phase | Status | Features |
 |---|---|---|
 | 1 | ✅ Done | Auth, onboarding, home dashboard |
-| 2 | ✅ Done | Practice sessions, AI scoring, feedback |
-| 3 | ✅ Done | Progress tracking, streak calendar, admin panel |
+| 2 | ✅ Code complete | Practice sessions, AI scoring, feedback — deploy Edge Functions/migrations before release |
+| 3 | ✅ Code complete | Progress tracking, streak calendar, admin panel — deploy migrations before release |
 | 4 | 🔜 Next | Full question bank browser (replace "Coming Soon") |
-| 5 | 🔜 | MMI circuit mode (multi-station timed sessions) |
+| 5 | 🔜 | MMI circuit mode (multi-station timed sessions; currently not exposed) |
 | 6 | 🔜 | Tutor marketplace with Stripe payments |
 
 ---

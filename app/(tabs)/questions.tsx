@@ -32,7 +32,7 @@ export default function QuestionsScreen() {
           The question bank UI is being built. The database and admin import tools are already live —
           admins can upload questions via CSV right now.
         </Text>
-        <Text style={styles.cardText} style={{ marginTop: 8 }}>
+        <Text style={[styles.cardText, { marginTop: 8 }]}>
           In the meantime, practice using the random question mode which already draws from the question bank.
         </Text>
       </Card>

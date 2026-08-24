@@ -75,7 +75,10 @@ export default function AdminQuestionsScreen() {
             setStatus('importing');
             try {
               const result = await importQuestionsFromCSV(csvContent);
-              setImportResult(result);
+              setImportResult({
+                imported: result.inserted,
+                errors: result.errors.map(({ row, message }) => `Row ${row}: ${message}`),
+              });
               setStatus('done');
             } catch (e: any) {
               setStatus('error');

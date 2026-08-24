@@ -89,7 +89,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       set({ scoreResult: result, scoring: false });
 
       // 3. Save score to DB
-      await supabase.from('scores').insert({
+      const { error: scoreError } = await supabase.from('scores').insert({
         answer_id: answerData.id,
         structure: result.structure,
         ethics: result.ethics,
@@ -100,6 +100,13 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
         ai_feedback: result.ai_feedback,
         improvement_tip: result.improvement_tip,
       });
+      if (scoreError) throw scoreError;
+
+      const { error: sessionError } = await supabase
+        .from('mock_sessions')
+        .update({ total_score_pct: result.overall_pct })
+        .eq('id', sessionId);
+      if (sessionError) throw sessionError;
 
       // 4. Update streak via DB function
       const userId = (await supabase.auth.getUser()).data.user?.id;
@@ -157,7 +164,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   fetchDimensionAverages: async (userId) => {
     const { data } = await supabase
       .from('scores')
-      .select('structure, ethics, communication, reflection, nhs_awareness')
+      .select('structure, ethics, communication, reflection, nhs_awareness, answers!inner(user_id)')
       .eq('answers.user_id', userId)
       .limit(50);
 

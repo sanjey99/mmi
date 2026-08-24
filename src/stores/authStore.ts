@@ -22,13 +22,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   init: async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    set({ session, loading: false });
+    set({ session });
     if (session) await get().refreshProfile();
+    set({ loading: false });
 
     supabase.auth.onAuthStateChange(async (_event, session) => {
-      set({ session });
-      if (session) await get().refreshProfile();
-      else set({ profile: null });
+      if (session) {
+        set({ session, loading: true });
+        await get().refreshProfile();
+        set({ loading: false });
+      } else {
+        set({ session: null, profile: null, loading: false });
+      }
     });
   },
 

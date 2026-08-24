@@ -1,5 +1,7 @@
 # Blueprint: InterviewStation — Web-First Cross-Platform Support
 
+> **Historical status:** Implemented and merged in commit `d195c38`. The embedded unchecked plan is retained as an implementation record, not a live task list.
+
 ## Problem & Users
 
 InterviewStation is an existing Expo Router / React Native app (SDK 55, RN 0.83.2) for medical-school interview prep (MMI stations, roleplay, panel questions), backed by Supabase. It currently only runs on iOS/Android via Expo Go or native builds, which requires Android Studio locally to preview on Android and gates every tester behind installing a mobile client.

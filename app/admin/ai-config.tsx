@@ -7,8 +7,8 @@
  *   - openai     → OpenAI Chat API (api.openai.com)
  *   - openai_compatible → Any OpenAI-compatible endpoint (Groq, Together, Mistral, Ollama, etc.)
  *
- * Configuration is stored in the `app_config` Supabase table and cached
- * in-memory for 5 minutes. Saving here clears the cache immediately.
+ * Non-secret configuration is stored in `app_config`. The API key is
+ * write-only: it is saved through an Edge Function and never returned here.
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -18,8 +18,7 @@ import {
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../src/lib/supabase';
-import { clearAIConfigCache } from '../../src/lib/ai';
-import { Input } from '../../src/components/ui/Input';
+import { FloatingInput as Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Card } from '../../src/components/ui/Card';
 import { colors, text, layout } from '../../src/theme';
@@ -42,6 +41,7 @@ export default function AIConfigScreen() {
   const [saving, setSaving] = useState(false);
   const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [apiKey, setApiKey] = useState('');
+  const [isConfigured, setIsConfigured] = useState(false);
   const [model, setModel] = useState(DEFAULT_MODELS.anthropic);
   const [baseUrl, setBaseUrl] = useState('');
 
@@ -52,7 +52,7 @@ export default function AIConfigScreen() {
   const loadConfig = async () => {
     setLoading(true);
     try {
-      const keys = ['ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url'];
+      const keys = ['ai_provider', 'ai_model', 'ai_base_url'];
       const { data, error } = await supabase
         .from('app_config')
         .select('key, value')
@@ -61,9 +61,15 @@ export default function AIConfigScreen() {
 
       const map = Object.fromEntries((data ?? []).map((r: any) => [r.key, r.value]));
       if (map.ai_provider) setProvider(map.ai_provider as AIProvider);
-      if (map.ai_api_key) setApiKey(map.ai_api_key);
       if (map.ai_model) setModel(map.ai_model);
       if (map.ai_base_url) setBaseUrl(map.ai_base_url);
+
+      const { data: keyStatus, error: keyStatusError } = await supabase.functions.invoke<{ configured: boolean }>(
+        'manage-ai-key',
+        { body: { action: 'status' } },
+      );
+      if (keyStatusError) throw keyStatusError;
+      setIsConfigured(Boolean(keyStatus?.configured));
     } catch (e: any) {
       Alert.alert('Load failed', e.message);
     } finally {
@@ -78,8 +84,8 @@ export default function AIConfigScreen() {
   };
 
   const handleSave = async () => {
-    if (!apiKey.trim()) {
-      Alert.alert('API Key required', 'Please enter an API key.');
+    if (!apiKey.trim() && !isConfigured) {
+      Alert.alert('API Key required', 'Please enter an API key before saving the initial configuration.');
       return;
     }
     if (!model.trim()) {
@@ -94,10 +100,9 @@ export default function AIConfigScreen() {
     setSaving(true);
     try {
       const upserts = [
-        { key: 'ai_provider', value: provider, description: 'AI provider: anthropic | openai | openai_compatible' },
-        { key: 'ai_api_key', value: apiKey.trim(), description: 'API key for the configured AI provider' },
-        { key: 'ai_model', value: model.trim(), description: 'Model name/ID to use for scoring' },
-        { key: 'ai_base_url', value: baseUrl.trim() || null, description: 'Base URL (openai_compatible only)' },
+        { key: 'ai_provider', value: provider },
+        { key: 'ai_model', value: model.trim() },
+        { key: 'ai_base_url', value: baseUrl.trim() || null },
       ];
 
       const { error } = await supabase
@@ -106,8 +111,15 @@ export default function AIConfigScreen() {
 
       if (error) throw error;
 
-      // Clear the in-memory cache so next call picks up new config
-      clearAIConfigCache();
+      if (apiKey.trim()) {
+        const { data, error: keyError } = await supabase.functions.invoke<{ configured: boolean }>(
+          'manage-ai-key',
+          { body: { apiKey: apiKey.trim() } },
+        );
+        if (keyError) throw keyError;
+        setIsConfigured(Boolean(data?.configured));
+        setApiKey('');
+      }
 
       Alert.alert('Saved', 'AI configuration updated. The new provider will be used immediately.');
     } catch (e: any) {
@@ -118,8 +130,8 @@ export default function AIConfigScreen() {
   };
 
   const handleTestConfig = async () => {
-    if (!apiKey.trim()) {
-      Alert.alert('Enter API key first');
+    if (!apiKey.trim() && !isConfigured) {
+      Alert.alert('Enter and save an API key first');
       return;
     }
     Alert.alert(
@@ -178,6 +190,7 @@ export default function AIConfigScreen() {
         {/* API Key */}
         <Text style={styles.fieldLabel}>API KEY</Text>
         <Input
+          label="API Key"
           value={apiKey}
           onChangeText={setApiKey}
           placeholder={
@@ -189,10 +202,16 @@ export default function AIConfigScreen() {
           autoCapitalize="none"
           autoCorrect={false}
         />
+        <Text style={styles.keyHint}>
+          {isConfigured
+            ? 'An API key is configured. Enter a value only to replace it.'
+            : 'No API key is configured yet.'}
+        </Text>
 
         {/* Model */}
         <Text style={styles.fieldLabel}>MODEL</Text>
         <Input
+          label="Model"
           value={model}
           onChangeText={setModel}
           placeholder={DEFAULT_MODELS[provider]}
@@ -205,6 +224,7 @@ export default function AIConfigScreen() {
           <>
             <Text style={styles.fieldLabel}>BASE URL</Text>
             <Input
+              label="Base URL"
               value={baseUrl}
               onChangeText={setBaseUrl}
               placeholder="https://api.groq.com/openai/v1"
@@ -285,6 +305,7 @@ const styles = StyleSheet.create({
   providerDesc: { ...text.caption, color: colors.neutral[500], marginTop: 2 },
 
   httpsWarning: { ...text.bodySm, color: '#B45309', marginTop: 6 },
+  keyHint: { ...text.caption, color: colors.neutral[500], marginTop: 6 },
   examplesCard: { marginTop: 20, marginBottom: 8 },
   examplesTitle: { ...text.headingSm, color: colors.teal[600], marginBottom: 12 },
   exampleRow: { marginBottom: 10 },
