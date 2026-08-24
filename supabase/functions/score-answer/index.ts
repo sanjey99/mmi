@@ -106,7 +106,11 @@ Deno.serve(async (req) => {
     .gte('created_at', hourAgo);
 
   if ((recentCount ?? 0) >= 50) {
-    return http.json({ error: 'Rate limit exceeded. Maximum 50 answers per hour. Please wait before trying again.' }, 429);
+    return http.json(
+      { error: 'Rate limit exceeded. Maximum 50 answers per hour. Please wait before trying again.' },
+      429,
+      { 'Retry-After': '3600' },
+    );
   }
 
   // 5. Fetch AI config (server-side only — key never sent to client)

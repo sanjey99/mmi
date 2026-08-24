@@ -13,7 +13,7 @@
     "test": "npm run test:node && npm run test:vitest",
     "test:node": "node --test tests/mmi*.test.ts tests/integration/mmi*.integration.test.ts",
     "test:vitest": "vitest run",
-    "test:coverage": "npm run test:node && vitest run --coverage",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 tests/mmi*.test.ts tests/integration/mmi*.integration.test.ts && vitest run --coverage",
     "test:e2e": "playwright test"
   },
   "dependencies": {

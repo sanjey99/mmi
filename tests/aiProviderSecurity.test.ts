@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDER_TIMEOUT_MS,
+  MAX_AI_FEEDBACK_LENGTH,
+  MAX_IMPROVEMENT_TIP_LENGTH,
   MMI_SCORING_CLAIM_LEASE_MS,
   callConfiguredProvider,
   formatScoringUserContent,
@@ -26,8 +28,22 @@ describe('assertSafeProviderUrl', () => {
     'https://[::1]',
     'https://[fc00::1]',
     'https://[fe80::1]',
+    'https://[::ffff:7f00:1]',
+    'https://[fec0::1]',
+    'https://192.0.2.1',
+    'https://198.51.100.1',
+    'https://203.0.113.1',
+    'http://provider.example.test',
+    'https://user:pass@provider.example.test',
+    'https://provider.example.test/v1?endpoint=override',
+    'https://provider.example.test/v1#fragment',
   ])('rejects literal non-public address %s', async (url) => {
-    await expect(assertSafeProviderUrl(url, allowedHosts, publicRecords)).rejects.toThrow('AI_PROVIDER_URL_INVALID');
+    const literalHost = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    await expect(assertSafeProviderUrl(
+      url,
+      new Set([...allowedHosts, literalHost]),
+      publicRecords,
+    )).rejects.toThrow('AI_PROVIDER_URL_INVALID');
   });
 
   it('rejects an allowed hostname when either DNS record resolves to a private address', async () => {
@@ -55,6 +71,31 @@ describe('assertSafeProviderUrl', () => {
       .resolves.toBeInstanceOf(URL);
     await expect(assertSafeProviderUrl('https://provider.example.test:8443/v1', allowedHosts, resolveDns))
       .rejects.toThrow('AI_PROVIDER_URL_INVALID');
+  });
+
+  it.each([
+    '100.64.0.1',
+    '192.0.0.1',
+    '192.88.99.1',
+    '198.18.0.1',
+    '240.0.0.1',
+    '2001:db8::1',
+    '::ffff:7f00:1',
+    'fec0::1',
+  ])('rejects a non-global DNS result %s', async (record) => {
+    await expect(assertSafeProviderUrl(
+      'https://provider.example.test/v1',
+      allowedHosts,
+      async () => [record],
+    )).rejects.toThrow('AI_PROVIDER_URL_INVALID');
+  });
+
+  it('fails closed when DNS returns no records or rejects a record lookup', async () => {
+    await expect(assertSafeProviderUrl('https://provider.example.test/v1', allowedHosts, async () => []))
+      .rejects.toThrow('AI_PROVIDER_URL_INVALID');
+    await expect(assertSafeProviderUrl('https://provider.example.test/v1', allowedHosts, async () => {
+      throw new Error('resolver unavailable');
+    })).rejects.toThrow('AI_PROVIDER_URL_INVALID');
   });
 });
 
@@ -115,6 +156,24 @@ describe('callConfiguredProvider', () => {
     await expect(callConfiguredProvider(customConfig, providerRequest)).resolves.toBe('provider response');
   });
 
+  it('does not fetch when a final DNS revalidation observes a rebinding to a non-global address', async () => {
+    const resolveDns = vi.fn()
+      .mockResolvedValueOnce(['104.18.12.123'])
+      .mockResolvedValueOnce(['2606:4700::6812:c7b'])
+      .mockResolvedValueOnce(['127.0.0.1'])
+      .mockResolvedValueOnce(['2606:4700::6812:c7b']);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { resolveDns, env: { get: () => undefined } });
+
+    await expect(callConfiguredProvider(
+      { provider: 'anthropic', apiKey: ['test', 'key'].join('-'), model: 'claude-test', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).rejects.toThrow('AI_PROVIDER_REQUEST_FAILED');
+    expect(resolveDns).toHaveBeenCalledTimes(4);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('keeps the provider timeout comfortably below the scoring-claim lease', () => {
     expect(AI_PROVIDER_TIMEOUT_MS).toBe(60_000);
     expect(MMI_SCORING_CLAIM_LEASE_MS).toBe(180_000);
@@ -154,5 +213,22 @@ describe('callConfiguredProvider', () => {
       ai_feedback: 'Your answer is clear.',
       improvement_tip: 'Use SPAR.',
     });
+  });
+
+  it.each([
+    { ai_feedback: '   ', improvement_tip: 'Use SPAR.' },
+    { ai_feedback: 'Feedback', improvement_tip: '  Use SPAR.' },
+    { ai_feedback: 'x'.repeat(MAX_AI_FEEDBACK_LENGTH + 1), improvement_tip: 'Use SPAR.' },
+    { ai_feedback: 'Feedback', improvement_tip: 'x'.repeat(MAX_IMPROVEMENT_TIP_LENGTH + 1) },
+  ])('rejects untrimmed, empty, or oversized provider feedback text', (text) => {
+    expect(() => parseLegacyScoreResponse(JSON.stringify({
+      structure: 4,
+      ethics: 3,
+      communication: 4,
+      reflection: 3,
+      nhs_awareness: 2,
+      overall_pct: 64,
+      ...text,
+    }))).toThrow('AI_PROVIDER_RESPONSE_INVALID');
   });
 });

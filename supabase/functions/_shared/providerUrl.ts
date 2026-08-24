@@ -8,35 +8,95 @@ export class ProviderUrlError extends Error {
   }
 }
 
-function isPrivateIpv4(address: string): boolean {
+function parseIpv4(address: string): number | undefined {
   const parts = address.split('.');
-  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part))) return false;
+  if (parts.length !== 4 || parts.some((part) => !/^(0|[1-9]\d{0,2})$/.test(part))) return undefined;
   const octets = parts.map(Number);
-  if (octets.some((octet) => octet > 255)) return true;
-  const [first, second] = octets;
-  return first === 0
-    || first === 10
-    || first === 127
-    || (first === 100 && second >= 64 && second <= 127)
-    || (first === 169 && second === 254)
-    || (first === 172 && second >= 16 && second <= 31)
-    || (first === 192 && second === 168)
-    || (first === 198 && (second === 18 || second === 19))
-    || first >= 224;
+  if (octets.some((octet) => octet > 255)) return undefined;
+  return octets.reduce((result, octet) => (result << 8) | octet, 0) >>> 0;
 }
 
-function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === '::' || normalized === '::1') return true;
-  if (normalized.startsWith('::ffff:')) return isPrivateIpv4(normalized.slice('::ffff:'.length));
-  return normalized.startsWith('fc')
-    || normalized.startsWith('fd')
-    || /^fe[89ab]/.test(normalized)
-    || normalized.startsWith('ff');
+function isGlobalIpv4(address: string): boolean | undefined {
+  const value = parseIpv4(address);
+  if (value === undefined) return undefined;
+  const inRange = (base: number, mask: number) => ((value & mask) >>> 0) === (base >>> 0);
+  return !(
+    inRange(0x00000000, 0xff000000) || inRange(0x0a000000, 0xff000000)
+    || inRange(0x64400000, 0xffc00000) || inRange(0x7f000000, 0xff000000)
+    || inRange(0xa9fe0000, 0xffff0000) || inRange(0xac100000, 0xfff00000)
+    || inRange(0xc0000000, 0xffffff00) || inRange(0xc0000200, 0xffffff00)
+    || inRange(0xc0586300, 0xffffff00) || inRange(0xc0a80000, 0xffff0000)
+    || inRange(0xc6120000, 0xfffe0000) || inRange(0xc6336400, 0xffffff00)
+    || inRange(0xcb007100, 0xffffff00) || value >= 0xe0000000
+  );
 }
 
-export function isPrivateOrSpecialIp(address: string): boolean {
-  return address.includes(':') ? isPrivateIpv6(address) : isPrivateIpv4(address);
+function parseIpv6(address: string): bigint | undefined {
+  const value = address.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!value || value.includes('%') || value.includes(':::')) return undefined;
+  const separator = value.indexOf('::');
+  if (separator !== -1 && separator !== value.lastIndexOf('::')) return undefined;
+  const split = (part: string) => part ? part.split(':') : [];
+  const [leftText, rightText] = separator === -1
+    ? [value, '']
+    : [value.slice(0, separator), value.slice(separator + 2)];
+  const left = split(leftText);
+  const right = split(rightText);
+  const all = [...left, ...right];
+  const dottedIndex = all.findIndex((part) => part.includes('.'));
+  if (dottedIndex !== -1) {
+    if (dottedIndex !== all.length - 1) return undefined;
+    const ipv4 = parseIpv4(all[dottedIndex]);
+    if (ipv4 === undefined) return undefined;
+    all.splice(dottedIndex, 1, ((ipv4 >>> 16) & 0xffff).toString(16), (ipv4 & 0xffff).toString(16));
+  }
+  if (all.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return undefined;
+  const missing = 8 - all.length;
+  if ((separator === -1 && missing !== 0) || (separator !== -1 && missing < 1)) return undefined;
+  const words = separator === -1
+    ? all
+    : [...all.slice(0, left.length), ...Array<string>(missing).fill('0'), ...all.slice(left.length)];
+  if (words.length !== 8) return undefined;
+  return BigInt(`0x${words.map((word) => word.padStart(4, '0')).join('')}`);
+}
+
+function isInIpv6Range(value: bigint, base: string, prefixLength: number): boolean {
+  const parsedBase = parseIpv6(base);
+  if (parsedBase === undefined) return false;
+  const shift = 128n - BigInt(prefixLength);
+  return (value >> shift) === (parsedBase >> shift);
+}
+
+function ipv4FromMappedIpv6(value: bigint): string {
+  const ipv4 = Number(value & 0xffffffffn);
+  return [ipv4 >>> 24, (ipv4 >>> 16) & 0xff, (ipv4 >>> 8) & 0xff, ipv4 & 0xff].join('.');
+}
+
+const NON_GLOBAL_IPV6_RANGES: ReadonlyArray<readonly [string, number]> = [
+  ['::', 128], ['::1', 128], ['64:ff9b:1::', 48], ['100::', 64],
+  ['100:0:0:1::', 64], ['2001::', 23], ['2001:2::', 48], ['2001:10::', 28],
+  ['2001:20::', 28], ['2001:db8::', 32], ['2002::', 16], ['3ffe::', 16],
+  ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
+];
+
+function isGlobalIpv6(address: string): boolean | undefined {
+  const value = parseIpv6(address);
+  if (value === undefined) return undefined;
+  if (isInIpv6Range(value, '::ffff:0:0', 96)) return isGlobalIpv4(ipv4FromMappedIpv6(value)) === true;
+  return !NON_GLOBAL_IPV6_RANGES.some(([base, prefix]) => isInIpv6Range(value, base, prefix));
+}
+
+/** True only for syntactically valid IP literals reserved for non-global use. */
+export function isNonGlobalIpLiteral(address: string): boolean {
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
+  const global = normalized.includes(':') ? isGlobalIpv6(normalized) : isGlobalIpv4(normalized);
+  return global === false;
+}
+
+function isGlobalDnsRecord(address: string): boolean {
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
+  const global = normalized.includes(':') ? isGlobalIpv6(normalized) : isGlobalIpv4(normalized);
+  return global === true;
 }
 
 function normalizeAllowedHosts(allowedHosts: Iterable<string>): Set<string> {
@@ -61,17 +121,9 @@ export async function assertSafeProviderUrl(
 
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (
-    url.protocol !== 'https:'
-    || url.username
-    || url.password
-    || url.port
-    || url.search
-    || url.hash
-    || isPrivateOrSpecialIp(hostname)
-    || !normalizeAllowedHosts(allowedHosts).has(hostname)
-  ) {
-    throw new ProviderUrlError();
-  }
+    url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash
+    || isNonGlobalIpLiteral(hostname) || !normalizeAllowedHosts(allowedHosts).has(hostname)
+  ) throw new ProviderUrlError();
 
   let records: string[];
   try {
@@ -81,6 +133,6 @@ export async function assertSafeProviderUrl(
     throw new ProviderUrlError();
   }
 
-  if (!records.length || records.some(isPrivateOrSpecialIp)) throw new ProviderUrlError();
+  if (!records.length || records.some((record) => !isGlobalDnsRecord(record))) throw new ProviderUrlError();
   return url;
 }

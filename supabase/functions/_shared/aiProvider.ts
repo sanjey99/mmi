@@ -3,6 +3,8 @@ import { assertSafeProviderUrl, type ResolveDns } from './providerUrl.ts';
 
 export const AI_PROVIDER_TIMEOUT_MS = 60_000;
 export const MMI_SCORING_CLAIM_LEASE_MS = 180_000;
+export const MAX_AI_FEEDBACK_LENGTH = 2_000;
+export const MAX_IMPROVEMENT_TIP_LENGTH = 1_000;
 const BUILT_IN_PROVIDER_HOSTS = Object.freeze(['api.anthropic.com', 'api.openai.com']);
 
 export interface AiConfig {
@@ -105,7 +107,16 @@ export function parseLegacyScoreResponse(raw: unknown): LegacyScoreResponse {
   if (!Number.isInteger(record.overall_pct) || (record.overall_pct as number) < 0 || (record.overall_pct as number) > 100) {
     throw new Error('AI_PROVIDER_RESPONSE_INVALID');
   }
-  if (typeof record.ai_feedback !== 'string' || typeof record.improvement_tip !== 'string') {
+  if (
+    typeof record.ai_feedback !== 'string'
+    || !record.ai_feedback
+    || record.ai_feedback !== record.ai_feedback.trim()
+    || record.ai_feedback.length > MAX_AI_FEEDBACK_LENGTH
+    || typeof record.improvement_tip !== 'string'
+    || !record.improvement_tip
+    || record.improvement_tip !== record.improvement_tip.trim()
+    || record.improvement_tip.length > MAX_IMPROVEMENT_TIP_LENGTH
+  ) {
     throw new Error('AI_PROVIDER_RESPONSE_INVALID');
   }
   return {
@@ -132,6 +143,8 @@ export async function callConfiguredProvider(
   let baseUrl: URL;
   try {
     baseUrl = await assertSafeProviderUrl(configuredBaseUrl, providerAllowedHosts(), resolveDenoDns);
+    // `fetch` resolves hostnames independently, so revalidate immediately before it.
+    await assertSafeProviderUrl(configuredBaseUrl, providerAllowedHosts(), resolveDenoDns);
   } catch {
     throw new ProviderRequestError();
   }

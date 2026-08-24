@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { prepareEdgeHttpRequest } from '../supabase/functions/_shared/http';
 
 describe('prepareEdgeHttpRequest', () => {
@@ -65,5 +67,27 @@ describe('prepareEdgeHttpRequest', () => {
     expect(context.response?.status).toBe(405);
     expect(context.response?.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.test');
     expect(context.response?.headers.get('Access-Control-Expose-Headers')).toBe('Retry-After');
+  });
+
+  it('preserves a documented Retry-After value on a rate-limit response', () => {
+    const context = prepareEdgeHttpRequest(
+      new Request('https://functions.example.test/score-answer', { method: 'POST' }),
+      '',
+    );
+    const response = context.json(
+      { error: 'Rate limit exceeded' },
+      429,
+      { 'Retry-After': '3600' },
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('3600');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Retry-After');
+  });
+
+  it('uses the shared Retry-After response path for score-answer rate limits', async () => {
+    const source = await readFile(join(process.cwd(), 'supabase/functions/score-answer/index.ts'), 'utf8');
+
+    expect(source).toContain("{ 'Retry-After': '3600' }");
   });
 });

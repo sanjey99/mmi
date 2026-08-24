@@ -12,6 +12,10 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['supabase/functions/_shared/**/*.ts'],
+      exclude: [
+        'supabase/functions/_shared/mmiContracts.ts',
+        'supabase/functions/_shared/mmiScoringContract.ts',
+      ],
       thresholds: {
         lines: 80,
         functions: 80,
