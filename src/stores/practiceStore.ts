@@ -3,7 +3,6 @@ import { supabase } from '../lib/supabase';
 import { scoreAnswer } from '../lib/ai';
 import { getQuestionById } from '../lib/questions';
 import { restorePracticeSession } from '../features/practice/restoration';
-import { submitLegacyAnswer } from '../features/practice/submission';
 import type { Answer, MockSession, Question, ScoreResult } from '../types';
 
 interface PracticeState {
@@ -25,7 +24,6 @@ interface PracticeState {
   startSession: (userId: string, question: Question) => Promise<string>; // returns sessionId
   restoreSession: (sessionId: string, questionId: string) => Promise<void>;
   submitAnswer: (sessionId: string, questionId: string) => Promise<void>;
-  endSession: (sessionId: string) => Promise<void>;
   clearFeedback: () => void;
 
   // Progress data
@@ -100,7 +98,9 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   submitAnswer: async (sessionId, questionId) => {
     const { answerText, currentQuestion } = get();
     if (!answerText.trim()) throw new Error('Please write an answer before submitting.');
-    if (!currentQuestion) throw new Error('The current question is unavailable.');
+    if (!currentQuestion || currentQuestion.id !== questionId) {
+      throw new Error('The current question is unavailable.');
+    }
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError) throw userError;
@@ -108,75 +108,9 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
 
     set({ scoring: true, scoringError: null });
     try {
-      const result = await submitLegacyAnswer({
-        findAnswer: async (identity) => {
-          const { data, error } = await supabase
-            .from('answers')
-            .select('id, text')
-            .eq('session_id', identity.sessionId)
-            .eq('question_id', identity.questionId)
-            .eq('user_id', identity.userId)
-            .order('created_at', { ascending: true })
-            .limit(1)
-            .maybeSingle();
-          if (error) throw error;
-          return data;
-        },
-        createAnswer: async (input) => {
-          const { data, error } = await supabase
-            .from('answers')
-            .insert({
-              session_id: input.sessionId,
-              question_id: input.questionId,
-              user_id: input.userId,
-              text: input.text,
-            })
-            .select('id, text')
-            .single();
-          if (error) throw error;
-          return data;
-        },
-        findScore: async (answerId) => {
-          const { data, error } = await supabase
-            .from('scores')
-            .select('structure, ethics, communication, reflection, nhs_awareness, overall_pct, ai_feedback, improvement_tip')
-            .eq('answer_id', answerId)
-            .limit(1)
-            .maybeSingle();
-          if (error) throw error;
-          return data as ScoreResult | null;
-        },
-        createScore: async (answerId, score) => {
-          const { error } = await supabase.from('scores').insert({
-            answer_id: answerId,
-            structure: score.structure,
-            ethics: score.ethics,
-            communication: score.communication,
-            reflection: score.reflection,
-            nhs_awareness: score.nhs_awareness,
-            overall_pct: score.overall_pct,
-            ai_feedback: score.ai_feedback,
-            improvement_tip: score.improvement_tip,
-          });
-          if (error) throw error;
-        },
-        finalizeSession: async (ownedSessionId, score) => {
-          const { error: sessionError } = await supabase
-            .from('mock_sessions')
-            .update({ total_score_pct: score.overall_pct })
-            .eq('id', ownedSessionId)
-            .eq('user_id', user.id);
-          if (sessionError) throw sessionError;
-
-          const { error: streakError } = await supabase.rpc('update_streak', { p_user_id: user.id });
-          if (streakError) throw streakError;
-        },
-        scoreAnswer,
-      }, {
-        userId: user.id,
+      const result = await scoreAnswer({
         sessionId,
         questionId,
-        questionText: currentQuestion.text,
         answerText,
       });
 
@@ -186,14 +120,6 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       set({ scoring: false, scoringError: message });
       throw error;
     }
-  },
-
-  endSession: async (sessionId) => {
-    await supabase
-      .from('mock_sessions')
-      .update({ ended_at: new Date().toISOString(), completed: true })
-      .eq('id', sessionId);
-    set({ session: null });
   },
 
   fetchRecentSessions: async (userId) => {

@@ -107,6 +107,8 @@ export function parseLegacyScoreResponse(raw: unknown): LegacyScoreResponse {
   if (!Number.isInteger(record.overall_pct) || (record.overall_pct as number) < 0 || (record.overall_pct as number) > 100) {
     throw new Error('AI_PROVIDER_RESPONSE_INVALID');
   }
+  const computedOverall = Math.round(dimensions.reduce((sum, key) => sum + Number(record[key]), 0) / dimensions.length * 20);
+  if (record.overall_pct !== computedOverall) throw new Error('AI_PROVIDER_RESPONSE_INVALID');
   if (
     typeof record.ai_feedback !== 'string'
     || !record.ai_feedback
@@ -125,7 +127,7 @@ export function parseLegacyScoreResponse(raw: unknown): LegacyScoreResponse {
     communication: record.communication as number,
     reflection: record.reflection as number,
     nhs_awareness: record.nhs_awareness as number,
-    overall_pct: record.overall_pct as number,
+    overall_pct: computedOverall,
     ai_feedback: record.ai_feedback,
     improvement_tip: record.improvement_tip,
   };

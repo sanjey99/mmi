@@ -18,6 +18,7 @@ import { Button } from '../../src/components/ui/Button';
 import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { navigateBackOr } from '../../src/lib/navigation';
+import { LegacyScoringError } from '../../src/features/practice/scoringApi';
 import { colors, text, layout } from '../../src/theme';
 
 const TIME_LIMIT_SECONDS = 8 * 60;
@@ -99,8 +100,8 @@ export default function SessionScreen() {
       router.replace({ pathname: '/practice/feedback', params: { sessionId: routeSessionId } });
     } catch (error) {
       setSubmitted(false);
-      const message = error instanceof Error && error.message.includes('API key not configured')
-        ? 'Scoring is not configured yet. A founder must complete the AI setup before feedback can be generated.'
+      const message = error instanceof LegacyScoringError
+        ? error.message
         : 'Your answer could not be scored. It is safe to try again after checking your connection.';
       setFormError(message);
     }

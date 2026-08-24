@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,13 @@ import {
   TouchableOpacity,
   Animated,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { RadarChart } from '../../src/components/ui/RadarChart';
 import { ScoreDimensionBar, SCORE_COLORS } from '../../src/components/ui/ScoreDimensionBar';
 import { Button } from '../../src/components/ui/Button';
 import { Card } from '../../src/components/ui/Card';
-import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { colors, text, layout } from '../../src/theme';
 
 const DIMENSIONS: { key: keyof typeof SCORE_COLORS; label: string }[] = [
@@ -50,9 +49,7 @@ function ScoreBadge({ percentage }: { percentage: number }) {
 }
 
 export default function FeedbackScreen() {
-  const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
-  const { scoreResult, currentQuestion, answerText, clearFeedback, endSession } = usePracticeStore();
-  const [completionWarning, setCompletionWarning] = useState(false);
+  const { scoreResult, currentQuestion, answerText, clearFeedback } = usePracticeStore();
   const slideAnimation = useRef(new Animated.Value(24)).current;
   const fadeAnimation = useRef(new Animated.Value(0)).current;
 
@@ -67,10 +64,7 @@ export default function FeedbackScreen() {
       Animated.spring(slideAnimation, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
     ]).start();
 
-    if (sessionId) {
-      endSession(sessionId).catch(() => setCompletionWarning(true));
-    }
-  }, [scoreResult, currentQuestion, sessionId]);
+  }, [scoreResult, currentQuestion]);
 
   const handleTryAgain = () => {
     clearFeedback();
@@ -106,14 +100,6 @@ export default function FeedbackScreen() {
               <Text style={styles.title}>Station feedback</Text>
             </View>
           </View>
-
-          {completionWarning ? (
-            <InlineNotice
-              tone="warning"
-              title="Session close pending"
-              message="Your score was returned, but the session status could not be confirmed. Reopen Progress before retrying."
-            />
-          ) : null}
 
           <View style={styles.scorePanel}>
             <ScoreBadge percentage={scoreResult.overall_pct} />
