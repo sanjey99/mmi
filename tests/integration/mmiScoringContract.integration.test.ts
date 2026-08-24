@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires source extensions.
-import { buildMmiPersistenceFixtures, createAuthenticatedTestClient } from './mmiPersistenceFixtures.ts';
+import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, resolveMmiPrivacyNoticeVersion } from './mmiPersistenceFixtures.ts';
 
 const configPath = fileURLToPath(new URL('../../supabase/config.toml', import.meta.url).href);
 const migrationPath = fileURLToPath(new URL('../../supabase/migrations/20260817003000_mmi_submission_rpcs.sql', import.meta.url).href);
@@ -20,6 +20,23 @@ if (url && !disposableLocal) throw new Error('MMI scoring integration tests only
 if (required && (!disposableLocal || !anonKey || !serviceRoleKey)) throw new Error('Required disposable local MMI scoring integration credentials are missing');
 
 describe('MMI scoring deployment contracts', () => {
+  it('reuses the active privacy notice before creating a scoring fixture notice', async () => {
+    let createCalls = 0;
+    const existingVersion = await resolveMmiPrivacyNoticeVersion({
+      findActive: async () => 'existing-active-notice',
+      create: async () => { createCalls += 1; return 'new-fixture-notice'; },
+    });
+    assert.equal(existingVersion, 'existing-active-notice');
+    assert.equal(createCalls, 0);
+
+    const createdVersion = await resolveMmiPrivacyNoticeVersion({
+      findActive: async () => null,
+      create: async () => { createCalls += 1; return 'new-fixture-notice'; },
+    });
+    assert.equal(createdVersion, 'new-fixture-notice');
+    assert.equal(createCalls, 1);
+  });
+
   it('JWT-verifies the scoring and continuation endpoints', () => {
     const config = readFileSync(configPath, 'utf8');
     for (const name of ['score-mmi-prompt', 'continue-mmi-attempt']) {
@@ -101,6 +118,7 @@ const { ids, promptSnapshotRow, safeContentSnapshot, weights, safetyItems } = bu
 
 run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
   let service: SupabaseClient; let ownerId: string; let otherId: string; let rubricId: string;
+  let privacyNoticeVersion: string | undefined;
   const digest = 'a'.repeat(64);
   const args = (attemptId: string, key = randomUUID(), requestDigest = digest) => ({
     p_user_id: ownerId, p_attempt_id: attemptId, p_idempotency_key: key, p_prompt_kind: 'standard',
@@ -171,8 +189,10 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     return completedAt;
   }
   async function activeAttempt(label: string, userId = ownerId, nullCachedAnswer = false) {
+    const resolvedPrivacyNoticeVersion = privacyNoticeVersion;
+    assert.ok(resolvedPrivacyNoticeVersion, 'privacy notice must be resolved before creating attempts');
     const [attempt] = await insert('mmi_attempts', { user_id: userId, station_kind: 'standard', standard_station_id: ids.standard,
-      status: 'in_progress', phase: 'preparing', current_prompt_order: 1, expected_prompt_count: 2, content_snapshot: safeContentSnapshot(), privacy_notice_version: ids.noticeAccount,
+      status: 'in_progress', phase: 'preparing', current_prompt_order: 1, expected_prompt_count: 2, content_snapshot: safeContentSnapshot(), privacy_notice_version: resolvedPrivacyNoticeVersion,
       privacy_notice_acknowledged_at: new Date().toISOString(), started_at: new Date().toISOString() });
     const firstSnapshot = promptSnapshotRow(attempt, 1, rubricId);
     if (nullCachedAnswer) (firstSnapshot as Record<string, unknown>).hidden_reference_answer = null;
@@ -182,12 +202,28 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
   }
   before(async () => {
     service = createClient(url!, serviceRoleKey!, { auth: { persistSession: false } });
+    privacyNoticeVersion = await resolveMmiPrivacyNoticeVersion({
+      findActive: async () => {
+        const { data, error } = await service.from('mmi_privacy_notices')
+          .select('version').eq('is_active', true).maybeSingle();
+        assert.equal(error, null, error?.message);
+        return data?.version ?? null;
+      },
+      create: async () => {
+        const [notice] = await insert('mmi_privacy_notices', {
+          version: ids.noticeAccount, processor_name: 'Synthetic',
+          notice_text: 'Synthetic local notice.', retention_mode: 'account_lifetime',
+          published_at: new Date().toISOString(), is_active: true,
+        });
+        assert.equal(typeof notice?.version, 'string');
+        return notice.version as string;
+      },
+    });
     const password = `Local-only-${randomUUID()}!`;
     ({ userId: ownerId } = await createAuthenticatedTestClient({ service, url: url!, anonKey: anonKey!, password, fixturePrefix, label: 'owner' }));
     ({ userId: otherId } = await createAuthenticatedTestClient({ service, url: url!, anonKey: anonKey!, password, fixturePrefix, label: 'other' }));
     await insert('mmi_stations', { station_id: ids.standard, category: 'ethics', topic: 'Synthetic', difficulty: 'intermediate', prep_time_sec: 1, status: 'draft', scenario_text: 'Synthetic.' });
     await insert('mmi_sub_questions', [{ sub_q_id: ids.standardPrompt1, station_id: ids.standard, order_num: 1, question_text: 'One?', time_limit_sec: 120 }, { sub_q_id: ids.standardPrompt2, station_id: ids.standard, order_num: 2, question_text: 'Two?', time_limit_sec: 120 }]);
-    await insert('mmi_privacy_notices', { version: ids.noticeAccount, processor_name: 'Synthetic', notice_text: 'Synthetic local notice.', retention_mode: 'account_lifetime', published_at: new Date().toISOString(), is_active: true });
     const [rubric] = await insert('mmi_scoring_rubrics', { standard_sub_q_id: ids.standardPrompt1, version: 1, status: 'active', criteria: { summary: 'Synthetic.' }, dimension_weights: weights, safety_critical_items: safetyItems, clinician_reviewed_at: new Date().toISOString(), clinician_reviewed_by: ownerId }); rubricId = rubric.id;
   });
   it('enforces identity, stale order, cross-user ownership, and pinned-rubric fencing', async () => {

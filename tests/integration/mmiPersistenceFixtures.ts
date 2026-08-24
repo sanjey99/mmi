@@ -36,6 +36,14 @@ export async function createAuthenticatedTestClient(params: {
   return { client, userId: data.user.id };
 }
 
+export async function resolveMmiPrivacyNoticeVersion(params: Readonly<{
+  findActive: () => Promise<string | null>;
+  create: () => Promise<string>;
+}>) {
+  const activeVersion = await params.findActive();
+  return activeVersion ?? params.create();
+}
+
 export function buildMmiPersistenceFixtures(fixturePrefix: string) {
   const dimensions = [
     'structure', 'ethics', 'communication', 'reflection', 'nhs_awareness',
