@@ -134,19 +134,24 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
 
   it('drives exported wrappers through an injected Supabase Functions-shaped client', async () => {
     const { createMmiAttemptApi, MmiApiError } = await import('../../src/features/mmi/api' + '.ts') as any;
-    const calls: string[] = [];
-    const api = createMmiAttemptApi(async (name: string) => {
-      calls.push(name);
+    const calls: Array<{ name: string; body: Record<string, unknown> }> = [];
+    const api = createMmiAttemptApi(async (name: string, options: { body: Record<string, unknown> }) => {
+      calls.push({ name, body: options.body });
       if (name === 'reveal-mmi-prompt') return { data: null, error: { context: new Response(JSON.stringify({ code: 'preparation_in_progress', remainingSeconds: 9 }), { status: 409 }) } };
       if (name === 'get-mmi-attempt') return { data: { attempt: { id: 'a' } }, error: null };
-      if (name === 'abandon-mmi-attempt') return { data: null, error: null };
+      if (name === 'abandon-mmi-attempt') return { data: '', error: null };
       return { data: null, error: { context: new Response(JSON.stringify({ code: 'station_unavailable' }), { status: 409 }) } };
     });
     await assert.rejects(() => api.revealMmiPrompt('00000000-0000-4000-8000-000000000000'), (error: unknown) => error instanceof MmiApiError && (error as { code: string; remainingSeconds?: number }).code === 'preparation_in_progress' && (error as { remainingSeconds?: number }).remainingSeconds === 9);
     assert.deepEqual(await api.getMmiAttempt('00000000-0000-4000-8000-000000000000'), { attempt: { id: 'a' } });
     await api.abandonMmiAttempt('00000000-0000-4000-8000-000000000000');
     await assert.rejects(() => api.startMmiAttempt({ stationKind: 'standard', stationId: 'station', privacyNoticeVersion: 'notice' }), (error: unknown) => error instanceof MmiApiError && (error as { code: string }).code === 'station_unavailable');
-    assert.deepEqual(calls, ['reveal-mmi-prompt', 'get-mmi-attempt', 'abandon-mmi-attempt', 'start-mmi-attempt']);
+    assert.deepEqual(calls, [
+      { name: 'reveal-mmi-prompt', body: { attemptId: '00000000-0000-4000-8000-000000000000' } },
+      { name: 'get-mmi-attempt', body: { attemptId: '00000000-0000-4000-8000-000000000000' } },
+      { name: 'abandon-mmi-attempt', body: { attemptId: '00000000-0000-4000-8000-000000000000' } },
+      { name: 'start-mmi-attempt', body: { stationKind: 'standard', stationId: 'station', privacyNoticeVersion: 'notice' } },
+    ]);
   });
 });
 
@@ -181,6 +186,11 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     hiddenBackground: `${fixturePrefix}-HIDDEN_BACKGROUND`,
     hiddenReference: `${fixturePrefix}-HIDDEN_REFERENCE`,
   };
+
+  function assertRealSafeResponse(value: unknown) {
+    assertNoHiddenFields(value);
+    assert.doesNotMatch(JSON.stringify(value), new RegExp(Object.values(markers).join('|')));
+  }
 
   async function insert(table: string, row: Record<string, unknown> | Record<string, unknown>[]) {
     const { data, error } = await service.from(table).insert(row).select();
@@ -258,8 +268,7 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     const response = await invoke(ownerToken, 'start-mmi-attempt', { stationKind: 'roleplay', stationId: ids.roleplay, privacyNoticeVersion: ids.noticeAccount });
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assertNoHiddenFields(payload);
-    assert.doesNotMatch(JSON.stringify(payload), new RegExp(`${markers.hiddenActor}|${markers.hiddenBackground}`));
+    assertRealSafeResponse(payload);
   });
 
   it('hides future prompts and returns the same generic not-found response for guessed cross-user IDs', async () => {
@@ -270,7 +279,7 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     const reveal = await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id });
     assert.equal(reveal.status, 200);
     const revealed = await reveal.json();
-    assertNoHiddenFields(revealed);
+    assertRealSafeResponse(revealed);
     assert.doesNotMatch(JSON.stringify(revealed), new RegExp(markers.future));
     const guessed = await invoke(otherToken, 'get-mmi-attempt', { attemptId: attempt.id });
     const missing = await invoke(otherToken, 'get-mmi-attempt', { attemptId: randomUUID() });
@@ -285,14 +294,48 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     assert.equal(early.status, 409);
     const earlyPayload = await early.json();
     assert.equal(earlyPayload.code, 'preparation_in_progress');
-    assert.equal(typeof earlyPayload.remainingSeconds, 'number');
-    assertNoHiddenFields(earlyPayload);
+    assert.ok(Number.isInteger(earlyPayload.remainingSeconds));
+    assert.ok(earlyPayload.remainingSeconds >= 0 && earlyPayload.remainingSeconds <= 1);
+    assertRealSafeResponse(earlyPayload);
     await service.from('mmi_attempts').update({ preparation_ends_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', attempt.id);
     const first = await (await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id })).json();
     const repeated = await (await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id })).json();
     assert.deepEqual(repeated, first);
     assert.equal(first.prompt.order, 1);
-    assertNoHiddenFields(first);
+    assertRealSafeResponse(first);
+  });
+
+  it('restores each server phase with its exact safe projection and protects completed scores', async () => {
+    const start = async () => {
+      const response = await invoke(ownerToken, 'start-mmi-attempt', { stationKind: 'standard', stationId: ids.standard, privacyNoticeVersion: ids.noticeAccount });
+      return (await response.json() as { attempt: { id: string } }).attempt.id;
+    };
+    const preparingId = await start();
+    const preparing = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: preparingId })).json();
+    assert.equal(preparing.attempt.phase, 'preparing'); assert.equal('prompt' in preparing, false); assertRealSafeResponse(preparing);
+    const activeId = await start();
+    await service.from('mmi_attempts').update({ preparation_ends_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', activeId);
+    await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: activeId });
+    const active = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: activeId })).json();
+    assert.equal(active.attempt.phase, 'prompt_active'); assert.equal(active.prompt.order, 1); assertRealSafeResponse(active);
+
+    const scoredStart = await invoke(ownerToken, 'start-mmi-attempt', { stationKind: 'roleplay', stationId: ids.roleplay, privacyNoticeVersion: ids.noticeAccount });
+    const scoredId = (await scoredStart.json() as { attempt: { id: string } }).attempt.id;
+    await service.from('mmi_attempts').update({ preparation_ends_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', scoredId);
+    await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: scoredId });
+    const snapshot = await service.from('mmi_attempt_prompt_snapshots').select('station_kind,standard_sub_q_id,rubric_id,rubric_version,scoring_contract_version').eq('attempt_id', scoredId).eq('prompt_order', 1).single();
+    const dimensions = Object.fromEntries(['structure', 'ethics', 'communication', 'reflection', 'nhs_awareness'].map((key) => [key, { score: 3, applicable: true, evidence: 'Fixture evidence', improvement: 'Fixture improvement' }]));
+    await service.from('mmi_prompt_attempts').insert({ attempt_id: scoredId, station_kind: snapshot.data?.station_kind, standard_sub_q_id: snapshot.data?.standard_sub_q_id, prompt_order: 1, reviewed_transcript: 'A reviewed synthetic transcript long enough for the fixture.', dimension_results: dimensions, strengths: ['Synthetic strength'], improvements: ['Synthetic improvement'], improvement_tip: 'Synthetic tip', overall_pct: 60, rubric_id: snapshot.data?.rubric_id, rubric_version: snapshot.data?.rubric_version, scoring_contract_version: snapshot.data?.scoring_contract_version });
+    await service.from('mmi_attempts').update({ phase: 'awaiting_continue' }).eq('id', scoredId);
+    const awaiting = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: scoredId })).json();
+    assert.equal(awaiting.attempt.phase, 'awaiting_continue'); assert.ok(awaiting.feedback); assert.equal('prompt' in awaiting, false); assertRealSafeResponse(awaiting);
+    await service.from('mmi_attempts').update({ status: 'completed', phase: 'final_feedback', completed_at: new Date().toISOString(), overall_pct: 60 }).eq('id', scoredId);
+    const final = await (await invoke(ownerToken, 'get-mmi-attempt', { attemptId: scoredId })).json();
+    assert.equal(final.attempt.phase, 'final_feedback'); assert.equal(final.summaryAvailable, true); assertRealSafeResponse(final);
+    const completedAbandon = await invoke(ownerToken, 'abandon-mmi-attempt', { attemptId: scoredId });
+    assert.equal(completedAbandon.status, 409); assert.deepEqual(await completedAbandon.json(), { code: 'completed_attempt' });
+    const persisted = await service.from('mmi_prompt_attempts').select('id').eq('attempt_id', scoredId);
+    assert.equal(persisted.data?.length, 1);
   });
 
   it('abandons an owned in-progress attempt idempotently without exposing a score', async () => {
