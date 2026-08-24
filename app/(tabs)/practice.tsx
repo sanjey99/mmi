@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { getRandomQuestion } from '../../src/lib/questions';
-import { Card } from '../../src/components/ui/Card';
 import { Button } from '../../src/components/ui/Button';
 import { SectionHeader } from '../../src/components/ui/SectionHeader';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
@@ -14,7 +13,6 @@ import type { QuestionCategory } from '../../src/types';
 const MODES = [
   { id: 'practice', icon: '💬', title: 'Free Practice', desc: 'No timer, take your time', timed: false },
   { id: 'timed', icon: '⏱', title: 'Timed Practice', desc: '8 min per question', timed: true },
-  { id: 'mmi', icon: '🔄', title: 'MMI Circuit', desc: '6 stations, timed', timed: true },
 ];
 
 const CATEGORIES: { key: QuestionCategory; icon: string; name: string }[] = [
@@ -43,11 +41,6 @@ export default function PracticeScreen() {
           'No questions yet',
           'The question bank is being built. Check back soon, or ask an admin to upload questions.',
         );
-        return;
-      }
-
-      if (selectedMode === 'mmi') {
-        router.push('/practice/mmi-lobby');
         return;
       }
 

@@ -118,7 +118,6 @@ export function RadarChart({ scores, size = 220 }: RadarChartProps) {
               x={x}
               y={y}
               textAnchor="middle"
-              dominantBaseline="middle"
               fontSize={10}
               fontFamily="DMSans_500Medium"
               fill={colors.primary[700]}

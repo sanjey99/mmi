@@ -1,6 +1,7 @@
-import { Tabs } from 'expo-router';
-import { View, Text, StyleSheet } from 'react-native';
+import { Redirect, Tabs } from 'expo-router';
+import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
 import { colors, text } from '../../src/theme';
+import { useAuthStore } from '../../src/stores/authStore';
 
 function TabIcon({ focused, emoji, label }: { focused: boolean; emoji: string; label: string }) {
   return (
@@ -13,6 +14,18 @@ function TabIcon({ focused, emoji, label }: { focused: boolean; emoji: string; l
 }
 
 export default function TabLayout() {
+  const { session, profile, loading } = useAuthStore();
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color={colors.teal[400]} size="large" />
+      </View>
+    );
+  }
+  if (!session) return <Redirect href="/(auth)/login" />;
+  if (!profile?.onboarding_complete) return <Redirect href="/onboarding" />;
+
   return (
     <Tabs
       screenOptions={{
@@ -61,6 +74,7 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.primary },
   tabItem: { alignItems: 'center', justifyContent: 'center', paddingTop: 4, minWidth: 50 },
   activeDot: {
     position: 'absolute', top: -8,
