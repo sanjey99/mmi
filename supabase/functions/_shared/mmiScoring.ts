@@ -42,6 +42,19 @@ export async function normalizeMmiSubmission(input: {
   return { transcript, digest: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('') };
 }
 
+/** Replays are historical results, never a reflection of the mutable attempt phase. */
+export function reconstructCompletedMmiReplay(input: {
+  promptOrder: number;
+  expectedPromptCount: number;
+}): { attemptStatus: 'in_progress' | 'completed'; hasNextPrompt: boolean } {
+  if (!Number.isInteger(input.promptOrder) || !Number.isInteger(input.expectedPromptCount)
+    || input.promptOrder < 1 || input.expectedPromptCount < input.promptOrder) {
+    throw new Error('Invalid persisted MMI replay identity');
+  }
+  const hasNextPrompt = input.promptOrder < input.expectedPromptCount;
+  return { attemptStatus: hasNextPrompt ? 'in_progress' : 'completed', hasNextPrompt };
+}
+
 /** Builds the private provider instruction. This string must never be returned or logged. */
 export function buildMmiScoringSystemPrompt(input: MmiScoringPromptInput): string {
   return [

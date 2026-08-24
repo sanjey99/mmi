@@ -9,6 +9,7 @@ import { buildMmiPersistenceFixtures, createAuthenticatedTestClient } from './mm
 
 const configPath = fileURLToPath(new URL('../../supabase/config.toml', import.meta.url).href);
 const migrationPath = fileURLToPath(new URL('../../supabase/migrations/20260817003000_mmi_submission_rpcs.sql', import.meta.url).href);
+const scoringHandlerPath = fileURLToPath(new URL('../../supabase/functions/score-mmi-prompt/index.ts', import.meta.url).href);
 const url = process.env.SUPABASE_TEST_URL;
 const required = process.env.MMI_SCORING_INTEGRATION_REQUIRED === '1';
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
@@ -54,8 +55,29 @@ describe('MMI scoring deployment contracts', () => {
       'CREATE TABLE IF NOT EXISTS public.mmi_scoring_provider_attempts',
       'INSERT INTO public.mmi_scoring_provider_attempts',
       'completion_reservation_at = NULL',
-      'pg_advisory_xact_lock(hashtextextended(v_claim.user_id::TEXT, 0))',
+      'completion_reservation_at = clock_timestamp()',
+      "completed_at + INTERVAL '24 hours' AS release_at",
+      'c.lease_expires_at > clock_timestamp()',
+      "a.status = 'in_progress'",
+      'pg_advisory_xact_lock(hashtextextended(v_claim_user::TEXT, 0))',
     ]) assert.match(sql, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  });
+
+  it('uses one advisory-to-claim-to-attempt lock order and exposes the ledger only for service reads/inserts', () => {
+    const sql = readFileSync(migrationPath, 'utf8');
+    for (const name of ['claim_mmi_scoring_submission', 'complete_mmi_scoring_submission', 'fail_mmi_scoring_submission']) {
+      const body = sql.match(new RegExp(`FUNCTION public\\.${name}[\\s\\S]*?\\$function\\$;`, 'i'))?.[0] ?? '';
+      assert.match(body, /pg_advisory_xact_lock[\s\S]*?mmi_scoring_claims[\s\S]*?FOR UPDATE[\s\S]*?mmi_attempts[\s\S]*?FOR UPDATE/i);
+    }
+    assert.match(sql, /REVOKE ALL PRIVILEGES ON TABLE public\.mmi_scoring_provider_attempts FROM PUBLIC, anon, authenticated/i);
+    assert.match(sql, /GRANT SELECT, INSERT ON TABLE public\.mmi_scoring_provider_attempts TO service_role/i);
+    assert.doesNotMatch(sql, /GRANT ALL PRIVILEGES ON TABLE public\.mmi_scoring_provider_attempts/i);
+  });
+
+  it('rebuilds completed replay metadata without querying mutable attempt state in the handler', () => {
+    const handler = readFileSync(scoringHandlerPath, 'utf8');
+    assert.match(handler, /reconstructCompletedMmiReplay\(\{[\s\S]*?promptOrder: claimData\.promptOrder[\s\S]*?expectedPromptCount: claimData\.expectedPromptCount/i);
+    assert.doesNotMatch(handler, /select\('status,current_prompt_order,expected_prompt_count'\)/i);
   });
 });
 
@@ -204,7 +226,10 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     const afterReplay = await service.from('mmi_prompt_attempts').select('id').eq('attempt_id', attempt.id);
     assert.equal(afterReplay.data?.length, 1);
 
-    const final = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt2, randomUUID(), 'd'.repeat(64)));
+    assert.equal((replay.data as any).promptOrder, 1);
+    assert.equal((replay.data as any).expectedPromptCount, 2);
+    const finalKey = randomUUID();
+    const final = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt2, finalKey, 'd'.repeat(64)));
     assert.equal(final.error, null, final.error?.message);
     const finalCompletion = await service.rpc('complete_mmi_scoring_submission', {
       p_claim_id: (final.data as any).claimId, p_lease_token: (final.data as any).leaseToken,
@@ -213,7 +238,26 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     });
     assert.equal(finalCompletion.error, null, finalCompletion.error?.message);
     assert.equal((finalCompletion.data as any).attemptStatus, 'completed');
+    const finalReplay = await service.rpc('claim_mmi_scoring_submission', argsForPrompt(attempt.id, ids.standardPrompt2, finalKey, 'd'.repeat(64)));
+    assert.equal((finalReplay.data as any).code, 'completed');
+    assert.equal((finalReplay.data as any).promptOrder, 2);
+    assert.equal((finalReplay.data as any).expectedPromptCount, 2);
     assert.ok((await service.rpc('advance_mmi_attempt_after_feedback', { p_user_id: ownerId, p_attempt_id: attempt.id })).error);
+  });
+
+  it('keeps retry, failure, and re-claim operations lock-order compatible', async () => {
+    const attempt = await activeAttempt('lock-order-race');
+    const key = randomUUID();
+    const first = await service.rpc('claim_mmi_scoring_submission', args(attempt.id, key));
+    assert.equal(first.error, null, first.error?.message);
+    await service.from('mmi_scoring_claims').update({ lease_expires_at: new Date(Date.now() - 1_000).toISOString() })
+      .eq('id', (first.data as any).claimId);
+    const [failure, reclaimed] = await Promise.all([
+      service.rpc('fail_mmi_scoring_submission', { p_claim_id: (first.data as any).claimId, p_lease_token: (first.data as any).leaseToken, p_safe_error_code: 'scoring_unavailable' }),
+      service.rpc('claim_mmi_scoring_submission', args(attempt.id, key)),
+    ]);
+    assert.ok(failure.error || (failure.data === null));
+    assert.ok(reclaimed.error === null || (reclaimed.data as any).code === 'submission_in_progress' || (reclaimed.data as any).code === 'claimed');
   });
 
   it('rejects an eligible claim after 20 real provider attempts in the rolling hour', async () => {
@@ -227,7 +271,7 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
 
     assert.equal(result.error, null, result.error?.message);
     assert.equal((result.data as any).code, 'rate_limited');
-    assert.equal((result.data as any).retryAfter, 60);
+    assert.ok((result.data as any).retryAfter >= 3_500 && (result.data as any).retryAfter <= 3_600);
   });
 
   it('rejects an eligible claim after 60 completed submissions in the rolling day', async () => {
@@ -241,7 +285,7 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
 
     assert.equal(result.error, null, result.error?.message);
     assert.equal((result.data as any).code, 'rate_limited');
-    assert.equal((result.data as any).retryAfter, 300);
+    assert.ok((result.data as any).retryAfter >= 86_300 && (result.data as any).retryAfter <= 86_400);
   });
 
   it('serializes different attempts so only one claim receives the twentieth hourly allowance', async () => {
@@ -262,7 +306,7 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
       ['claimed', 'rate_limited'],
     );
     const rateLimited = [first.data, second.data].find((result: any) => result.code === 'rate_limited') as any;
-    assert.equal(rateLimited.retryAfter, 60);
+    assert.ok(rateLimited.retryAfter >= 3_500 && rateLimited.retryAfter <= 3_600);
     const { data, error } = await service.from('mmi_scoring_provider_attempts')
       .select('id').eq('user_id', userId);
     assert.equal(error, null, error?.message);

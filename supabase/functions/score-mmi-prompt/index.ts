@@ -2,16 +2,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // @ts-ignore Edge functions deliberately import source TypeScript.
 import { callConfiguredProvider, type AiConfig } from '../_shared/aiProvider.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
-import { createMmiPublicOutputContext, parseMmiRubric, parseSubmitMmiPromptRequest, toPublicMmiAssessment } from '../_shared/mmiContracts.ts';
+import { parseSubmitMmiPromptRequest } from '../_shared/mmiContracts.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
-import { getRetainedMmiScoringContract, parseProviderAssessmentForContract } from '../_shared/mmiScoringContract.ts';
+import { normalizeMmiSubmission, reconstructCompletedMmiReplay } from '../_shared/mmiScoring.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
-import { buildMmiScoringSystemPrompt, formatReviewedTranscript, normalizeMmiSubmission } from '../_shared/mmiScoring.ts';
-// @ts-ignore Edge functions deliberately import source TypeScript.
-import { runMmiScoringOrchestration } from '../_shared/mmiScoringOrchestration.ts';
+import { scoreMmiPromptCore, type MmiScoringHandlerSnapshot } from '../_shared/mmiScoringHandlerCore.ts';
 import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
 
-type Snapshot = {
+type Snapshot = MmiScoringHandlerSnapshot & {
   attempt_id: string; station_kind: 'standard' | 'roleplay'; prompt_order: number;
   prompt_text: string; hidden_reference_answer: string | null; hidden_actor_context: unknown;
   rubric_id: string; rubric_version: number; rubric_criteria: unknown; rubric_dimension_weights: unknown;
@@ -73,8 +71,13 @@ Deno.serve(async (req) => {
       .select('dimension_results,overall_pct,strengths,improvements,improvement_tip,rubric_version')
       .eq('id', claimData.promptAttemptId as string).eq('attempt_id', request.attemptId).maybeSingle();
     if (error || !saved) return http.json({ code: 'scoring_unavailable' }, 409);
-    const { data: attempt } = await service.from('mmi_attempts').select('status,current_prompt_order,expected_prompt_count').eq('id', request.attemptId).eq('user_id', user.id).maybeSingle();
-    return http.json({ assessment: safeAssessment(saved), attemptStatus: attempt?.status === 'completed' ? 'completed' : 'in_progress', hasNextPrompt: Boolean(attempt && attempt.current_prompt_order < attempt.expected_prompt_count), replayed: true });
+    try {
+      const replay = reconstructCompletedMmiReplay({
+        promptOrder: claimData.promptOrder as number,
+        expectedPromptCount: claimData.expectedPromptCount as number,
+      });
+      return http.json({ assessment: safeAssessment(saved), ...replay, replayed: true });
+    } catch { return http.json({ code: 'scoring_unavailable' }, 409); }
   }
   const claimId = claimData.claimId as string; const leaseToken = claimData.leaseToken as string;
   try {
@@ -83,23 +86,13 @@ Deno.serve(async (req) => {
       .eq('attempt_id', request.attemptId).eq('prompt_order', (await service.from('mmi_attempts').select('current_prompt_order').eq('id', request.attemptId).eq('user_id', user.id).single()).data?.current_prompt_order ?? 0).maybeSingle();
     if (snapshotError || !snapshot) throw new Error('snapshot_unavailable');
     const pinned = snapshot as Snapshot;
-    const rubric = parseMmiRubric({ version: pinned.rubric_version, criteria: pinned.rubric_criteria, dimensionWeights: pinned.rubric_dimension_weights, safetyCriticalItems: pinned.rubric_safety_critical_items });
-    const contract = getRetainedMmiScoringContract(
-      pinned.global_contract_snapshot,
-      pinned.scoring_contract_version,
-      pinned.response_schema_snapshot,
-    );
-    const config = await providerConfig(service);
-    if (!config) throw new Error('provider_unavailable');
-    const outcome = await runMmiScoringOrchestration<Record<string, unknown>, Record<string, unknown>>({
+    const outcome = await scoreMmiPromptCore({
       transcript: normalized.transcript,
-      runProvider: async () => await callConfiguredProvider(config, {
-        systemPrompt: buildMmiScoringSystemPrompt({ rubric, hiddenReferenceAnswer: pinned.hidden_reference_answer, hiddenActorContext: pinned.hidden_actor_context, assessorInstructions: contract.assessorInstructions, responseSchema: pinned.response_schema_snapshot }),
-        userContent: formatReviewedTranscript(normalized.transcript), maxTokens: 900,
-      }) as string,
-      parseProvider: (parsed) => {
-        parseProviderAssessmentForContract(parsed, contract, rubric, normalized.transcript);
-        return toPublicMmiAssessment(parsed, normalized.transcript, createMmiPublicOutputContext({ rubric, scoringContractVersion: contract.version, studentFeedbackCatalog: contract.studentFeedbackCatalog })) as unknown as Record<string, unknown>;
+      snapshot: pinned,
+      runProvider: async (providerRequest) => {
+        const config = await providerConfig(service);
+        if (!config) throw new Error('provider_unavailable');
+        return await callConfiguredProvider(config, providerRequest) as string;
       },
       complete: async (assessment) => {
         const { data: completed, error: completeError } = await service.rpc('complete_mmi_scoring_submission', {
@@ -107,7 +100,7 @@ Deno.serve(async (req) => {
           p_assessment: assessment, p_rubric_id: pinned.rubric_id, p_rubric_version: pinned.rubric_version,
         });
         if (completeError || !completed) throw new Error('completion_unavailable');
-        return completed as Record<string, unknown>;
+        return completed as { assessment: typeof assessment; attemptStatus: 'in_progress' | 'completed'; hasNextPrompt: boolean };
       },
       fail: async () => { await service.rpc('fail_mmi_scoring_submission', { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' }); },
     });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 const scoringPath = new URL('../supabase/functions/_shared/mmiScoring.ts', import.meta.url).href;
-const { buildMmiScoringSystemPrompt, normalizeMmiSubmission } = await import(scoringPath);
+const { buildMmiScoringSystemPrompt, normalizeMmiSubmission, reconstructCompletedMmiReplay } = await import(scoringPath);
 const contractPath = new URL('../supabase/functions/_shared/mmiScoringContract.ts', import.meta.url).href;
 const { createMmiScoringContractSnapshot, getRetainedMmiScoringContract } = await import(contractPath);
 
@@ -87,5 +87,15 @@ describe('MMI scoring boundary', () => {
     assert.throws(() => getRetainedMmiScoringContract(
       retained, retained.version, { type: 'object', additionalProperties: true },
     ));
+  });
+
+  it('reconstructs replay state from immutable prompt metadata', () => {
+    assert.deepEqual(reconstructCompletedMmiReplay({ promptOrder: 1, expectedPromptCount: 2 }), {
+      attemptStatus: 'in_progress', hasNextPrompt: true,
+    });
+    assert.deepEqual(reconstructCompletedMmiReplay({ promptOrder: 2, expectedPromptCount: 2 }), {
+      attemptStatus: 'completed', hasNextPrompt: false,
+    });
+    assert.throws(() => reconstructCompletedMmiReplay({ promptOrder: 3, expectedPromptCount: 2 }));
   });
 });
