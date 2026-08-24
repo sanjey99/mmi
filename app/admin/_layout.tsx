@@ -13,7 +13,7 @@ export default function AdminLayout() {
     }
   }, [loading, profile]);
 
-  if (loading || !profile?.is_admin) {
+  if (!profile?.is_admin) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.primary }}>
         <ActivityIndicator color={colors.teal[400]} />
