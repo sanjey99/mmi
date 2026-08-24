@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, Easing } from 'react-native';
-import Svg, { Polygon, Line, Text as SvgText, G } from 'react-native-svg';
+import Svg, { Polygon, Line, Text as SvgText } from 'react-native-svg';
 import { colors } from '../../theme';
 
 interface RadarChartProps {
@@ -119,7 +119,7 @@ export function RadarChart({ scores, size = 220 }: RadarChartProps) {
               y={y}
               textAnchor="middle"
               fontSize={10}
-              fontFamily="DMSans_500Medium"
+              fontFamily="SourceSans3_600SemiBold"
               fill={colors.primary[700]}
             >
               {label}

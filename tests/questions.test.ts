@@ -3,6 +3,7 @@ import {
   countQuestionsByCategory,
   pickRandomQuestion,
 } from '../src/features/questions/selection';
+import { toStudentQuestion } from '../src/features/questions/studentProjection';
 import type { Question } from '../src/types';
 
 const question = (id: string, category: Question['category']): Question => ({
@@ -20,6 +21,17 @@ const question = (id: string, category: Question['category']): Question => ({
 });
 
 describe('question availability', () => {
+  it('maps only student-safe fields and never carries author guidance into practice state', () => {
+    const unsafeRow = {
+      ...question('ethics-safe', 'ethics'),
+      guidance_notes: 'Hidden assessor guidance',
+      is_active: true,
+      updated_at: '2026-08-25T00:00:00.000Z',
+    };
+
+    expect(toStudentQuestion(unsafeRow)).toEqual(question('ethics-safe', 'ethics'));
+  });
+
   it('returns every supported category with a truthful zero default', () => {
     expect(countQuestionsByCategory([
       question('ethics-1', 'ethics'),

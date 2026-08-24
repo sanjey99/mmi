@@ -1,45 +1,47 @@
-/**
- * Admin Dashboard
- *
- * Accessible only to users with `is_admin = true` in their profile.
- * Guard is applied in this file — non-admins are redirected to tabs.
- *
- * From here, admins can:
- *  - Configure the AI provider (api key, model, base_url)
- *  - Upload questions via CSV
- *  - View basic usage stats (future)
- */
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Card } from '../../src/components/ui/Card';
+import { navigateBackOr } from '../../src/lib/navigation';
 import { colors, text, layout } from '../../src/theme';
 
 export default function AdminDashboard() {
-  const profile = useAuthStore(s => s.profile);
+  const profile = useAuthStore(state => state.profile);
 
-  // Redirect non-admins back
   useEffect(() => {
-    if (profile && !profile.is_admin) {
-      router.replace('/(tabs)');
-    }
+    if (profile && !profile.is_admin) router.replace('/(tabs)');
   }, [profile]);
 
   if (!profile?.is_admin) return null;
 
   const AdminCard = ({
-    icon, title, description, onPress,
-  }: { icon: string; title: string; description: string; onPress: () => void }) => (
-    <TouchableOpacity activeOpacity={0.85} onPress={onPress}>
-      <Card style={styles.adminCard} elevated>
-        <Text style={styles.adminIcon}>{icon}</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.adminTitle}>{title}</Text>
-          <Text style={styles.adminDesc}>{description}</Text>
+    code,
+    title,
+    description,
+    onPress,
+  }: {
+    code: string;
+    title: string;
+    description: string;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${description}`}
+    >
+      <Card style={styles.adminCard}>
+        <View style={styles.codePlate}>
+          <Text style={styles.codeText}>{code}</Text>
         </View>
-        <Text style={styles.chevron}>›</Text>
+        <View style={styles.cardCopy}>
+          <Text style={styles.adminTitle}>{title}</Text>
+          <Text style={styles.adminDescription}>{description}</Text>
+        </View>
+        <Text style={styles.enterLabel}>ENTER</Text>
       </Card>
     </TouchableOpacity>
   );
@@ -47,36 +49,43 @@ export default function AdminDashboard() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backText}>‹ Back</Text>
+        <TouchableOpacity
+          onPress={() => navigateBackOr(router, '/(tabs)')}
+          accessibilityRole="button"
+        >
+          <Text style={styles.backText}>Back to orient</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>ADMIN</Text>
-        <View style={{ width: 60 }} />
+        <Text style={styles.headerTitle}>CONTROL DESK</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Admin Panel</Text>
-        <Text style={styles.sub}>Manage AI configuration and question bank.</Text>
+        <Text style={styles.eyebrow}>AUTHORISED PERSONNEL · CLOSED PREVIEW</Text>
+        <Text style={styles.title}>Content operations</Text>
+        <Text style={styles.subtitle}>
+          Prepare practice material and inspect scoring configuration for partner testing.
+        </Text>
+
+        <View style={styles.routeRule} />
 
         <AdminCard
-          icon="🤖"
-          title="AI Configuration"
-          description="Set AI provider, API key, model, and base URL"
-          onPress={() => router.push('/admin/ai-config')}
-        />
-
-        <AdminCard
-          icon="📚"
-          title="Question Bank"
-          description="Import questions via CSV upload"
+          code="Q01"
+          title="Question desk"
+          description="Create one question, review it, or import validated CSV drafts."
           onPress={() => router.push('/admin/questions')}
         />
 
-        <Card variant="teal" style={styles.infoCard}>
-          <Text style={styles.infoTitle}>🔒 Admin Only</Text>
-          <Text style={styles.infoText}>
-            This panel is only visible to accounts with admin access.
-            Contact your system administrator to grant or revoke admin privileges via Supabase.
+        <AdminCard
+          code="C02"
+          title="Scoring configuration"
+          description="Inspect provider and model settings. Key values remain write-only."
+          onPress={() => router.push('/admin/ai-config')}
+        />
+
+        <Card variant="teal" style={styles.noticeCard}>
+          <Text style={styles.noticeLabel}>ACCESS NOTICE</Text>
+          <Text style={styles.noticeText}>
+            This desk is limited to accounts marked as administrators. Role changes remain a controlled Supabase operation.
           </Text>
         </Card>
       </ScrollView>
@@ -87,23 +96,42 @@ export default function AdminDashboard() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg.primary },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: layout.screenPaddingH, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary[800],
   },
-  backText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60 },
+  backText: { ...text.labelMd, color: colors.primary[800], minWidth: 112, textTransform: 'uppercase' },
   headerTitle: { ...text.labelMd, color: colors.primary[800] },
-  title: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 28, color: colors.primary[800], marginBottom: 6 },
-  sub: { ...text.bodyMd, color: colors.neutral[500], marginBottom: 24 },
+  headerSpacer: { width: 112 },
+  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 28, paddingBottom: 48 },
+  eyebrow: { ...text.labelMd, color: colors.neutral[500], marginBottom: 5 },
+  title: { ...text.displayLg, color: colors.primary[800] },
+  subtitle: { ...text.bodyMd, color: colors.neutral[500], lineHeight: 23, marginTop: 5, maxWidth: 620 },
+  routeRule: { height: 8, backgroundColor: colors.teal[400], marginVertical: 24 },
   adminCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 12,
+    borderColor: colors.primary[800],
   },
-  adminIcon: { fontSize: 28 },
-  adminTitle: { ...text.headingSm, color: colors.primary[800], marginBottom: 2 },
-  adminDesc: { ...text.bodySm, color: colors.neutral[500] },
-  chevron: { ...text.headingMd, color: colors.neutral[300], fontSize: 24 },
-  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 20, paddingBottom: 48 },
-  infoCard: { marginTop: 8 },
-  infoTitle: { ...text.headingSm, color: colors.teal[600], marginBottom: 6 },
-  infoText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 22 },
+  codePlate: {
+    width: 58,
+    height: 58,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary[800],
+  },
+  codeText: { ...text.headingMd, color: colors.bg.white },
+  cardCopy: { flex: 1 },
+  adminTitle: { ...text.headingMd, color: colors.primary[800], marginBottom: 2 },
+  adminDescription: { ...text.bodySm, color: colors.neutral[500], lineHeight: 19 },
+  enterLabel: { ...text.labelMd, color: colors.neutral[500] },
+  noticeCard: { marginTop: 12 },
+  noticeLabel: { ...text.labelMd, color: colors.teal[600], marginBottom: 6 },
+  noticeText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 22 },
 });

@@ -17,6 +17,10 @@ import {
 } from '../features/questions/selection';
 import { parseQuestionCsv } from '../features/questions/csv';
 import type { QuestionDraft } from '../features/questions/validation';
+import {
+  STUDENT_QUESTION_COLUMNS,
+  toStudentQuestion,
+} from '../features/questions/studentProjection';
 
 // ── Fetch questions ───────────────────────────────────────────────────────────
 
@@ -28,7 +32,7 @@ export async function getQuestions(opts?: {
 }): Promise<Question[]> {
   let query = supabase
     .from('questions')
-    .select('*')
+    .select(STUDENT_QUESTION_COLUMNS)
     .eq('is_active', true)
     .order('created_at', { ascending: false });
 
@@ -39,18 +43,18 @@ export async function getQuestions(opts?: {
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as Question[];
+  return (data ?? []).map(row => toStudentQuestion(row as unknown as Omit<Question, 'guidance_notes'>));
 }
 
 export async function getQuestionById(questionId: string): Promise<Question | null> {
   const { data, error } = await supabase
     .from('questions')
-    .select('*')
+    .select(STUDENT_QUESTION_COLUMNS)
     .eq('id', questionId)
     .eq('is_active', true)
     .maybeSingle();
   if (error) throw error;
-  return data as Question | null;
+  return data ? toStudentQuestion(data as unknown as Omit<Question, 'guidance_notes'>) : null;
 }
 
 export async function getActiveQuestionCounts(): Promise<QuestionCounts> {

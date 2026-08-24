@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   label: {
     position: 'absolute',
     left: 16,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: 'SourceSans3_400Regular',
     letterSpacing: 0.3,
   },
   input: {
