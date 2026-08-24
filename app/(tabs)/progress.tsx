@@ -55,7 +55,7 @@ export default function ProgressScreen() {
       </Card>
 
       {/* Streak calendar */}
-      <SectionHeader title="March Calendar" />
+      <SectionHeader title="Last 30 Days" />
       <Card>
         <View style={styles.calGrid}>
           {streakData.map((d, i) => {

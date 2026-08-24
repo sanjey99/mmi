@@ -7,7 +7,14 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "node --test"
+    "export:web": "expo export --platform web",
+    "build": "npm run export:web",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:node && npm run test:vitest",
+    "test:node": "node --test tests/mmi*.test.ts tests/integration/mmi*.integration.test.ts",
+    "test:vitest": "vitest run",
+    "test:coverage": "npm run test:node && vitest run --coverage",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.2.3",
@@ -43,7 +50,10 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@playwright/test": "^1.62.1",
     "@types/react": "~19.2.10",
-    "typescript": "^5.3.3"
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.10"
   }
 }

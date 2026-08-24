@@ -1,5 +1,7 @@
 # Web-First Cross-Platform Support Implementation Plan
 
+> **Historical status:** Implemented and merged in commit `d195c38`. The unchecked boxes below are preserved as the original execution record, not current status.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make InterviewStation runnable in a browser (for cost-free testing/rollout) using the *same* React Native codebase that already targets iOS/Android, with zero platform forks beyond one file-I/O abstraction.
