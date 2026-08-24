@@ -28,14 +28,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.white,
     borderRadius: layout.cardRadius,
     padding: layout.cardPadding,
-    ...shadows.sm,
+    borderWidth: 1,
+    borderColor: colors.primary[200],
   },
   cardTeal: {
     backgroundColor: colors.teal[100],
-    borderLeftWidth: 3,
-    borderLeftColor: colors.teal[400],
+    borderColor: colors.teal[600],
   },
   cardNavy: {
     backgroundColor: colors.primary[800],
+    borderColor: colors.primary[800],
   },
 });

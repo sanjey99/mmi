@@ -7,11 +7,16 @@ export default defineConfig({
       'tests/aiProviderSecurity.test.ts',
       'tests/aiKeyWriteOnlyPolicy.test.ts',
       'tests/edgeHttp.test.ts',
+      'tests/uiContracts.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {
       provider: 'v8',
-      include: ['supabase/functions/_shared/**/*.ts'],
+      include: [
+        'supabase/functions/_shared/**/*.ts',
+        'src/theme/designTokens.ts',
+        'src/navigation/tabConfig.ts',
+      ],
       exclude: [
         'supabase/functions/_shared/mmiContracts.ts',
         'supabase/functions/_shared/mmiScoringContract.ts',

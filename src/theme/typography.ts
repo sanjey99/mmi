@@ -1,21 +1,22 @@
 import { StyleSheet } from 'react-native';
+import { corridorTypography } from './designTokens';
 
 export const fonts = {
-  display: 'DMSerifDisplay_400Regular',
-  body: 'DMSans_400Regular',
-  bodyMedium: 'DMSans_500Medium',
-  bodyBold: 'DMSans_700Bold',
+  display: corridorTypography.wayfindingBold,
+  body: corridorTypography.reading,
+  bodyMedium: corridorTypography.readingMedium,
+  bodyBold: corridorTypography.readingMedium,
 };
 
 export const text = StyleSheet.create({
-  displayXl: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 30, lineHeight: 38 },
-  displayLg: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 24, lineHeight: 32 },
-  headingLg: { fontFamily: 'DMSans_700Bold', fontSize: 22, lineHeight: 28 },
-  headingMd: { fontFamily: 'DMSans_700Bold', fontSize: 18, lineHeight: 24 },
-  headingSm: { fontFamily: 'DMSans_700Bold', fontSize: 15, lineHeight: 20 },
-  bodyLg: { fontFamily: 'DMSans_400Regular', fontSize: 17, lineHeight: 26 },
-  bodyMd: { fontFamily: 'DMSans_400Regular', fontSize: 15, lineHeight: 22 },
-  bodySm: { fontFamily: 'DMSans_400Regular', fontSize: 13, lineHeight: 18 },
-  labelMd: { fontFamily: 'DMSans_500Medium', fontSize: 11, lineHeight: 16, letterSpacing: 1.4 },
-  caption: { fontFamily: 'DMSans_400Regular', fontSize: 12, lineHeight: 16 },
+  displayXl: { fontFamily: corridorTypography.wayfindingBold, fontSize: 42, lineHeight: 44, letterSpacing: -0.6 },
+  displayLg: { fontFamily: corridorTypography.wayfindingBold, fontSize: 32, lineHeight: 36, letterSpacing: -0.3 },
+  headingLg: { fontFamily: corridorTypography.wayfindingBold, fontSize: 26, lineHeight: 30, letterSpacing: 0.2 },
+  headingMd: { fontFamily: corridorTypography.wayfinding, fontSize: 21, lineHeight: 25, letterSpacing: 0.3 },
+  headingSm: { fontFamily: corridorTypography.wayfinding, fontSize: 17, lineHeight: 21, letterSpacing: 0.4 },
+  bodyLg: { fontFamily: corridorTypography.reading, fontSize: 18, lineHeight: 28 },
+  bodyMd: { fontFamily: corridorTypography.reading, fontSize: 16, lineHeight: 24 },
+  bodySm: { fontFamily: corridorTypography.reading, fontSize: 14, lineHeight: 20 },
+  labelMd: { fontFamily: corridorTypography.wayfinding, fontSize: 13, lineHeight: 16, letterSpacing: 1.2 },
+  caption: { fontFamily: corridorTypography.reading, fontSize: 13, lineHeight: 18 },
 });

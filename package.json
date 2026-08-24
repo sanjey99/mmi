@@ -17,8 +17,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@expo-google-fonts/dm-sans": "^0.2.3",
-    "@expo-google-fonts/dm-serif-display": "^0.2.3",
+    "@expo-google-fonts/barlow-condensed": "^0.4.1",
+    "@expo-google-fonts/source-sans-3": "^0.4.1",
     "@expo/metro-runtime": "~55.0.12",
     "@react-native-async-storage/async-storage": "^2.1.0",
     "@react-navigation/native": "^7.0.0",
