@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildMmiScoringSystemPrompt, formatReviewedTranscript, normalizeMmiSubmission, normalizeReviewedTranscript } from '../supabase/functions/_shared/mmiScoring';
 import { runMmiScoringOrchestration } from '../supabase/functions/_shared/mmiScoringOrchestration';
 import { createMmiPublicOutputContext, parseMmiRubric, toPublicMmiAssessment } from '../supabase/functions/_shared/mmiContracts';
+import { releaseMmiScoringClaim } from '../supabase/functions/_shared/mmiScoringClaimRelease';
 
 const scoringContractPath = new URL('../supabase/functions/_shared/mmiScoringContract.ts', import.meta.url).href;
 const { getMmiScoringContract, parseProviderAssessmentForContract } = await import(scoringContractPath);
@@ -25,6 +26,26 @@ const input = {
 } as const;
 
 describe('mmiScoring helpers', () => {
+  it('inspects resolved RPC errors and retries claim release once', async () => {
+    const outcomes = [{ error: { message: 'transient' } }, { error: null }];
+    let attempts = 0;
+
+    await releaseMmiScoringClaim(async () => outcomes[attempts++]);
+
+    expect(attempts).toBe(2);
+  });
+
+  it('bounds claim-release attempts and returns only a safe local error', async () => {
+    let attempts = 0;
+
+    await expect(releaseMmiScoringClaim(async () => {
+      attempts += 1;
+      return { error: { message: 'private database detail' } };
+    })).rejects.toThrow('MMI scoring claim release failed');
+
+    expect(attempts).toBe(2);
+  });
+
   it('normalizes display-equivalent transcript whitespace before hashing', async () => {
     expect(normalizeReviewedTranscript('  Plan\n\ncare  ')).toBe('Plan care');
     expect((await normalizeMmiSubmission({ attemptId: 'attempt', promptKind: 'roleplay', stationId: 'station', transcript: ' Plan   care ' })).digest)

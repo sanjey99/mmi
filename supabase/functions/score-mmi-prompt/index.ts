@@ -7,6 +7,8 @@ import { parseSubmitMmiPromptRequest } from '../_shared/mmiContracts.ts';
 import { normalizeMmiSubmission, reconstructCompletedMmiReplay } from '../_shared/mmiScoring.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
 import { scoreMmiPromptCore, type MmiScoringHandlerSnapshot } from '../_shared/mmiScoringHandlerCore.ts';
+// @ts-ignore Edge functions deliberately import source TypeScript.
+import { releaseMmiScoringClaim } from '../_shared/mmiScoringClaimRelease.ts';
 import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
 
 type Snapshot = MmiScoringHandlerSnapshot & {
@@ -80,6 +82,10 @@ Deno.serve(async (req) => {
     } catch { return http.json({ code: 'scoring_unavailable' }, 409); }
   }
   const claimId = claimData.claimId as string; const leaseToken = claimData.leaseToken as string;
+  const releaseClaim = async () => await releaseMmiScoringClaim(async () => await service.rpc(
+    'fail_mmi_scoring_submission',
+    { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' },
+  ));
   try {
     const { data: snapshot, error: snapshotError } = await service.from('mmi_attempt_prompt_snapshots')
       .select('attempt_id,station_kind,prompt_order,prompt_text,hidden_reference_answer,hidden_actor_context,rubric_id,rubric_version,rubric_criteria,rubric_dimension_weights,rubric_safety_critical_items,scoring_contract_version,global_contract_snapshot,response_schema_snapshot')
@@ -102,13 +108,13 @@ Deno.serve(async (req) => {
         if (completeError || !completed) throw new Error('completion_unavailable');
         return completed as { assessment: typeof assessment; attemptStatus: 'in_progress' | 'completed'; hasNextPrompt: boolean };
       },
-      fail: async () => { await service.rpc('fail_mmi_scoring_submission', { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' }); },
+      fail: async () => await releaseClaim(),
     });
     if ('code' in outcome) return http.json({ code: 'scoring_unavailable' }, 502);
     const result = outcome;
     return http.json({ assessment: result.assessment, attemptStatus: result.attemptStatus, hasNextPrompt: result.hasNextPrompt, replayed: false });
   } catch {
-    await service.rpc('fail_mmi_scoring_submission', { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' });
+    try { await releaseClaim(); } catch { /* preserve the fixed public failure */ }
     return http.json({ code: 'scoring_unavailable' }, 502);
   }
 });

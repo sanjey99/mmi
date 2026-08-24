@@ -143,7 +143,8 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_scoring_lease'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(v_claim_user::TEXT, 0));
   SELECT c.* INTO v_claim FROM public.mmi_scoring_claims AS c WHERE c.id = p_claim_id FOR UPDATE;
-  IF NOT FOUND OR v_claim.status <> 'claimed' OR v_claim.lease_token <> p_lease_token OR v_claim.lease_expires_at <= clock_timestamp() THEN
+  IF NOT FOUND OR v_claim.user_id IS DISTINCT FROM v_claim_user
+    OR v_claim.status <> 'claimed' OR v_claim.lease_token <> p_lease_token OR v_claim.lease_expires_at <= clock_timestamp() THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_scoring_lease'; END IF;
   SELECT a.* INTO v_attempt FROM public.mmi_attempts AS a WHERE a.id = v_claim.attempt_id FOR UPDATE;
   SELECT s.* INTO v_snapshot FROM public.mmi_attempt_prompt_snapshots AS s
@@ -195,7 +196,8 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_scoring_lease'; END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(v_claim_user::TEXT, 0));
   SELECT c.* INTO v_claim FROM public.mmi_scoring_claims AS c WHERE c.id = p_claim_id FOR UPDATE;
-  IF NOT FOUND OR v_claim.status <> 'claimed' OR v_claim.lease_token <> p_lease_token THEN
+  IF NOT FOUND OR v_claim.user_id IS DISTINCT FROM v_claim_user
+    OR v_claim.status <> 'claimed' OR v_claim.lease_token <> p_lease_token THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_scoring_lease';
   END IF;
   SELECT a.* INTO v_attempt FROM public.mmi_attempts AS a WHERE a.id = v_claim.attempt_id FOR UPDATE;
