@@ -67,23 +67,24 @@ function isInIpv6Range(value: bigint, base: string, prefixLength: number): boole
   return (value >> shift) === (parsedBase >> shift);
 }
 
-function ipv4FromMappedIpv6(value: bigint): string {
-  const ipv4 = Number(value & 0xffffffffn);
-  return [ipv4 >>> 24, (ipv4 >>> 16) & 0xff, (ipv4 >>> 8) & 0xff, ipv4 & 0xff].join('.');
-}
-
 const NON_GLOBAL_IPV6_RANGES: ReadonlyArray<readonly [string, number]> = [
-  ['::', 128], ['::1', 128], ['64:ff9b:1::', 48], ['100::', 64],
+  ['::', 96], ['::ffff:0:0', 96], ['64:ff9b:1::', 48], ['100::', 64],
   ['100:0:0:1::', 64], ['2001::', 23], ['2001:2::', 48], ['2001:10::', 28],
-  ['2001:20::', 28], ['2001:db8::', 32], ['2002::', 16], ['3ffe::', 16],
+  ['2001:20::', 28], ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20],
+  ['3ffe::', 16], ['5f00::', 16],
   ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
+];
+
+const GLOBAL_IPV6_ENVELOPE: ReadonlyArray<readonly [string, number]> = [
+  ['2000::', 3],
+  ['64:ff9b::', 96],
 ];
 
 function isGlobalIpv6(address: string): boolean | undefined {
   const value = parseIpv6(address);
   if (value === undefined) return undefined;
-  if (isInIpv6Range(value, '::ffff:0:0', 96)) return isGlobalIpv4(ipv4FromMappedIpv6(value)) === true;
-  return !NON_GLOBAL_IPV6_RANGES.some(([base, prefix]) => isInIpv6Range(value, base, prefix));
+  if (NON_GLOBAL_IPV6_RANGES.some(([base, prefix]) => isInIpv6Range(value, base, prefix))) return false;
+  return GLOBAL_IPV6_ENVELOPE.some(([base, prefix]) => isInIpv6Range(value, base, prefix));
 }
 
 /** True only for syntactically valid IP literals reserved for non-global use. */

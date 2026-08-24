@@ -81,6 +81,10 @@ describe('assertSafeProviderUrl', () => {
     '240.0.0.1',
     '2001:db8::1',
     '::ffff:7f00:1',
+    '::ffff:8.8.8.8',
+    '::192.0.2.1',
+    '3fff::1',
+    '5f00::1',
     'fec0::1',
   ])('rejects a non-global DNS result %s', async (record) => {
     await expect(assertSafeProviderUrl(
