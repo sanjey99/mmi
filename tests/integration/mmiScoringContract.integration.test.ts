@@ -68,6 +68,51 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
   async function insert(table: string, row: Record<string, unknown> | Record<string, unknown>[]) {
     const { data, error } = await service.from(table).insert(row).select(); assert.equal(error, null, error?.message); return data ?? [];
   }
+  function claimArgs(userId: string, attemptId: string) {
+    return {
+      p_user_id: userId, p_attempt_id: attemptId, p_idempotency_key: randomUUID(), p_prompt_kind: 'standard',
+      p_station_id: ids.standard, p_sub_question_id: ids.standardPrompt1, p_request_digest: digest,
+    };
+  }
+  async function createRateLimitUser(label: string) {
+    const { userId } = await createAuthenticatedTestClient({
+      service, url: url!, anonKey: anonKey!, password: `Local-only-${randomUUID()}!`, fixturePrefix,
+      label: `rate-${label}-${randomUUID().slice(0, 8)}`,
+    });
+    return userId;
+  }
+  async function seedProviderAttemptClaims(userId: string, count: number) {
+    const updatedAt = new Date(Date.now() - 60_000).toISOString();
+    for (let index = 0; index < count; index += 1) {
+      const attempt = await activeAttempt(`rate-provider-${index}`, userId);
+      await insert('mmi_scoring_claims', {
+        user_id: userId, attempt_id: attempt.id, idempotency_key: randomUUID(), station_kind: 'standard',
+        standard_sub_q_id: ids.standardPrompt1, request_digest: digest, lease_token: randomUUID(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(), provider_attempt_count: 1,
+        updated_at: updatedAt,
+      });
+    }
+  }
+  async function seedCompletedClaims(userId: string, count: number) {
+    const completedAt = new Date(Date.now() - 60_000).toISOString();
+    for (let index = 0; index < count; index += 1) {
+      const attempt = await activeAttempt(`rate-completed-${index}`, userId);
+      const [promptAttempt] = await insert('mmi_prompt_attempts', {
+        attempt_id: attempt.id, station_kind: 'standard', standard_sub_q_id: ids.standardPrompt1,
+        prompt_order: 1, reviewed_transcript: `Completed rate-limit transcript ${index}`,
+        dimension_results: assessment.dimensions, strengths: assessment.strengths,
+        improvements: assessment.improvements, improvement_tip: assessment.improvementTip,
+        overall_pct: assessment.overallPct, rubric_id: rubricId, rubric_version: 1,
+        scoring_contract_version: 'mmi-score-v1', submitted_at: completedAt,
+      });
+      await insert('mmi_scoring_claims', {
+        user_id: userId, attempt_id: attempt.id, idempotency_key: randomUUID(), station_kind: 'standard',
+        standard_sub_q_id: ids.standardPrompt1, request_digest: digest, status: 'completed',
+        prompt_attempt_id: promptAttempt.id, lease_token: randomUUID(), lease_expires_at: completedAt,
+        provider_attempt_count: 0, completed_at: completedAt, updated_at: completedAt,
+      });
+    }
+  }
   async function activeAttempt(label: string, userId = ownerId, nullCachedAnswer = false) {
     const [attempt] = await insert('mmi_attempts', { user_id: userId, station_kind: 'standard', standard_station_id: ids.standard,
       status: 'in_progress', phase: 'preparing', current_prompt_order: 1, expected_prompt_count: 2, content_snapshot: safeContentSnapshot(), privacy_notice_version: ids.noticeAccount,
@@ -109,5 +154,61 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     await service.from('mmi_scoring_claims').update({ lease_expires_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', (retry.data as any).claimId);
     const recovered = await service.rpc('claim_mmi_scoring_submission', args(attempt.id, key)); assert.notEqual((recovered.data as any).leaseToken, (retry.data as any).leaseToken);
     assert.ok((await service.rpc('fail_mmi_scoring_submission', { p_claim_id: (retry.data as any).claimId, p_lease_token: (retry.data as any).leaseToken, p_safe_error_code: 'scoring_unavailable' })).error);
+  });
+
+  it('rejects an eligible claim after 20 real provider attempts in the rolling hour', async () => {
+    const userId = await createRateLimitUser('hourly-cap');
+    await seedProviderAttemptClaims(userId, 20);
+    const attempt = await activeAttempt('hourly-cap-target', userId);
+
+    const result = await service.rpc(
+      'claim_mmi_scoring_submission', claimArgs(userId, attempt.id),
+    );
+
+    assert.equal(result.error, null, result.error?.message);
+    assert.equal((result.data as any).code, 'rate_limited');
+    assert.equal((result.data as any).retryAfter, 60);
+  });
+
+  it('rejects an eligible claim after 60 completed submissions in the rolling day', async () => {
+    const userId = await createRateLimitUser('daily-cap');
+    await seedCompletedClaims(userId, 60);
+    const attempt = await activeAttempt('daily-cap-target', userId);
+
+    const result = await service.rpc(
+      'claim_mmi_scoring_submission', claimArgs(userId, attempt.id),
+    );
+
+    assert.equal(result.error, null, result.error?.message);
+    assert.equal((result.data as any).code, 'rate_limited');
+    assert.equal((result.data as any).retryAfter, 300);
+  });
+
+  it('serializes different attempts so only one claim receives the twentieth hourly allowance', async () => {
+    const userId = await createRateLimitUser('hourly-boundary');
+    await seedProviderAttemptClaims(userId, 19);
+    const firstAttempt = await activeAttempt('hourly-boundary-first', userId);
+    const secondAttempt = await activeAttempt('hourly-boundary-second', userId);
+
+    const [first, second] = await Promise.all([
+      service.rpc('claim_mmi_scoring_submission', claimArgs(userId, firstAttempt.id)),
+      service.rpc('claim_mmi_scoring_submission', claimArgs(userId, secondAttempt.id)),
+    ]);
+
+    assert.equal(first.error, null, first.error?.message);
+    assert.equal(second.error, null, second.error?.message);
+    assert.deepEqual(
+      [(first.data as any).code, (second.data as any).code].sort(),
+      ['claimed', 'rate_limited'],
+    );
+    const rateLimited = [first.data, second.data].find((result: any) => result.code === 'rate_limited') as any;
+    assert.equal(rateLimited.retryAfter, 60);
+    const { data, error } = await service.from('mmi_scoring_claims')
+      .select('provider_attempt_count').eq('user_id', userId);
+    assert.equal(error, null, error?.message);
+    assert.equal(
+      (data ?? []).reduce((total, claim) => total + claim.provider_attempt_count, 0),
+      20,
+    );
   });
 });
