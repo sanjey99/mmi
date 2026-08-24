@@ -7,6 +7,7 @@ export default defineConfig({
       'tests/aiProviderSecurity.test.ts',
       'tests/aiKeyWriteOnlyPolicy.test.ts',
       'tests/edgeHttp.test.ts',
+      'tests/scoringCoverage.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {

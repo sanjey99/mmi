@@ -15,3 +15,9 @@ verify_jwt = true
 
 [functions.abandon-mmi-attempt]
 verify_jwt = true
+
+[functions.score-mmi-prompt]
+verify_jwt = true
+
+[functions.continue-mmi-attempt]
+verify_jwt = true
