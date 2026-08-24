@@ -21,6 +21,8 @@ export default defineConfig({
       'tests/questionCsv.test.ts',
       'tests/questionApi.test.ts',
       'tests/questionApiPolicy.test.ts',
+      'tests/cofounderFeedback.test.ts',
+      'tests/cofounderFeedbackPolicy.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {
@@ -38,6 +40,7 @@ export default defineConfig({
         'src/features/questions/validation.ts',
         'src/features/questions/csv.ts',
         'src/features/questions/api.ts',
+        'src/features/cofounderFeedback/api.ts',
       ],
       exclude: [
         'supabase/functions/_shared/mmiContracts.ts',

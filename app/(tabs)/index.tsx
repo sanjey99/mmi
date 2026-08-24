@@ -116,6 +116,14 @@ export default function HomeScreen() {
         <Text style={styles.previewText}>
           This build is for invited partner testing. Use synthetic answers only and report anything unclear.
         </Text>
+        <TouchableOpacity
+          onPress={() => router.push('/cofounder-feedback')}
+          style={styles.feedbackLink}
+          accessibilityRole="button"
+        >
+          <Text style={styles.feedbackLinkCode}>F04</Text>
+          <Text style={styles.feedbackLinkText}>SEND FEEDBACK</Text>
+        </TouchableOpacity>
       </Card>
     </ScreenWrapper>
   );
@@ -215,4 +223,15 @@ const styles = StyleSheet.create({
   previewCard: { marginBottom: 8 },
   previewTitle: { ...text.labelMd, color: colors.teal[600], marginBottom: 5 },
   previewText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 22 },
+  feedbackLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.primary[800],
+    backgroundColor: colors.bg.white,
+    marginTop: 14,
+  },
+  feedbackLinkCode: { ...text.labelMd, color: colors.bg.white, backgroundColor: colors.primary[800], padding: 9 },
+  feedbackLinkText: { ...text.labelMd, color: colors.primary[800], paddingHorizontal: 12 },
 });

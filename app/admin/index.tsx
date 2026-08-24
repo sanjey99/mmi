@@ -82,6 +82,13 @@ export default function AdminDashboard() {
           onPress={() => router.push('/admin/ai-config')}
         />
 
+        <AdminCard
+          code="F03"
+          title="Feedback desk"
+          description="Review partner reports. Author IDs appear only when follow-up is allowed."
+          onPress={() => router.push('/admin/feedback')}
+        />
+
         <Card variant="teal" style={styles.noticeCard}>
           <Text style={styles.noticeLabel}>ACCESS NOTICE</Text>
           <Text style={styles.noticeText}>
