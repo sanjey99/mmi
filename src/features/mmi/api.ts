@@ -76,6 +76,7 @@ const safeMessages: Record<string, string> = {
   preparation_in_progress: 'Preparation is still in progress.',
   privacy_notice_not_current: 'Please review the current privacy notice before starting.',
   station_not_found: 'This station is unavailable.',
+  station_unavailable: 'This station is not ready for practice yet.',
 };
 
 function messageFor(code: string) {
@@ -110,27 +111,35 @@ export async function resolveMmiFunctionResult<T>(result: { data: T | null; erro
   throw new MmiApiError('request_failed', messageFor('request_failed'));
 }
 
-async function invoke<T>(name: string, body: Record<string, unknown>, allowNoContent = false): Promise<T | undefined> {
+type InvokeFunction = <T>(name: string, options: { body: Record<string, unknown> }) => Promise<{ data: T | null; error: unknown }>;
+
+export function createMmiAttemptApi(invokeFunction: InvokeFunction) {
+  const invoke = <T>(name: string, body: Record<string, unknown>, allowNoContent = false) =>
+    invokeFunction<T>(name, { body }).then((result) => resolveMmiFunctionResult(result, allowNoContent));
+  return {
+    async startMmiAttempt(request: StartMmiAttemptRequest): Promise<StartMmiAttemptResponse> {
+      validateStartRequest(request); return (await invoke<StartMmiAttemptResponse>('start-mmi-attempt', request))!;
+    },
+    async getMmiAttempt(attemptId: string): Promise<GetMmiAttemptResponse> {
+      if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
+      return (await invoke<GetMmiAttemptResponse>('get-mmi-attempt', { attemptId }))!;
+    },
+    async revealMmiPrompt(attemptId: string): Promise<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }> {
+      if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
+      return (await invoke<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }>('reveal-mmi-prompt', { attemptId }))!;
+    },
+    async abandonMmiAttempt(attemptId: string): Promise<void> {
+      if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
+      await invoke<Record<string, never>>('abandon-mmi-attempt', { attemptId }, true);
+    },
+  };
+}
+
+const singleton = createMmiAttemptApi(async (name, options) => {
   const { supabase } = await import('../../lib/supabase');
-  return resolveMmiFunctionResult(await supabase.functions.invoke<T>(name, { body }), allowNoContent);
-}
-
-export async function startMmiAttempt(request: StartMmiAttemptRequest): Promise<StartMmiAttemptResponse> {
-  validateStartRequest(request);
-  return (await invoke<StartMmiAttemptResponse>('start-mmi-attempt', request))!;
-}
-
-export async function getMmiAttempt(attemptId: string): Promise<GetMmiAttemptResponse> {
-  if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  return (await invoke<GetMmiAttemptResponse>('get-mmi-attempt', { attemptId }))!;
-}
-
-export async function revealMmiPrompt(attemptId: string): Promise<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }> {
-  if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  return (await invoke<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }>('reveal-mmi-prompt', { attemptId }))!;
-}
-
-export async function abandonMmiAttempt(attemptId: string): Promise<void> {
-  if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  await invoke<Record<string, never>>('abandon-mmi-attempt', { attemptId }, true);
-}
+  return supabase.functions.invoke(name, options);
+});
+export const startMmiAttempt = singleton.startMmiAttempt;
+export const getMmiAttempt = singleton.getMmiAttempt;
+export const revealMmiPrompt = singleton.revealMmiPrompt;
+export const abandonMmiAttempt = singleton.abandonMmiAttempt;

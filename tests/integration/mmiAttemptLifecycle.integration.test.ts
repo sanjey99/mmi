@@ -131,6 +131,23 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
     } }, false), (error: unknown) => error instanceof MmiApiError && (error as { code: string; remainingSeconds?: number }).code === 'preparation_in_progress' && (error as { remainingSeconds?: number }).remainingSeconds === 17);
     await assert.rejects(() => resolveMmiFunctionResult({ data: null, error: { context: new Response(JSON.stringify({ code: 'authorization' }), { status: 401 }) } }, false), (error: unknown) => error instanceof MmiApiError && (error as { code: string }).code === 'request_failed');
   });
+
+  it('drives exported wrappers through an injected Supabase Functions-shaped client', async () => {
+    const { createMmiAttemptApi, MmiApiError } = await import('../../src/features/mmi/api' + '.ts') as any;
+    const calls: string[] = [];
+    const api = createMmiAttemptApi(async (name: string) => {
+      calls.push(name);
+      if (name === 'reveal-mmi-prompt') return { data: null, error: { context: new Response(JSON.stringify({ code: 'preparation_in_progress', remainingSeconds: 9 }), { status: 409 }) } };
+      if (name === 'get-mmi-attempt') return { data: { attempt: { id: 'a' } }, error: null };
+      if (name === 'abandon-mmi-attempt') return { data: null, error: null };
+      return { data: null, error: { context: new Response(JSON.stringify({ code: 'station_unavailable' }), { status: 409 }) } };
+    });
+    await assert.rejects(() => api.revealMmiPrompt('00000000-0000-4000-8000-000000000000'), (error: unknown) => error instanceof MmiApiError && (error as { code: string; remainingSeconds?: number }).code === 'preparation_in_progress' && (error as { remainingSeconds?: number }).remainingSeconds === 9);
+    assert.deepEqual(await api.getMmiAttempt('00000000-0000-4000-8000-000000000000'), { attempt: { id: 'a' } });
+    await api.abandonMmiAttempt('00000000-0000-4000-8000-000000000000');
+    await assert.rejects(() => api.startMmiAttempt({ stationKind: 'standard', stationId: 'station', privacyNoticeVersion: 'notice' }), (error: unknown) => error instanceof MmiApiError && (error as { code: string }).code === 'station_unavailable');
+    assert.deepEqual(calls, ['reveal-mmi-prompt', 'get-mmi-attempt', 'abandon-mmi-attempt', 'start-mmi-attempt']);
+  });
 });
 
 const url = process.env.SUPABASE_TEST_URL;
@@ -240,7 +257,9 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     assert.equal(direct.error.code, '42501');
     const response = await invoke(ownerToken, 'start-mmi-attempt', { stationKind: 'roleplay', stationId: ids.roleplay, privacyNoticeVersion: ids.noticeAccount });
     assert.equal(response.status, 200);
-    assertNoHiddenFields(await response.json());
+    const payload = await response.json();
+    assertNoHiddenFields(payload);
+    assert.doesNotMatch(JSON.stringify(payload), new RegExp(`${markers.hiddenActor}|${markers.hiddenBackground}`));
   });
 
   it('hides future prompts and returns the same generic not-found response for guessed cross-user IDs', async () => {
@@ -257,6 +276,23 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     const missing = await invoke(otherToken, 'get-mmi-attempt', { attemptId: randomUUID() });
     assert.equal(guessed.status, 404);
     assert.deepEqual(await guessed.json(), await missing.json());
+  });
+
+  it('returns safe early preparation state, then the same first prompt on repeated reveal', async () => {
+    const start = await invoke(ownerToken, 'start-mmi-attempt', { stationKind: 'standard', stationId: ids.standard, privacyNoticeVersion: ids.noticeAccount });
+    const { attempt } = await start.json() as { attempt: { id: string } };
+    const early = await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id });
+    assert.equal(early.status, 409);
+    const earlyPayload = await early.json();
+    assert.equal(earlyPayload.code, 'preparation_in_progress');
+    assert.equal(typeof earlyPayload.remainingSeconds, 'number');
+    assertNoHiddenFields(earlyPayload);
+    await service.from('mmi_attempts').update({ preparation_ends_at: new Date(Date.now() - 1_000).toISOString() }).eq('id', attempt.id);
+    const first = await (await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id })).json();
+    const repeated = await (await invoke(ownerToken, 'reveal-mmi-prompt', { attemptId: attempt.id })).json();
+    assert.deepEqual(repeated, first);
+    assert.equal(first.prompt.order, 1);
+    assertNoHiddenFields(first);
   });
 
   it('abandons an owned in-progress attempt idempotently without exposing a score', async () => {
@@ -301,5 +337,13 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
       owner.rpc('abandon_mmi_attempt', { p_user_id: ownerId, p_attempt_id: randomUUID() }),
       '42501',
     );
+  });
+
+  it('denies every service-only lifecycle RPC to a normal JWT', async () => {
+    for (const [name, args] of [
+      ['create_mmi_attempt', { p_user_id: ownerId, p_station_kind: 'standard', p_station_id: ids.standard, p_privacy_notice_version: ids.noticeAccount }],
+      ['reveal_mmi_first_prompt', { p_user_id: ownerId, p_attempt_id: randomUUID() }],
+      ['abandon_mmi_attempt', { p_user_id: ownerId, p_attempt_id: randomUUID() }],
+    ] as const) await expectDbCode(owner.rpc(name, args), '42501');
   });
 });
