@@ -1,113 +1,199 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
-  TextInput, ScrollView, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { TimerRing } from '../../src/components/ui/TimerRing';
 import { Button } from '../../src/components/ui/Button';
+import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
+import { InlineNotice } from '../../src/components/feedback/InlineNotice';
+import { navigateBackOr } from '../../src/lib/navigation';
 import { colors, text, layout } from '../../src/theme';
 
+const TIME_LIMIT_SECONDS = 8 * 60;
+
 export default function SessionScreen() {
-  const { sessionId, questionId, timed } = useLocalSearchParams<{ sessionId: string; questionId: string; timed: string }>();
-  const { currentQuestion, answerText, setAnswerText, submitAnswer, scoring, scoringError } = usePracticeStore();
+  const { sessionId, questionId, timed } = useLocalSearchParams<{
+    sessionId: string;
+    questionId: string;
+    timed: string;
+  }>();
+  const {
+    currentQuestion,
+    answerText,
+    setAnswerText,
+    submitAnswer,
+    restoreSession,
+    scoring,
+  } = usePracticeStore();
   const [submitted, setSubmitted] = useState(false);
+  const [restoring, setRestoring] = useState(true);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [timerNotice, setTimerNotice] = useState<string | null>(null);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
   const saveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const routeSessionId = typeof sessionId === 'string' ? sessionId : '';
+  const routeQuestionId = typeof questionId === 'string' ? questionId : '';
   const isTimed = timed === '1';
-  const TIME_LIMIT = 8 * 60; // 8 minutes
 
-  const handleTextChange = (t: string) => {
-    setAnswerText(t);
-    // Debounced autosave indicator
+  useEffect(() => {
+    if (currentQuestion?.id === routeQuestionId) {
+      setRestoring(false);
+      return;
+    }
+    if (!routeSessionId || !routeQuestionId) {
+      setRestoreError('This station link is incomplete. Return to Practice and open a station again.');
+      setRestoring(false);
+      return;
+    }
+
+    let active = true;
+    setRestoring(true);
+    setRestoreError(null);
+    restoreSession(routeSessionId, routeQuestionId)
+      .catch(() => {
+        if (active) {
+          setRestoreError('This station could not be restored. It may be closed, unavailable, or belong to another account.');
+        }
+      })
+      .finally(() => {
+        if (active) setRestoring(false);
+      });
+
+    return () => { active = false; };
+  }, [currentQuestion?.id, restoreSession, routeQuestionId, routeSessionId]);
+
+  const handleTextChange = (value: string) => {
+    setFormError(null);
+    setAnswerText(value);
     if (saveRef.current) clearTimeout(saveRef.current);
-    saveRef.current = setTimeout(() => { /* saved locally */ }, 2000);
+    saveRef.current = setTimeout(() => { /* in-memory state settled */ }, 2_000);
   };
 
   const handleSubmit = async () => {
+    setFormError(null);
     if (!answerText.trim()) {
-      Alert.alert('Answer required', 'Please write your answer before submitting.');
+      setFormError('Write your response before submitting.');
       return;
     }
     if (answerText.trim().length < 30) {
-      Alert.alert('Answer too short', 'Please write a more complete answer (at least a few sentences).');
+      setFormError('Add a more complete response of at least a few sentences before submitting.');
       return;
     }
 
     setSubmitted(true);
     try {
-      await submitAnswer(sessionId, questionId);
-      router.replace({ pathname: '/practice/feedback', params: { sessionId } });
-    } catch (e: any) {
+      await submitAnswer(routeSessionId, routeQuestionId);
+      router.replace({ pathname: '/practice/feedback', params: { sessionId: routeSessionId } });
+    } catch (error) {
       setSubmitted(false);
-      Alert.alert(
-        'Could not score answer',
-        e.message.includes('API key not configured')
-          ? 'The AI is not configured yet. Ask an admin to set up the AI provider in Settings.'
-          : e.message,
-      );
+      const message = error instanceof Error && error.message.includes('API key not configured')
+        ? 'Scoring is not configured yet. A founder must complete the AI setup before feedback can be generated.'
+        : 'Your answer could not be scored. It is safe to try again after checking your connection.';
+      setFormError(message);
     }
   };
 
-  const handleTimerExpire = useCallback(() => {
-    Alert.alert('Time\'s up!', 'Your time has expired. Submitting your answer now.', [
-      { text: 'OK', onPress: handleSubmit },
-    ]);
-  }, [answerText]);
+  const handleTimerExpire = () => {
+    setTimerNotice('Eight minutes have ended. Your current response is being checked for submission.');
+    void handleSubmit();
+  };
 
-  if (!currentQuestion) {
-    router.back();
-    return null;
+  if (restoring && currentQuestion?.id !== routeQuestionId) {
+    return (
+      <SafeAreaView style={styles.centeredState}>
+        <ActivityIndicator color={colors.primary[800]} size="large" />
+        <Text style={styles.stateTitle}>Restoring station</Text>
+        <Text style={styles.stateBody}>Checking this session against your account and the active question bank.</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!currentQuestion || currentQuestion.id !== routeQuestionId || restoreError) {
+    return (
+      <SafeAreaView style={styles.centeredState}>
+        <InlineNotice
+          title="Station unavailable"
+          message={restoreError ?? 'This station is no longer available.'}
+          tone="error"
+        />
+        <Button
+          label="Return to practice"
+          onPress={() => router.replace('/(tabs)/practice')}
+          style={styles.stateButton}
+        />
+      </SafeAreaView>
+    );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => {
-          Alert.alert('Leave session?', 'Your answer will not be saved.', [
-            { text: 'Stay', style: 'cancel' },
-            { text: 'Leave', style: 'destructive', onPress: () => router.back() },
-          ]);
-        }}>
-          <Text style={styles.backText}>‹ Back</Text>
+        <TouchableOpacity onPress={() => setConfirmingLeave(true)} accessibilityRole="button">
+          <Text style={styles.backText}>Leave station</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{currentQuestion.category.toUpperCase()}</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle}>02 / {currentQuestion.category.toUpperCase()}</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {confirmingLeave ? (
+            <ConfirmAction
+              title="Leave this station?"
+              message="The current response is not saved on this device."
+              confirmLabel="Leave station"
+              destructive
+              onConfirm={() => navigateBackOr(router, '/(tabs)/practice')}
+              onCancel={() => setConfirmingLeave(false)}
+            />
+          ) : null}
 
-          {/* Timer (timed mode only) */}
-          {isTimed && (
+          {timerNotice ? <InlineNotice title="Time ended" message={timerNotice} tone="warning" /> : null}
+          {formError ? <InlineNotice title="Answer not submitted" message={formError} tone="error" /> : null}
+
+          {isTimed ? (
             <View style={styles.timerWrap}>
-              <TimerRing durationSeconds={TIME_LIMIT} onExpire={handleTimerExpire} running={!submitted} size={100} />
+              <TimerRing
+                durationSeconds={TIME_LIMIT_SECONDS}
+                onExpire={handleTimerExpire}
+                running={!submitted}
+                size={100}
+              />
             </View>
-          )}
+          ) : null}
 
-          {/* Question */}
           <View style={styles.questionWrap}>
-            <Text style={styles.questionLabel}>QUESTION</Text>
+            <Text style={styles.questionLabel}>LAMINATED CANDIDATE BRIEF</Text>
             <Text style={styles.questionText}>{currentQuestion.text}</Text>
           </View>
 
-          {/* Answer area */}
           <View style={styles.answerSection}>
-            <Text style={styles.answerLabel}>YOUR ANSWER</Text>
+            <Text style={styles.answerLabel}>YOUR RESPONSE</Text>
             <TextInput
               style={styles.answerInput}
               multiline
               value={answerText}
               onChangeText={handleTextChange}
-              placeholder="Begin your response here. Structure your answer clearly — consider the ethical principles involved, stakeholder perspectives, and your own reflection..."
-              placeholderTextColor={colors.neutral[300]}
+              placeholder="Structure your response here. Consider the people involved, relevant principles, safe actions, and your reasoning."
+              placeholderTextColor={colors.neutral[500]}
               editable={!submitted}
               textAlignVertical="top"
               scrollEnabled={false}
               maxLength={3000}
+              accessibilityLabel="Your practice response"
             />
             <Text style={[styles.charCount, answerText.length >= 2800 && styles.charCountWarn]}>
               {answerText.length} / 3000
@@ -115,18 +201,14 @@ export default function SessionScreen() {
           </View>
 
           <Button
-            label={scoring ? 'Analysing...' : 'Submit Answer →'}
+            label={scoring ? 'Scoring response' : 'Submit answer'}
             onPress={handleSubmit}
             loading={scoring || submitted}
             disabled={submitted}
-            style={{ marginTop: 16 }}
+            style={styles.submitButton}
           />
 
-          {scoringError && (
-            <Text style={styles.errorText}>{scoringError}</Text>
-          )}
-
-          <Text style={styles.savedHint}>Responses are not stored on device</Text>
+          <Text style={styles.savedHint}>Your response is not submitted until you choose Submit answer.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -134,40 +216,65 @@ export default function SessionScreen() {
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   safe: { flex: 1, backgroundColor: colors.bg.primary },
+  centeredState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: colors.bg.primary,
+    padding: 24,
+  },
+  stateTitle: { ...text.headingLg, color: colors.primary[900] },
+  stateBody: { ...text.bodyMd, color: colors.neutral[600], textAlign: 'center', maxWidth: 520 },
+  stateButton: { marginTop: 8, minWidth: 220 },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: layout.screenPaddingH, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.primary[800],
   },
-  backText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60 },
-  headerTitle: { ...text.labelMd, color: colors.primary[800] },
-  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 16, paddingBottom: 48 },
-  timerWrap: { alignItems: 'center', marginBottom: 20 },
+  backText: { ...text.labelMd, color: colors.primary[800], minWidth: 96, textTransform: 'uppercase' },
+  headerTitle: { ...text.labelMd, color: colors.primary[800], fontVariant: ['tabular-nums'] },
+  headerSpacer: { width: 96 },
+  content: {
+    width: '100%',
+    maxWidth: 900,
+    alignSelf: 'center',
+    gap: 14,
+    paddingHorizontal: layout.screenPaddingH,
+    paddingTop: 18,
+    paddingBottom: 48,
+  },
+  timerWrap: { alignItems: 'center', marginVertical: 6 },
   questionWrap: {
-    borderTopWidth: 1, borderBottomWidth: 1,
-    borderColor: colors.bg.tertiary,
-    paddingVertical: 20, marginBottom: 24,
+    borderWidth: 1,
+    borderColor: colors.primary[300],
+    backgroundColor: colors.bg.white,
+    padding: 24,
+    marginTop: 2,
   },
-  questionLabel: { ...text.labelMd, color: colors.teal[400], marginBottom: 10 },
-  questionText: {
-    fontFamily: 'DMSerifDisplay_400Regular',
-    fontSize: 22, lineHeight: 32,
-    color: colors.primary[800],
-  },
-  answerSection: { marginBottom: 8 },
-  answerLabel: { ...text.labelMd, color: colors.neutral[500], marginBottom: 10 },
+  questionLabel: { ...text.labelMd, color: colors.teal[600], marginBottom: 12 },
+  questionText: { ...text.headingLg, lineHeight: 36, color: colors.primary[900], maxWidth: 720 },
+  answerSection: { marginTop: 6 },
+  answerLabel: { ...text.labelMd, color: colors.neutral[600], marginBottom: 10 },
   answerInput: {
     backgroundColor: colors.bg.white,
-    borderWidth: 1.5, borderColor: colors.bg.tertiary,
-    borderRadius: 12, padding: 16,
+    borderWidth: 1.5,
+    borderColor: colors.primary[300],
+    borderRadius: 2,
+    padding: 18,
     ...text.bodyLg,
     color: colors.primary[800],
-    minHeight: 180,
-    lineHeight: 26,
+    minHeight: 220,
+    lineHeight: 28,
   },
-  charCount: { ...text.caption, color: colors.neutral[300], textAlign: 'right', marginTop: 6 },
+  charCount: { ...text.caption, color: colors.neutral[500], textAlign: 'right', marginTop: 6, fontVariant: ['tabular-nums'] },
   charCountWarn: { color: colors.error },
-  errorText: { ...text.bodySm, color: colors.error, textAlign: 'center', marginTop: 12 },
-  savedHint: { ...text.caption, color: colors.neutral[300], textAlign: 'center', marginTop: 12 },
+  submitButton: { marginTop: 4 },
+  savedHint: { ...text.caption, color: colors.neutral[600], textAlign: 'center' },
 });

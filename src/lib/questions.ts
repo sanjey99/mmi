@@ -10,6 +10,13 @@
 
 import { supabase } from './supabase';
 import type { Question, QuestionCategory, QuestionDifficulty } from '../types';
+import {
+  countQuestionsByCategory,
+  pickRandomQuestion,
+  type QuestionCounts,
+} from '../features/questions/selection';
+import { parseQuestionCsv } from '../features/questions/csv';
+import type { QuestionDraft } from '../features/questions/validation';
 
 // ── Fetch questions ───────────────────────────────────────────────────────────
 
@@ -35,10 +42,32 @@ export async function getQuestions(opts?: {
   return (data ?? []) as Question[];
 }
 
-export async function getRandomQuestion(category?: QuestionCategory): Promise<Question | null> {
+export async function getQuestionById(questionId: string): Promise<Question | null> {
+  const { data, error } = await supabase
+    .from('questions')
+    .select('*')
+    .eq('id', questionId)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (error) throw error;
+  return data as Question | null;
+}
+
+export async function getActiveQuestionCounts(): Promise<QuestionCounts> {
+  const { data, error } = await supabase
+    .from('questions')
+    .select('category')
+    .eq('is_active', true);
+  if (error) throw error;
+  return countQuestionsByCategory((data ?? []) as Pick<Question, 'category'>[]);
+}
+
+export async function getRandomQuestion(
+  category?: QuestionCategory,
+  previousQuestionId?: string,
+): Promise<Question | null> {
   const questions = await getQuestions({ category, limit: 50 });
-  if (!questions.length) return null;
-  return questions[Math.floor(Math.random() * questions.length)];
+  return pickRandomQuestion(questions, previousQuestionId);
 }
 
 // ── CSV import (admin only) ───────────────────────────────────────────────────
@@ -48,91 +77,28 @@ export interface CSVImportResult {
   errors: { row: number; message: string }[];
 }
 
+export async function createQuestionDraft(question: QuestionDraft): Promise<string> {
+  const { data, error } = await supabase
+    .from('questions')
+    .insert(question)
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
 /**
  * Parse a CSV string and upsert questions into Supabase.
  * Called from the admin questions screen after the user picks a file.
  */
 export async function importQuestionsFromCSV(csvText: string): Promise<CSVImportResult> {
-  const lines = csvText.split('\n').filter(l => l.trim());
-  if (!lines.length) return { inserted: 0, errors: [] };
+  const parsed = parseQuestionCsv(csvText);
+  if (!parsed.rows.length) return { inserted: 0, errors: parsed.errors };
 
-  // Skip header row if present
-  const firstLine = lines[0].toLowerCase();
-  const hasHeader = firstLine.includes('category') || firstLine.includes('text');
-  const dataLines = hasHeader ? lines.slice(1) : lines;
-
-  const errors: { row: number; message: string }[] = [];
-  const toInsert: Omit<Question, 'id' | 'times_attempted' | 'avg_score' | 'created_at'>[] = [];
-
-  for (let i = 0; i < dataLines.length; i++) {
-    const rowNum = hasHeader ? i + 2 : i + 1;
-    try {
-      const row = parseCSVRow(dataLines[i]);
-      if (row.length < 3) {
-        errors.push({ row: rowNum, message: 'Too few columns (need at least category, text)' });
-        continue;
-      }
-
-      const [category, subcategory, text, difficulty, university_tags_raw, is_mmi_raw, guidance_notes] = row;
-
-      const validCategories: QuestionCategory[] = ['motivation', 'ethics', 'nhs', 'teamwork', 'resilience', 'scenarios'];
-      if (!validCategories.includes(category as QuestionCategory)) {
-        errors.push({ row: rowNum, message: `Invalid category "${category}". Must be one of: ${validCategories.join(', ')}` });
-        continue;
-      }
-
-      const validDiffs: QuestionDifficulty[] = ['foundation', 'intermediate', 'advanced'];
-      const diff = (difficulty?.trim() || 'intermediate') as QuestionDifficulty;
-      if (!validDiffs.includes(diff)) {
-        errors.push({ row: rowNum, message: `Invalid difficulty "${diff}"` });
-        continue;
-      }
-
-      const university_tags = university_tags_raw
-        ? university_tags_raw.split(',').map(u => u.trim().toLowerCase()).filter(Boolean)
-        : [];
-
-      toInsert.push({
-        category: category as QuestionCategory,
-        subcategory: subcategory?.trim() || null,
-        text: text.trim(),
-        difficulty: diff,
-        university_tags,
-        is_mmi_suitable: ['true', '1', 'yes'].includes((is_mmi_raw ?? '').toLowerCase()),
-        guidance_notes: guidance_notes?.trim() || null,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      } as any);
-    } catch (e: any) {
-      errors.push({ row: rowNum, message: e.message });
-    }
-  }
-
-  if (!toInsert.length) return { inserted: 0, errors };
-
-  const { error } = await supabase.from('questions').insert(toInsert);
+  const { error } = await supabase
+    .from('questions')
+    .insert(parsed.rows.map(row => row.value));
   if (error) throw new Error(`DB insert failed: ${error.message}`);
 
-  return { inserted: toInsert.length, errors };
-}
-
-// Minimal CSV row parser (handles quoted fields with commas)
-function parseCSVRow(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
-      result.push(current); current = '';
-    } else {
-      current += ch;
-    }
-  }
-  result.push(current);
-  return result.map(s => s.trim());
+  return { inserted: parsed.rows.length, errors: parsed.errors };
 }
