@@ -52,7 +52,7 @@ BEGIN
       OR v_claim.attempt_id <> p_attempt_id
       OR v_claim.station_kind::TEXT <> p_prompt_kind
       OR v_claim.station_id IS DISTINCT FROM p_station_id
-      OR v_claim.standard_sub_q_id IS DISTINCT FROM CASE WHEN p_prompt_kind = 'standard' THEN p_sub_question_id ELSE NULL END THEN
+      OR v_claim.standard_sub_q_id IS DISTINCT FROM (CASE WHEN p_prompt_kind = 'standard' THEN p_sub_question_id ELSE NULL END) THEN
       RETURN jsonb_build_object('code', 'idempotency_conflict');
     END IF;
     IF v_claim.status = 'completed' THEN

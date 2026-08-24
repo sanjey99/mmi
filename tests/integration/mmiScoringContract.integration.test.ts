@@ -61,6 +61,11 @@ describe('MMI scoring deployment contracts', () => {
       "a.status = 'in_progress'",
       'pg_advisory_xact_lock(hashtextextended(v_claim_user::TEXT, 0))',
     ]) assert.match(sql, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+    assert.match(
+      sql,
+      /standard_sub_q_id\s+IS\s+DISTINCT\s+FROM\s*\(\s*CASE\s+WHEN[\s\S]*?END\s*\)\s+THEN/i,
+      'PL/pgSQL requires the CASE identity expression to be explicitly parenthesized',
+    );
   });
 
   it('uses one advisory-to-claim-to-attempt lock order and exposes the ledger only for service reads/inserts', () => {
@@ -190,8 +195,13 @@ run('MMI scoring RPCs (explicit disposable-local integration only)', () => {
     for (const mutation of [{ p_station_id: `${ids.standard}-wrong` }, { p_sub_question_id: ids.standardPrompt2 }, { p_user_id: otherId }]) {
       const { error } = await service.rpc('claim_mmi_scoring_submission', { ...args(attempt.id), ...mutation }); assert.ok(error);
     }
-    await service.from('mmi_attempts').update({ current_prompt_order: 2 }).eq('id', attempt.id);
-    assert.ok((await service.rpc('claim_mmi_scoring_submission', args(attempt.id))).error);
+    const { error: unsafeAdvanceError } = await service.from('mmi_attempts')
+      .update({ current_prompt_order: 2 }).eq('id', attempt.id);
+    assert.ok(unsafeAdvanceError, 'attempt progression must reject a direct prompt-order jump');
+    const { data: unchangedAttempt, error: unchangedAttemptError } = await service.from('mmi_attempts')
+      .select('current_prompt_order,phase').eq('id', attempt.id).single();
+    assert.equal(unchangedAttemptError, null, unchangedAttemptError?.message);
+    assert.deepEqual(unchangedAttempt, { current_prompt_order: 1, phase: 'prompt_active' });
     const fresh = await activeAttempt('rubric'); const claimed = await service.rpc('claim_mmi_scoring_submission', args(fresh.id));
     assert.equal(claimed.error, null); assert.ok((await service.rpc('complete_mmi_scoring_submission', { p_claim_id: (claimed.data as any).claimId, p_lease_token: (claimed.data as any).leaseToken, p_transcript: 'A reviewed synthetic transcript long enough.', p_assessment: assessment, p_rubric_id: randomUUID(), p_rubric_version: 1 })).error);
   });
