@@ -1,10 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { prepareEdgeHttpRequest } from '../_shared/http.ts';
+import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function attemptId(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const body = value as { attemptId?: unknown };
-  return Object.keys(body).length === 1 && typeof body.attemptId === 'string' && body.attemptId.trim()
+  return Object.keys(body).length === 1 && typeof body.attemptId === 'string' && UUID_PATTERN.test(body.attemptId)
     ? body.attemptId.trim() : null;
 }
 
@@ -19,7 +21,7 @@ Deno.serve(async (req) => {
   const { data: { user }, error: authError } = await anon.auth.getUser();
   if (authError || !user) return http.json({ code: 'unauthorized' }, 401);
   let raw: unknown;
-  try { raw = await req.json(); } catch { return http.json({ code: 'invalid_request' }, 400); }
+  try { raw = await readBoundedJson(req); } catch (error) { return http.json({ code: 'invalid_request' }, error instanceof EdgeRequestError ? error.status : 400); }
   const id = attemptId(raw);
   if (!id) return http.json({ code: 'invalid_request' }, 400);
 

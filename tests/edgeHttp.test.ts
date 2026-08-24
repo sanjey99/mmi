@@ -1,9 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { prepareEdgeHttpRequest } from '../supabase/functions/_shared/http';
+import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../supabase/functions/_shared/http';
 
 describe('prepareEdgeHttpRequest', () => {
+  it('rejects streaming JSON over the limit even without Content-Length', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"value":"'));
+        controller.enqueue(new TextEncoder().encode('x'.repeat(64)));
+        controller.enqueue(new TextEncoder().encode('"}'));
+        controller.close();
+      },
+    });
+    const request = new Request('https://functions.example.test/attempt', {
+      method: 'POST', body, duplex: 'half' as never,
+    } as RequestInit & { duplex: string });
+    await expect(readBoundedJson(request, 32)).rejects.toMatchObject({ status: 413 } as EdgeRequestError);
+  });
+
+  it('parses bounded JSON and rejects invalid JSON with a safe status', async () => {
+    await expect(readBoundedJson(new Request('https://functions.example.test/attempt', {
+      method: 'POST', body: '{"attemptId":"abc"}', headers: { 'Content-Type': 'application/json' },
+    }), 64)).resolves.toEqual({ attemptId: 'abc' });
+    await expect(readBoundedJson(new Request('https://functions.example.test/attempt', {
+      method: 'POST', body: '{', headers: { 'Content-Type': 'application/json' },
+    }), 64)).rejects.toMatchObject({ status: 400 } as EdgeRequestError);
+  });
   it('reflects an exactly allowlisted browser origin and applies shared headers to JSON responses', () => {
     const context = prepareEdgeHttpRequest(
       new Request('https://functions.example.test/score-answer', {

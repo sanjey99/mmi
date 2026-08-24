@@ -50,12 +50,16 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
   it('keeps every Edge Function JWT-verified and uses the shared HTTP boundary', () => {
     const config = read(configPath);
     for (const name of ['score-answer', 'manage-ai-key', 'start-mmi-attempt', 'get-mmi-attempt', 'reveal-mmi-prompt', 'abandon-mmi-attempt']) {
-      assert.match(config, new RegExp(`\\[functions\\.${name.replace('-', '\\-')}\\][\\s\\S]*?verify_jwt\\s*=\\s*true`, 'i'));
+      const section = config.match(new RegExp(`\\[functions\\.${name.replace('-', '\\-')}\\]([\\s\\S]*?)(?=\\n\\[|$)`, 'i'));
+      assert.ok(section, `missing [functions.${name}]`);
+      assert.match(section[1], /^verify_jwt\s*=\s*true\s*$/mi);
+      assert.doesNotMatch(section[1], /^verify_jwt\s*=\s*false\s*$/mi);
     }
     for (const path of functionPaths) {
       const source = read(path);
       assert.match(source, /prepareEdgeHttpRequest/);
       assert.match(source, /auth\.getUser\(\)/);
+      assert.match(source, /readBoundedJson/);
       assert.doesNotMatch(source, /service_role[^\n]*authorization|console\.(?:log|error).*authorization/i);
     }
   });
@@ -96,6 +100,36 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
     assert.match(reveal, /preparation_in_progress/);
     assert.match(reveal, /remainingSeconds/);
     assertNoHiddenFields({ attempt: { phase: 'preparing', station: { studentBrief: 'safe' } } });
+  });
+
+  it('pins the exact retained scoring contract and a complete response schema in every snapshot', async () => {
+    const sql = read(migrationPath);
+    const match = sql.match(/v_contract_snapshot\s+JSONB\s*:=\s*\$contract\$([\s\S]*?)\$contract\$::JSONB/i);
+    assert.ok(match, 'expected a canonical Task 4 contract literal');
+    const contractModule = await import('../../supabase/functions/_shared/mmiScoringContract' + '.ts') as any;
+    const { createMmiScoringContractSnapshot, CURRENT_MMI_SCORING_CONTRACT_VERSION } = contractModule;
+    assert.deepEqual(JSON.parse(match[1]), createMmiScoringContractSnapshot(CURRENT_MMI_SCORING_CONTRACT_VERSION));
+    const create = functionBody(sql, 'create_mmi_attempt');
+    assert.match(create, /scoring_contract_version[\s\S]*?v_contract_snapshot->>'version'/i);
+    assert.match(create, /response_schema_snapshot[\s\S]*?v_contract_snapshot->'responseSchema'/i);
+  });
+
+  it('requires contiguous prompt ordering, locked source rows, and post-insert snapshot identity checks', () => {
+    const create = functionBody(read(migrationPath), 'create_mmi_attempt');
+    assert.match(create, /min\s*\(\s*q\.order_num\s*\)[\s\S]*?max\s*\(\s*q\.order_num\s*\)/i);
+    assert.match(create, /v_min_prompt_order\s*<>\s*1/i);
+    assert.match(create, /v_max_prompt_order\s*<>\s*v_prompt_count/i);
+    assert.ok((create.match(/for\s+(?:key\s+)?share|for\s+update/gi) ?? []).length >= 4);
+    assert.match(create, /snapshot_count_mismatch/i);
+  });
+
+  it('handles actual Functions client error-context and 204 result shapes without exposing tokens', async () => {
+    const { resolveMmiFunctionResult, MmiApiError } = await import('../../src/features/mmi/api' + '.ts') as any;
+    assert.equal(await resolveMmiFunctionResult({ data: null, error: null }, true), undefined);
+    await assert.rejects(() => resolveMmiFunctionResult({ data: null, error: {
+      context: new Response(JSON.stringify({ code: 'preparation_in_progress', remainingSeconds: 17 }), { status: 409 }),
+    } }, false), (error: unknown) => error instanceof MmiApiError && (error as { code: string; remainingSeconds?: number }).code === 'preparation_in_progress' && (error as { remainingSeconds?: number }).remainingSeconds === 17);
+    await assert.rejects(() => resolveMmiFunctionResult({ data: null, error: { context: new Response(JSON.stringify({ code: 'authorization' }), { status: 401 }) } }, false), (error: unknown) => error instanceof MmiApiError && (error as { code: string }).code === 'request_failed');
   });
 });
 

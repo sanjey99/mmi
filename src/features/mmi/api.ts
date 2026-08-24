@@ -1,4 +1,3 @@
-import { supabase } from '../../lib/supabase';
 
 export type MmiStationKind = 'standard' | 'roleplay';
 
@@ -59,8 +58,12 @@ export interface GetMmiAttemptResponse {
 }
 
 export class MmiApiError extends Error {
-  constructor(readonly code: string, message: string) {
+  readonly code: string;
+  readonly remainingSeconds?: number;
+  constructor(code: string, message: string, remainingSeconds?: number) {
     super(message);
+    this.code = code;
+    this.remainingSeconds = remainingSeconds;
     this.name = 'MmiApiError';
   }
 }
@@ -86,32 +89,48 @@ function validateStartRequest(request: StartMmiAttemptRequest) {
   }
 }
 
-async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.functions.invoke<T & { code?: string }>(name, { body });
-  const code = data?.code;
-  if (error || code) {
-    throw new MmiApiError(code ?? 'request_failed', messageFor(code ?? 'request_failed'));
+const safeCodes = new Set(Object.keys(safeMessages));
+
+export async function resolveMmiFunctionResult<T>(result: { data: T | null; error: unknown }, allowNoContent = false): Promise<T | undefined> {
+  if (!result.error) {
+    if (result.data === null && allowNoContent) return undefined;
+    if (result.data !== null) return result.data;
+    throw new MmiApiError('empty_response', messageFor('empty_response'));
   }
-  if (!data) throw new MmiApiError('empty_response', messageFor('empty_response'));
-  return data;
+  const context = (result.error as { context?: unknown }).context;
+  if (context instanceof Response) {
+    try {
+      const payload = await context.clone().json() as { code?: unknown; remainingSeconds?: unknown };
+      const code = typeof payload.code === 'string' && safeCodes.has(payload.code) ? payload.code : 'request_failed';
+      const remaining = payload.remainingSeconds;
+      const remainingSeconds = code === 'preparation_in_progress' && typeof remaining === 'number' && Number.isInteger(remaining) && remaining >= 0 && remaining <= 3_600 ? remaining : undefined;
+      throw new MmiApiError(code, messageFor(code), remainingSeconds);
+    } catch (error) { if (error instanceof MmiApiError) throw error; }
+  }
+  throw new MmiApiError('request_failed', messageFor('request_failed'));
+}
+
+async function invoke<T>(name: string, body: Record<string, unknown>, allowNoContent = false): Promise<T | undefined> {
+  const { supabase } = await import('../../lib/supabase');
+  return resolveMmiFunctionResult(await supabase.functions.invoke<T>(name, { body }), allowNoContent);
 }
 
 export async function startMmiAttempt(request: StartMmiAttemptRequest): Promise<StartMmiAttemptResponse> {
   validateStartRequest(request);
-  return invoke<StartMmiAttemptResponse>('start-mmi-attempt', request);
+  return (await invoke<StartMmiAttemptResponse>('start-mmi-attempt', request))!;
 }
 
 export async function getMmiAttempt(attemptId: string): Promise<GetMmiAttemptResponse> {
   if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  return invoke<GetMmiAttemptResponse>('get-mmi-attempt', { attemptId });
+  return (await invoke<GetMmiAttemptResponse>('get-mmi-attempt', { attemptId }))!;
 }
 
 export async function revealMmiPrompt(attemptId: string): Promise<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }> {
   if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  return invoke('reveal-mmi-prompt', { attemptId });
+  return (await invoke<{ prompt?: SafeMmiPrompt; remainingSeconds?: number }>('reveal-mmi-prompt', { attemptId }))!;
 }
 
 export async function abandonMmiAttempt(attemptId: string): Promise<void> {
   if (!attemptId.trim()) throw new MmiApiError('invalid_request', messageFor('invalid_request'));
-  await invoke<Record<string, never>>('abandon-mmi-attempt', { attemptId });
+  await invoke<Record<string, never>>('abandon-mmi-attempt', { attemptId }, true);
 }

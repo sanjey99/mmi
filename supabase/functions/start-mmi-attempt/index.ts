@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { prepareEdgeHttpRequest } from '../_shared/http.ts';
+import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
 
 type StartMmiAttemptRequest = {
   stationKind?: unknown;
@@ -19,7 +19,8 @@ function parseRequest(value: unknown): { stationKind: 'standard' | 'roleplay'; s
   const body = value as StartMmiAttemptRequest;
   if (Object.keys(body).length !== 3 || body.stationKind !== 'standard' && body.stationKind !== 'roleplay'
     || typeof body.stationId !== 'string' || typeof body.privacyNoticeVersion !== 'string'
-    || !body.stationId.trim() || !body.privacyNoticeVersion.trim()) return null;
+    || !body.stationId.trim() || !body.privacyNoticeVersion.trim()
+    || body.stationId.length > 256 || body.privacyNoticeVersion.length > 256) return null;
   return {
     stationKind: body.stationKind,
     stationId: body.stationId.trim(),
@@ -40,11 +41,7 @@ Deno.serve(async (req) => {
   if (authError || !user) return http.json({ code: 'unauthorized' }, 401);
 
   let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return http.json({ code: 'invalid_request' }, 400);
-  }
+  try { raw = await readBoundedJson(req); } catch (error) { return http.json({ code: 'invalid_request' }, error instanceof EdgeRequestError ? error.status : 400); }
   const body = parseRequest(raw);
   if (!body) return http.json({ code: 'invalid_request' }, 400);
 
