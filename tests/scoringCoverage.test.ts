@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMmiScoringSystemPrompt, formatReviewedTranscript, normalizeMmiSubmission, normalizeReviewedTranscript } from '../supabase/functions/_shared/mmiScoring';
+import { runMmiScoringOrchestration } from '../supabase/functions/_shared/mmiScoringOrchestration';
 
 const input = {
   rubric: {
@@ -34,5 +35,41 @@ describe('mmiScoring helpers', () => {
 
   it('rejects non-JSON hidden prompt material rather than coercing it', () => {
     expect(() => buildMmiScoringSystemPrompt({ ...input, hiddenActorContext: Number.NaN } as any)).toThrow('Invalid JSON value');
+  });
+
+  it('marks a malformed provider response retryable without returning provider content', async () => {
+    const calls: string[] = [];
+    const result = await runMmiScoringOrchestration({
+      transcript: 'I would explain the plan clearly and seek senior support.',
+      runProvider: async () => '{malformed',
+      parseProvider: () => { throw new Error('invalid provider output'); },
+      complete: async () => { throw new Error('must not complete'); },
+      fail: async (code) => { calls.push(code); },
+    });
+    expect(result).toEqual({ code: 'scoring_unavailable' });
+    expect(calls).toEqual(['scoring_unavailable']);
+  });
+
+  it('completes the same-key retry only after the first leased provider attempt is marked retryable', async () => {
+    const calls: string[] = [];
+    let retryable = false;
+    const first = await runMmiScoringOrchestration({
+      transcript: 'I would explain the plan clearly and seek senior support.',
+      runProvider: async () => { calls.push('provider:first'); throw new Error('provider unavailable'); },
+      parseProvider: (value) => value as { valid: boolean },
+      complete: async () => { throw new Error('must not complete'); },
+      fail: async () => { retryable = true; calls.push('fail'); },
+    });
+    expect(first).toEqual({ code: 'scoring_unavailable' });
+    expect(retryable).toBe(true);
+    const result = await runMmiScoringOrchestration({
+      transcript: 'I would explain the plan clearly and seek senior support.',
+      runProvider: async () => '{"valid":true}',
+      parseProvider: (value) => value as { valid: boolean },
+      complete: async (value) => { calls.push(`complete:${String((value as { valid: boolean }).valid)}`); return { saved: true }; },
+      fail: async () => { throw new Error('must not fail'); },
+    });
+    expect(result).toEqual({ saved: true });
+    expect(calls).toEqual(['provider:first', 'fail', 'complete:true']);
   });
 });

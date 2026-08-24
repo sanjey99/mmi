@@ -7,6 +7,8 @@ import { createMmiPublicOutputContext, parseMmiRubric, parseSubmitMmiPromptReque
 import { getMmiScoringContract, parseProviderAssessmentForContract } from '../_shared/mmiScoringContract.ts';
 // @ts-ignore Edge functions deliberately import source TypeScript.
 import { buildMmiScoringSystemPrompt, formatReviewedTranscript, normalizeMmiSubmission } from '../_shared/mmiScoring.ts';
+// @ts-ignore Edge functions deliberately import source TypeScript.
+import { runMmiScoringOrchestration } from '../_shared/mmiScoringOrchestration.ts';
 import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
 
 type Snapshot = {
@@ -85,19 +87,28 @@ Deno.serve(async (req) => {
     const contract = getMmiScoringContract(pinned.scoring_contract_version);
     const config = await providerConfig(service);
     if (!config) throw new Error('provider_unavailable');
-    const raw = await callConfiguredProvider(config, {
-      systemPrompt: buildMmiScoringSystemPrompt({ rubric, hiddenReferenceAnswer: pinned.hidden_reference_answer, hiddenActorContext: pinned.hidden_actor_context, assessorInstructions: contract.assessorInstructions, responseSchema: pinned.response_schema_snapshot }),
-      userContent: formatReviewedTranscript(normalized.transcript), maxTokens: 900,
+    const outcome = await runMmiScoringOrchestration<Record<string, unknown>, Record<string, unknown>>({
+      transcript: normalized.transcript,
+      runProvider: async () => await callConfiguredProvider(config, {
+        systemPrompt: buildMmiScoringSystemPrompt({ rubric, hiddenReferenceAnswer: pinned.hidden_reference_answer, hiddenActorContext: pinned.hidden_actor_context, assessorInstructions: contract.assessorInstructions, responseSchema: pinned.response_schema_snapshot }),
+        userContent: formatReviewedTranscript(normalized.transcript), maxTokens: 900,
+      }) as string,
+      parseProvider: (parsed) => {
+        parseProviderAssessmentForContract(parsed, contract, rubric, normalized.transcript);
+        return toPublicMmiAssessment(parsed, normalized.transcript, createMmiPublicOutputContext({ rubric, scoringContractVersion: contract.version, studentFeedbackCatalog: contract.studentFeedbackCatalog })) as unknown as Record<string, unknown>;
+      },
+      complete: async (assessment) => {
+        const { data: completed, error: completeError } = await service.rpc('complete_mmi_scoring_submission', {
+          p_claim_id: claimId, p_lease_token: leaseToken, p_transcript: normalized.transcript,
+          p_assessment: assessment, p_rubric_id: pinned.rubric_id, p_rubric_version: pinned.rubric_version,
+        });
+        if (completeError || !completed) throw new Error('completion_unavailable');
+        return completed as Record<string, unknown>;
+      },
+      fail: async () => { await service.rpc('fail_mmi_scoring_submission', { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' }); },
     });
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    parseProviderAssessmentForContract(parsed, contract, rubric, normalized.transcript);
-    const assessment = toPublicMmiAssessment(parsed, normalized.transcript, createMmiPublicOutputContext({ rubric, scoringContractVersion: contract.version, studentFeedbackCatalog: contract.studentFeedbackCatalog }));
-    const { data: completed, error: completeError } = await service.rpc('complete_mmi_scoring_submission', {
-      p_claim_id: claimId, p_lease_token: leaseToken, p_transcript: normalized.transcript,
-      p_assessment: assessment, p_rubric_id: pinned.rubric_id, p_rubric_version: pinned.rubric_version,
-    });
-    if (completeError || !completed) return http.json({ code: 'scoring_unavailable' }, 409);
-    const result = completed as Record<string, unknown>;
+    if ('code' in outcome) return http.json({ code: 'scoring_unavailable' }, 502);
+    const result = outcome;
     return http.json({ assessment: result.assessment, attemptStatus: result.attemptStatus, hasNextPrompt: result.hasNextPrompt, replayed: false });
   } catch {
     await service.rpc('fail_mmi_scoring_submission', { p_claim_id: claimId, p_lease_token: leaseToken, p_safe_error_code: 'scoring_unavailable' });
