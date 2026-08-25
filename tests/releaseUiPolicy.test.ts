@@ -57,4 +57,31 @@ describe('final release UI policy', () => {
     expect(browserSuite).toContain("'https://*.supabase.co/**'");
     expect(browserSuite).toContain('Unexpected Supabase host');
   });
+
+  it('uses the canonical public practice URL for every feedback exit', () => {
+    const feedback = read('app/practice/feedback.tsx');
+
+    expect(feedback.match(/router\.replace\('\/practice'\)/g)).toHaveLength(3);
+    expect(feedback).not.toContain("router.dismissTo('/practice')");
+    expect(feedback).not.toContain('<Redirect href="/practice" />');
+    expect(feedback).not.toContain("router.replace('/(tabs)/practice')");
+  });
+
+  it('renders a privacy-minimal unavailable state instead of auto-navigating', () => {
+    const feedback = read('app/practice/feedback.tsx');
+
+    expect(feedback).toContain('Feedback unavailable');
+    expect(feedback).toContain('This review cannot be opened from the current account or browser session.');
+    expect(feedback).not.toMatch(/belongs to another|different user|session exists/i);
+  });
+
+  it('waits for restored authentication before deciding feedback ownership', () => {
+    const feedback = read('app/practice/feedback.tsx');
+
+    expect(feedback).toContain('const authLoading = useAuthStore(state => state.loading)');
+    expect(feedback).toContain(
+      'if (authLoading || !hasOwnedCachedSession || !scoreResult || !currentQuestion) return;',
+    );
+    expect(feedback).toContain('if (authLoading) return null;');
+  });
 });

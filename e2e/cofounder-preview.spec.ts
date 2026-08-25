@@ -219,9 +219,11 @@ test('partner completes practice, sends feedback, and signs out', async ({ page 
   await expect(page.getByText('Ready, Second.').last()).toBeVisible();
 
   await page.goto(`/practice/feedback?sessionId=${sessionId}`);
-  await expect(page.getByText('Choose a station')).toBeVisible();
+  await expect(page.getByText('Feedback unavailable')).toBeVisible();
   await expect(page.getByText('Your response balanced autonomy with a clear safety plan.')).toHaveCount(0);
   await expect(page.getByText(/I would first explore the patient/)).toHaveCount(0);
+  await page.getByText('Choose a station', { exact: true }).click();
+  await expect(page.getByText('Choose a station door')).toBeVisible();
 
   await page.goto('/admin/questions');
   await expect(page.getByText('Ready, Second.').last()).toBeVisible();

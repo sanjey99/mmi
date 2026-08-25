@@ -53,6 +53,7 @@ function ScoreBadge({ percentage }: { percentage: number }) {
 export default function FeedbackScreen() {
   const { session: cachedSession, scoreResult, currentQuestion, answerText, clearFeedback } = usePracticeStore();
   const authenticatedUserId = useAuthStore(state => state.session?.user.id);
+  const authLoading = useAuthStore(state => state.loading);
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const routeSessionId = typeof sessionId === 'string' ? sessionId : '';
   const hasOwnedCachedSession = ownsCachedPracticeSession({
@@ -64,29 +65,44 @@ export default function FeedbackScreen() {
   const fadeAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) {
-      router.replace('/(tabs)/practice');
-      return;
-    }
+    if (authLoading || !hasOwnedCachedSession || !scoreResult || !currentQuestion) return;
 
     Animated.parallel([
       Animated.timing(fadeAnimation, { toValue: 1, duration: 350, useNativeDriver: true }),
       Animated.spring(slideAnimation, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
     ]).start();
 
-  }, [hasOwnedCachedSession, scoreResult, currentQuestion]);
+  }, [authLoading, hasOwnedCachedSession, scoreResult, currentQuestion]);
 
   const handleTryAgain = () => {
     clearFeedback();
-    router.replace('/(tabs)/practice');
+    router.replace('/practice');
   };
 
   const handleNextQuestion = () => {
     clearFeedback();
-    router.replace('/(tabs)/practice');
+    router.replace('/practice');
   };
 
-  if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) return null;
+  if (authLoading) return null;
+  if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.unavailableContent}>
+          <Text style={styles.unavailableEyebrow}>REVIEW ROOM · CLOSED PREVIEW</Text>
+          <Text style={styles.unavailableTitle}>Feedback unavailable</Text>
+          <Text style={styles.unavailableBody}>
+            This review cannot be opened from the current account or browser session.
+          </Text>
+          <Button
+            label="Choose a station"
+            onPress={() => router.replace('/practice')}
+            style={styles.unavailableAction}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -178,6 +194,19 @@ export default function FeedbackScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg.primary },
+  unavailableContent: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingVertical: 40,
+  },
+  unavailableEyebrow: { ...text.labelMd, color: colors.teal[600], marginBottom: 8 },
+  unavailableTitle: { ...text.displayLg, color: colors.primary[900] },
+  unavailableBody: { ...text.bodyLg, color: colors.neutral[600], lineHeight: 26, marginTop: 10 },
+  unavailableAction: { alignSelf: 'flex-start', minWidth: 210, marginTop: 24 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
