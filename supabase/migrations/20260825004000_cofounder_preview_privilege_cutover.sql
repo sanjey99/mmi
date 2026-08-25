@@ -396,6 +396,7 @@ BEGIN
       OR NOT has_table_privilege('service_role', 'public.' || v_table, 'TRUNCATE')
       OR NOT has_table_privilege('service_role', 'public.' || v_table, 'REFERENCES')
       OR NOT has_table_privilege('service_role', 'public.' || v_table, 'TRIGGER')
+      OR NOT has_table_privilege('service_role', 'public.' || v_table, 'MAINTAIN')
     THEN
       RAISE EXCEPTION 'service-only preview table ACL prerequisite failed for public.% service_role', v_table;
     END IF;
@@ -409,6 +410,7 @@ BEGIN
         OR has_table_privilege(v_role, 'public.' || v_table, 'TRUNCATE')
         OR has_table_privilege(v_role, 'public.' || v_table, 'REFERENCES')
         OR has_table_privilege(v_role, 'public.' || v_table, 'TRIGGER')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'MAINTAIN')
         OR has_any_column_privilege(v_role, 'public.' || v_table, 'SELECT')
         OR has_any_column_privilege(v_role, 'public.' || v_table, 'INSERT')
         OR has_any_column_privilege(v_role, 'public.' || v_table, 'UPDATE')
@@ -428,6 +430,7 @@ BEGIN
       OR has_table_privilege(v_role, 'public.cofounder_feedback', 'TRUNCATE')
       OR has_table_privilege(v_role, 'public.cofounder_feedback', 'REFERENCES')
       OR has_table_privilege(v_role, 'public.cofounder_feedback', 'TRIGGER')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'MAINTAIN')
       OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'SELECT')
       OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'INSERT')
       OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'UPDATE')
@@ -458,7 +461,7 @@ BEGIN
   ]
   LOOP
     FOREACH v_privilege IN ARRAY ARRAY[
-      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
     ]
     LOOP
       IF has_table_privilege('service_role', 'public.' || v_table, v_privilege) THEN
@@ -755,6 +758,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.app_config', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.app_config', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.app_config', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.app_config', 'MAINTAIN')
     OR has_table_privilege('anon', 'public.app_config', 'SELECT')
     OR has_table_privilege('anon', 'public.app_config', 'INSERT')
     OR has_table_privilege('anon', 'public.app_config', 'UPDATE')
@@ -762,6 +766,7 @@ BEGIN
     OR has_table_privilege('anon', 'public.app_config', 'TRUNCATE')
     OR has_table_privilege('anon', 'public.app_config', 'REFERENCES')
     OR has_table_privilege('anon', 'public.app_config', 'TRIGGER')
+    OR has_table_privilege('anon', 'public.app_config', 'MAINTAIN')
     OR has_any_column_privilege('anon', 'public.app_config', 'SELECT')
     OR has_any_column_privilege('anon', 'public.app_config', 'INSERT')
     OR has_any_column_privilege('anon', 'public.app_config', 'UPDATE')
@@ -781,7 +786,7 @@ DECLARE
   v_table text;
 BEGIN
   FOREACH v_privilege IN ARRAY ARRAY[
-    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
   ]
   LOOP
     IF has_table_privilege('service_role', 'public.profiles', v_privilege)
@@ -794,7 +799,7 @@ BEGIN
   FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions']
   LOOP
     FOREACH v_privilege IN ARRAY ARRAY[
-      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
     ]
     LOOP
       IF has_table_privilege('service_role', 'public.' || v_table, v_privilege) THEN
@@ -923,8 +928,9 @@ BEGIN
       OR has_table_privilege('anon', 'public.' || v_table, 'UPDATE')
       OR has_table_privilege('anon', 'public.' || v_table, 'DELETE')
       OR has_table_privilege('anon', 'public.' || v_table, 'TRUNCATE')
-      OR has_table_privilege('anon', 'public.' || v_table, 'REFERENCES')
-      OR has_table_privilege('anon', 'public.' || v_table, 'TRIGGER')
+    OR has_table_privilege('anon', 'public.' || v_table, 'REFERENCES')
+    OR has_table_privilege('anon', 'public.' || v_table, 'TRIGGER')
+    OR has_table_privilege('anon', 'public.' || v_table, 'MAINTAIN')
       OR has_any_column_privilege('anon', 'public.' || v_table, 'SELECT')
       OR has_any_column_privilege('anon', 'public.' || v_table, 'INSERT')
       OR has_any_column_privilege('anon', 'public.' || v_table, 'UPDATE')
@@ -941,6 +947,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.questions', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.questions', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.questions', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.questions', 'MAINTAIN')
     OR has_any_column_privilege('authenticated', 'public.questions', 'SELECT')
     OR has_any_column_privilege('authenticated', 'public.questions', 'INSERT')
     OR has_any_column_privilege('authenticated', 'public.questions', 'UPDATE')
@@ -952,6 +959,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.answers', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.answers', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.answers', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.answers', 'MAINTAIN')
     OR has_any_column_privilege('authenticated', 'public.answers', 'INSERT')
     OR has_any_column_privilege('authenticated', 'public.answers', 'UPDATE')
     OR has_any_column_privilege('authenticated', 'public.answers', 'REFERENCES')
@@ -962,6 +970,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.scores', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.scores', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.scores', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.scores', 'MAINTAIN')
     OR has_any_column_privilege('authenticated', 'public.scores', 'INSERT')
     OR has_any_column_privilege('authenticated', 'public.scores', 'UPDATE')
     OR has_any_column_privilege('authenticated', 'public.scores', 'REFERENCES')
@@ -972,6 +981,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.mock_sessions', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.mock_sessions', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.mock_sessions', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.mock_sessions', 'MAINTAIN')
     OR has_any_column_privilege('authenticated', 'public.mock_sessions', 'UPDATE')
     OR has_any_column_privilege('authenticated', 'public.mock_sessions', 'REFERENCES')
     OR NOT has_table_privilege('authenticated', 'public.profiles', 'SELECT')
@@ -981,6 +991,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.profiles', 'TRUNCATE')
     OR has_table_privilege('authenticated', 'public.profiles', 'REFERENCES')
     OR has_table_privilege('authenticated', 'public.profiles', 'TRIGGER')
+    OR has_table_privilege('authenticated', 'public.profiles', 'MAINTAIN')
     OR has_any_column_privilege('authenticated', 'public.profiles', 'INSERT')
     OR has_any_column_privilege('authenticated', 'public.profiles', 'REFERENCES')
     OR has_function_privilege('authenticated', 'public.update_streak(uuid)', 'EXECUTE')

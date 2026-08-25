@@ -63,7 +63,7 @@ describe('cofounder preview privilege cutover policy', () => {
     for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
       expect(sql).toContain(`has_table_privilege('authenticated', 'public.app_config', '${privilege}')`);
     }
-    for (const privilege of ['TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+    for (const privilege of ['TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
       expect(sql).toContain(`has_table_privilege('anon', 'public.app_config', '${privilege}')`);
     }
     expect(sql.lastIndexOf('service-role Edge ACL postcondition failed')).toBeGreaterThan(
@@ -133,7 +133,7 @@ describe('cofounder preview privilege cutover policy', () => {
     const sql = await readFile(migrationPath, 'utf8');
 
     expect(sql).toMatch(/FOREACH v_role IN ARRAY ARRAY\['anon', 'authenticated', 'service_role'\]/i);
-    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
       expect(sql).toContain(`has_table_privilege(v_role, 'public.cofounder_feedback', '${privilege}')`);
     }
     for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) {
@@ -158,7 +158,9 @@ describe('cofounder preview privilege cutover policy', () => {
       expect(sql).toContain(`'${table}'`);
     }
     expect(sql).toMatch(/assessor table service-role ACL prerequisite failed/i);
-    expect(sql).toContain("has_table_privilege('service_role', 'public.' || v_table, 'SELECT')");
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
+      expect(sql).toContain(`has_table_privilege('service_role', 'public.' || v_table, '${privilege}')`);
+    }
     expect(sql).toContain("has_any_column_privilege('service_role', 'public.' || v_table, 'UPDATE')");
   });
 
@@ -191,7 +193,7 @@ describe('cofounder preview privilege cutover policy', () => {
     for (const table of ['questions', 'answers', 'scores', 'mock_sessions']) {
       expect(sql).toMatch(new RegExp(`REVOKE ALL ON TABLE public\\.${table} FROM service_role`, 'i'));
     }
-    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
       expect(sql).toContain(`has_table_privilege('service_role', 'public.' || v_table, '${privilege}')`);
     }
     for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) {

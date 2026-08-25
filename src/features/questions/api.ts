@@ -1,6 +1,7 @@
 import type { Question, QuestionCategory, QuestionDifficulty } from '../../types';
 import { QUESTION_CATEGORIES, type QuestionCounts } from './selection';
 import { validateQuestionDraft, type QuestionDraft } from './validation';
+import { validateQuestionImport, type QuestionImportDraft } from './importValidation';
 
 const QUESTION_DIFFICULTIES = Object.freeze([
   'foundation',
@@ -24,6 +25,14 @@ export interface QuestionRpcClient {
     functionName: string,
     parameters?: Record<string, unknown>,
   ) => PromiseLike<RpcResponse>;
+}
+
+export interface QuestionImportResult {
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  retried: boolean;
+  ids: string[];
 }
 
 interface CatalogOptions {
@@ -191,4 +200,69 @@ export async function createQuestionRows(
   return indexedIds
     .sort((left, right) => left.sourceIndex - right.sourceIndex)
     .map(row => row.id);
+}
+
+export async function importQuestionRows(
+  client: QuestionRpcClient,
+  questions: readonly QuestionImportDraft[],
+): Promise<QuestionImportResult> {
+  if (questions.length < 1 || questions.length > 500) throw invalidRequest();
+  const normalized = questions.map(question => {
+    const validation = validateQuestionImport(question);
+    if (!validation.success) throw invalidRequest();
+    return validation.data;
+  });
+  const first = normalized[0];
+  if (!first || normalized.some(question => (
+    question.source_namespace !== first.source_namespace
+    || question.source_manifest_sha256 !== first.source_manifest_sha256
+    || question.source_batch_id !== first.source_batch_id
+  ))) {
+    throw invalidRequest();
+  }
+  const data = await callRpc(client, 'import_legacy_question_batch', {
+    p_source_namespace: first.source_namespace,
+    p_source_manifest_sha256: first.source_manifest_sha256,
+    p_batch_id: first.source_batch_id,
+    p_rows: normalized.map(({
+      source_namespace: _sourceNamespace,
+      source_manifest_sha256: _sourceManifestSha256,
+      source_batch_id: _sourceBatchId,
+      ...row
+    }) => row),
+  });
+  if (!Array.isArray(data) || data.length !== normalized.length) throw invalidResponse();
+
+  const indexedRows = data.map(row => {
+    if (
+      !isRecord(row)
+      || !Number.isInteger(row.source_index)
+      || Number(row.source_index) < 0
+      || Number(row.source_index) >= normalized.length
+      || typeof row.id !== 'string'
+      || !UUID_PATTERN.test(row.id)
+      || !['inserted', 'updated', 'unchanged', 'retried'].includes(row.outcome as string)
+    ) {
+      throw invalidResponse();
+    }
+    return {
+      sourceIndex: Number(row.source_index),
+      id: row.id,
+      outcome: row.outcome as 'inserted' | 'updated' | 'unchanged' | 'retried',
+    };
+  });
+  if (new Set(indexedRows.map(row => row.sourceIndex)).size !== normalized.length) {
+    throw invalidResponse();
+  }
+  const sorted = indexedRows.sort((left, right) => left.sourceIndex - right.sourceIndex);
+  const retried = sorted.every(row => row.outcome === 'retried');
+  if (!retried && sorted.some(row => row.outcome === 'retried')) throw invalidResponse();
+
+  return {
+    inserted: sorted.filter(row => row.outcome === 'inserted').length,
+    updated: sorted.filter(row => row.outcome === 'updated').length,
+    unchanged: sorted.filter(row => row.outcome === 'unchanged').length,
+    retried,
+    ids: sorted.map(row => row.id),
+  };
 }

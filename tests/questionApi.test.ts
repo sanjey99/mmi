@@ -4,6 +4,7 @@ import {
   fetchQuestionById,
   fetchQuestionCatalog,
   fetchQuestionCounts,
+  importQuestionRows,
 } from '../src/features/questions/api';
 
 const questionRow = {
@@ -86,6 +87,75 @@ describe('legacy question RPC client', () => {
 
     await expect(createQuestionRows(client, [draft])).resolves.toEqual([questionRow.id]);
     expect(client.rpc).toHaveBeenCalledWith('create_legacy_questions', { p_rows: [draft] });
+  });
+
+  it('sends workbook imports through the idempotent RPC and returns server outcomes', async () => {
+    const client = rpcClient([{ source_index: 0, id: questionRow.id, outcome: 'inserted' }]);
+    const draft = {
+      category: 'ethics' as const,
+      text: questionRow.text,
+      difficulty: 'intermediate' as const,
+      subcategory: 'autonomy',
+      university_tags: ['oxford'],
+      is_mmi_suitable: true,
+      guidance_notes: 'Timing only.',
+      is_active: false,
+      source_namespace: 'med_interview_question_bank',
+      source_id: 'MMI_001/MMI_001_Q1',
+      source_manifest_sha256: '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71',
+      source_batch_id: 'questions-part-1',
+    };
+
+    await expect(importQuestionRows(client, [draft])).resolves.toEqual({
+      inserted: 1,
+      updated: 0,
+      unchanged: 0,
+      retried: false,
+      ids: [questionRow.id],
+    });
+    expect(client.rpc).toHaveBeenCalledWith('import_legacy_question_batch', {
+      p_source_namespace: 'med_interview_question_bank',
+      p_source_manifest_sha256: '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71',
+      p_batch_id: 'questions-part-1',
+      p_rows: [{
+        category: 'ethics',
+        text: questionRow.text,
+        difficulty: 'intermediate',
+        subcategory: 'autonomy',
+        university_tags: ['oxford'],
+        is_mmi_suitable: true,
+        guidance_notes: 'Timing only.',
+        is_active: false,
+        source_id: 'MMI_001/MMI_001_Q1',
+      }],
+    });
+  });
+
+  it('rejects mixed import identities and malformed idempotency responses locally', async () => {
+    const client = rpcClient([{ source_index: 0, id: questionRow.id, outcome: 'surprise' }]);
+    const base = {
+      category: 'ethics' as const,
+      text: questionRow.text,
+      difficulty: 'intermediate' as const,
+      subcategory: 'autonomy',
+      university_tags: ['oxford'],
+      is_mmi_suitable: true,
+      guidance_notes: null,
+      is_active: false,
+      source_namespace: 'med_interview_question_bank',
+      source_manifest_sha256: '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71',
+      source_batch_id: 'questions-part-1',
+    };
+
+    await expect(importQuestionRows(client, [
+      { ...base, source_id: 'MMI_001/MMI_001_Q1' },
+      { ...base, source_id: 'MMI_001/MMI_001_Q2', source_batch_id: 'questions-part-2' },
+    ])).rejects.toThrow('Question request is invalid.');
+    expect(client.rpc).not.toHaveBeenCalled();
+
+    await expect(importQuestionRows(client, [{ ...base, source_id: 'MMI_001/MMI_001_Q1' }])).rejects.toThrow(
+      'Question service returned an invalid response.',
+    );
   });
 
   it('rejects malformed inputs and server responses without exposing provider errors', async () => {

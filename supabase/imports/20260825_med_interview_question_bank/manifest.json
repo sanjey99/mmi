@@ -1,13 +1,13 @@
 {
-  "artifact_version": 1,
+  "artifact_version": 2,
   "artifacts": {
     "questions-part-1.csv": {
       "rows": 500,
-      "sha256": "021267a618a781d18b7c9b5e4321df56150b53c4f764cccb8ab03bd46786b54a"
+      "sha256": "33769d18edf3872fc0b2b43fa957ed309715067a777607388d6c92f851f77c30"
     },
     "questions-part-2.csv": {
       "rows": 285,
-      "sha256": "0e4897dcb7da1aa10cb2b4ab7475db7d949ca35c90146054d458c5783e09305e"
+      "sha256": "738ba2beca271c1c44f751446c02be930b79e304369a16a81b6e37d937857f0e"
     }
   },
   "policy": {
@@ -32,7 +32,15 @@
       "medium": "intermediate"
     },
     "exact_duplicate_rows_deduplicated": 25,
-    "guidance_notes_policy": "source IDs and timing metadata only",
+    "guidance_notes_policy": "timing metadata only",
+    "import_identity": {
+      "batch_ids": {
+        "questions-part-1.csv": "questions-part-1",
+        "questions-part-2.csv": "questions-part-2"
+      },
+      "source_manifest_sha256": "903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71",
+      "source_namespace": "med_interview_question_bank"
+    },
     "panel_notes_excluded": true,
     "repeated_headers_removed": 97
   },

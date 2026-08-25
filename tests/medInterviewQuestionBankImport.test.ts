@@ -20,6 +20,7 @@ describe('20260825 medical-interview question-bank import policy', () => {
       readFile(path.resolve(process.cwd(), '.gitignore'), 'utf8'),
     ]);
     const manifest = JSON.parse(manifestText) as {
+      artifact_version: number;
       source: { basename: string; sha256: string };
       artifacts: Record<string, { rows: number; sha256: string }>;
       policy: {
@@ -29,6 +30,11 @@ describe('20260825 medical-interview question-bank import policy', () => {
         cached_model_answers_excluded: boolean;
         panel_notes_excluded: boolean;
         guidance_notes_policy: string;
+        import_identity: {
+          source_namespace: string;
+          source_manifest_sha256: string;
+          batch_ids: Record<string, string>;
+        };
         category_mapping: Record<string, string>;
         difficulty_normalization: { medium: string; case_insensitive_allowed_values: string[] };
       };
@@ -51,20 +57,29 @@ describe('20260825 medical-interview question-bank import policy', () => {
     expect(manifest.artifacts).toEqual({
       'questions-part-1.csv': {
         rows: 500,
-        sha256: '021267a618a781d18b7c9b5e4321df56150b53c4f764cccb8ab03bd46786b54a',
+        sha256: '33769d18edf3872fc0b2b43fa957ed309715067a777607388d6c92f851f77c30',
       },
       'questions-part-2.csv': {
         rows: 285,
-        sha256: '0e4897dcb7da1aa10cb2b4ab7475db7d949ca35c90146054d458c5783e09305e',
+        sha256: '738ba2beca271c1c44f751446c02be930b79e304369a16a81b6e37d937857f0e',
       },
     });
+    expect(manifest.artifact_version).toBe(2);
     expect(manifest.policy).toMatchObject({
       repeated_headers_removed: 97,
       exact_duplicate_rows_deduplicated: 25,
       criteria_excluded: true,
       cached_model_answers_excluded: true,
       panel_notes_excluded: true,
-      guidance_notes_policy: 'source IDs and timing metadata only',
+      guidance_notes_policy: 'timing metadata only',
+      import_identity: {
+        source_namespace: 'med_interview_question_bank',
+        source_manifest_sha256: expectedSourceHash,
+        batch_ids: {
+          'questions-part-1.csv': 'questions-part-1',
+          'questions-part-2.csv': 'questions-part-2',
+        },
+      },
       category_mapping: {
         ethics: 'ethics',
         professionalism: 'ethics',
@@ -95,8 +110,8 @@ describe('20260825 medical-interview question-bank import policy', () => {
     expect(generator).toMatch(/Generated CSV payloads are local-only private proof\. They must\s+not be committed\./);
     expect(generator).toContain("if source.name != 'med_interview_question_bank.xlsx':");
     expect(generator).toContain('if sha256_file(source) != EXPECTED_SOURCE_SHA256:');
-    expect(generator).toMatch(/CSV_HEADERS = \[\n(?:    '[a-z_]+',\n){7}\]/);
-    const csvHeaders = generator.match(/CSV_HEADERS = \[\n((?:    '[a-z_]+',\n){7})\]/)?.[1] ?? '';
+    expect(generator).toMatch(/CSV_HEADERS = \[\n(?:    '[a-z0-9_]+',\n){11}\]/);
+    const csvHeaders = generator.match(/CSV_HEADERS = \[\n((?:    '[a-z0-9_]+',\n){11})\]/)?.[1] ?? '';
     for (const header of [
       'category',
       'text',
@@ -105,6 +120,10 @@ describe('20260825 medical-interview question-bank import policy', () => {
       'university_tags',
       'is_mmi_suitable',
       'guidance_notes',
+      'source_namespace',
+      'source_id',
+      'source_manifest_sha256',
+      'source_batch_id',
     ]) {
       expect(generator).toContain(`    '${header}',`);
     }
@@ -112,7 +131,9 @@ describe('20260825 medical-interview question-bank import policy', () => {
     expect(generator).toContain("'criteria_excluded': True,");
     expect(generator).toContain("'cached_model_answers_excluded': True,");
     expect(generator).toContain("'panel_notes_excluded': True,");
-    expect(generator).toContain("'guidance_notes_policy': 'source IDs and timing metadata only',");
+    expect(generator).toContain("'guidance_notes_policy': 'timing metadata only',");
+    expect(generator).toContain("'source_namespace': SOURCE_NAMESPACE,");
+    expect(generator).toContain("'source_manifest_sha256': EXPECTED_SOURCE_SHA256,");
     expect(generator).toContain("f'{filename} exceeds the 500-row importer limit.'");
     expect(generator).toContain("f'{filename} exceeds the 1 MB importer limit.'");
   });

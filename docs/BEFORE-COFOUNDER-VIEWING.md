@@ -51,7 +51,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - Public signup was disabled by the project owner and verified read-only on 25 August 2026: Auth settings returned `disable_signup=true`; email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled.
 - The public Supabase project endpoint is reachable. The prior browser `NetworkError` was a missing or stale client environment configuration, not an outage.
 - The fresh read-only snapshot found policies exposing assessor-bearing MMI/role-play content to authenticated users, unsafe legacy question fields, cross-user `update_streak`, and own-answer score insertion. Do not infer the current post-approval state beyond the separately recorded operations below.
-- During the current local reliability-fix phase, no hosted migration, function deployment, secret/configuration change, user/profile mutation, or application-row mutation was performed. Earlier, separately approved hosted operations are recorded below; the current local changes are not deployed.
+- During the current local import-idempotency phase, no hosted migration, function deployment, secret/configuration change, user/profile mutation, or application-row mutation was performed. Earlier, separately approved hosted operations are recorded below; only the current import-idempotency changes are not deployed.
 
 ## Implemented locally
 
@@ -60,7 +60,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Replaced the prior competitor-adjacent visual world with the researched station-corridor system.
 - [x] Added a responsive square-geometry component system, accessible labelled controls, explicit state copy, and no emoji navigation.
 - [x] Added deterministic back navigation with safe deep-link fallbacks.
-- [x] Fixed the Home **NEXT STATION** overlap and made admin Profile's **Question Desk** route directly to `/admin/questions`. These UI fixes are local only and not deployed.
+- [x] Fixed the Home **NEXT STATION** overlap and made admin Profile's **Question Desk** route directly to `/admin/questions`. These routing fixes are live in the stable Vercel deployment from `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`.
 - [x] Replaced React Native Web `Alert.alert()` flows with rendered confirmation and notice components.
 - [x] Added substantive, reachable Terms and Privacy screens labelled for legal review.
 - [x] Preserved the legacy `/signup` route as an invitation-only notice with no `auth.signUp()` call.
@@ -83,7 +83,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] The client no longer inserts authoritative answers/scores, updates session totals, or invokes arbitrary streak mutations.
 - [x] The authenticated Edge path loads server-owned state and applies body bounds, durable rate limiting, idempotency, a lease, safe provider errors, and atomic persistence.
 - [x] Provider handling retains exact host/origin allowlists, HTTPS, DNS/private-network rejection, redirect rejection, timeouts, strict schema validation, and secret-safe errors.
-- [x] Local scoring fix: pinned direct OpenAI/Anthropic endpoints no longer require `Deno.resolveDns`; custom `openai_compatible` endpoints retain their exact allowlist and dual DNS revalidation. Only safe stages are recorded in server logs. This is local only and not deployed; hosted scoring still returned `provider_failed` with `openai` and `gpt-4o-mini`.
+- [x] Direct-provider scoring fix: pinned OpenAI/Anthropic endpoints no longer require `Deno.resolveDns`; custom `openai_compatible` endpoints retain their exact allowlist and dual DNS revalidation. Only safe stages are recorded in server logs. This is live in `score-answer` v4 ACTIVE; a post-v4 hosted scoring-success smoke remains unverified. The previously recorded hosted smoke returned `provider_failed` with `openai` and `gpt-4o-mini` and must not be treated as post-v4 success evidence.
 - [x] Local migration: `20260825000000_cofounder_preview_scoring.sql`.
 - [x] Hosted application/deployment remains approval-gated.
 
@@ -104,12 +104,14 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Local migration: `20260825001000_cofounder_preview_question_api.sql`.
 - [x] Hosted application remains approval-gated.
 
-### Local workbook staging — not imported
+### Local workbook staging and retry-safe import — not hosted
 
 - [x] Preserved a local-only compatible-draft import artifact for workbook SHA-256 `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`: 785 inactive drafts split into 500 and 285 rows.
-- [x] Artifact SHA-256 values: part 1 `021267a618a781d18b7c9b5e4321df56150b53c4f764cccb8ab03bd46786b54a`; part 2 `0e4897dcb7da1aa10cb2b4ab7475db7d949ca35c90146054d458c5783e09305e`; manifest `0bbb3c9efffb14bcbb59642054271098f5f7c8d31da3cd31edf2a54e5e5d8318`.
+- [x] Converter artifact v2 adds stable `source_namespace`, `source_id`, approved workbook SHA-256, and batch ID metadata. Artifact SHA-256 values: part 1 `33769d18edf3872fc0b2b43fa957ed309715067a777607388d6c92f851f77c30`; part 2 `738ba2beca271c1c44f751446c02be930b79e304369a16a81b6e37d937857f0e`; manifest `959cbefcd557fe8833cc4e913241f45043a956cdd1b2884a24ab788e78478e98`.
+- [x] Added local migration `20260825005000_cofounder_question_import_idempotency.sql` (SHA-256 `f9f0c7bd5256327e447998d3549093febcdb60cc32e7ee34b56c9ff7d06596c8`): nullable durable question provenance, a private RLS batch ledger with a server-computed SHA-256 payload fingerprint, and an authenticated-admin-only fixed-path `SECURITY DEFINER` import RPC. Exact batch retries return existing stable IDs; conflicting payload reuse fails closed; later source batches may update source-controlled fields but preserve the UUID, `times_attempted`, `avg_score`, and publication state.
 - [x] Criteria, model answers, and panel notes are excluded. The CSV payloads remain local ignored/private proof, are not committed or public, and are not hosted or imported. Released Practice continues to read the two legacy live rows.
-- [ ] **Hard gate:** the two hosted question batches remain blocked until a durable source-key/idempotent retry path is implemented and reviewed. The current Question Desk CSV validation UI is not a safe import mechanism for these payloads.
+- [x] Disposable PostgreSQL 17.6 proof applied fixture → reconciliation → `000`/`010`/`020` → `040` → `050`; proved first import, exact retry, conflicting retry denial, second batch, source correction preserving history/publication, manual authoring, ordinary-user denial, direct question/ledger denial, trigger-created synthetic profiles, and audit retention after profile deletion. Proof containers and volumes were retained.
+- [ ] **Hard gate:** no hosted question import is authorized. First separately approve and apply `040`, then separately approve and apply `050`, perform read-only postcondition verification, and present each exact 500/285 import call for approval. No broad hosted default ACL change is included; future-object default ACL drift remains a separately approved hazard.
 
 ### Cofounder feedback
 
@@ -138,16 +140,16 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 | Gate | Result |
 |---|---|
 | Unit and contract tests | 35 Node tests passed |
-| Vitest | 203 passed; mutating integration suites are not part of the default command |
+| Vitest | 213 passed; mutating integration suites are not part of the default command |
 | Node coverage | 98.52% lines, 84.63% branches, 98.82% functions |
-| Vitest coverage | 95.62% lines, 86.87% branches, 97.7% functions |
+| Vitest coverage | 95.95% lines, 87.24% branches, 97.27% functions |
 | Default-suite isolation | Full tests and coverage passed with fake hosted-looking `SUPABASE_TEST_*` values without collecting an integration test or contacting Supabase |
 | Mutating-suite guard | With all mutation prerequisites removed, `npm run test:integration:mutating` exited 1 during global setup before running tests |
 | TypeScript | `npm run typecheck` passed, including the Edge handler configuration |
 | Production export | `npm run build` passed; static output in `dist/` |
 | Isolated browser E2E | 4/4 fully intercepted local Playwright tests passed, including station-overlap geometry and Profile → `/admin/questions` direct routing |
-| Empty-database SQL proof | All twelve versioned migrations applied in order to a fresh disposable local stack; post-apply feedback table/RPC ACLs and RLS matched the fail-closed contract |
-| Observed-catalog contract proof | A fresh unlinked local clone reproduced every hosted catalog fact consumed by the scripts: empty migration history; two legacy questions/four config rows; exact four hosted `app_config` policies; nine required RLS tables; legacy role-play shape; seven browser-readable assessor tables; and no preview objects. Reconciliation, additive migrations `000`/`010`/`020`, and revised cutover `040` (`SHA-256 2a9480e2767779c701240943790debcd619b160e842e0876529babff3216b6d8`) all passed without changing row counts. Effective service access on the four legacy tables moved from 16/44 privilege checks before cutover to 0/44 afterward. This is contract-level evidence, not a byte-for-byte hosted dump. |
+| Empty-database SQL proof | All 13 versioned migrations, including pending hosted migration `050`, applied in order to a fresh disposable local stack; post-apply feedback/import table/RPC ACLs and RLS matched the fail-closed contract |
+| Observed-catalog contract proof | A fresh unlinked local clone reproduced every hosted catalog fact consumed by the scripts: empty migration history; two legacy questions/four config rows; exact four hosted `app_config` policies; nine required RLS tables; legacy role-play shape; seven browser-readable assessor tables; and no preview objects. Reconciliation, additive migrations `000`/`010`/`020`, and revised cutover `040` (`SHA-256 123406ce32d2f211d90095ff57d56d80e7efa9dad5c6413481e9898d4049f493`) all passed without changing row counts. Effective service access on the four legacy tables moved from 16/44 privilege checks before cutover to 0/44 afterward. This is contract-level evidence, not a byte-for-byte hosted dump. |
 | Read-only snapshot script | Syntax-executed on the disposable clone after secret-safe Cron redaction and total grant ordering. Its SHA-256 was `1616486887c9d71544af75b18dc5814816f9d6f02e54b93fe742b29343389878`; two immediate runs returned the same timestamp-independent catalog MD5 `824a914fc63f810737e57eafbc2e9bf5`. Local migration history had zero rows and no Cron relation. |
 | Edge-runtime smoke | Passed on fresh unlinked local Supabase: Edge Runtime 1.74.3 / Deno 2.1.4; preflight 204; missing JWT 401; disallowed origin 403 without reflection; wrong method 405; invalid media type 415; oversized body 413; AI-key status/replacement/status 200; student-safe question read and owned session insert succeeded; provider failure returned safe 502 `provider_failed`. After the revised service-role cutover, the scoring path again returned safe 502, persisted one failed claim/attempt, released the lease, and wrote zero answers/scores despite zero direct service privilege on the four legacy tables. |
 | Browser data isolation | Local app host enforced; only `e2e.supabase.co` is intercepted and every other `*.supabase.co` request fails closed; no production/shared credentials or rows used |
@@ -155,17 +157,17 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 | Visual review | Desktop and 390px login/legal renders inspected |
 | Impeccable detector | One final invocation returned `[]` |
 | `$un-vibecode` | PASS across R01–R22 |
-| Final independent readiness audit | Closed with no unresolved Critical or High finding. The hosted two-batch question-import idempotency Medium remains hard-gated: no hosted import may occur until a durable source-key/idempotent retry path is implemented and reviewed. |
-| Database and dependency follow-ups | The earlier database review found no blocking finding; one optional Low notes that function identity/configuration is verified but function bodies are not hash-pinned against privileged out-of-band replacement. The final audit also records 10 Expo configuration dependency advisories as a Medium follow-up. |
+| Independent readiness audits | The prior readiness audit and the follow-up independent read-only audit of this diff are closed with no unresolved Critical or High finding in their respective reviewed scopes. Hosted `040`, `050`, verification, and the two exact imports remain separately hard-gated. |
+| Residual release follow-ups | Medium: the existing 10 Expo configuration-chain advisories and the wider-release CI/CD/analytics operational gate. Low: malformed CSV structural quoting/extra cells, distinct concurrent source-correction last-writer-wins behavior requiring operator serialization, and optional function-body hash pinning against privileged out-of-band replacement. These are not fixed by this diff. |
 | Dependency audit | Before SDK-55 patch alignment: 27 total, including 17 high. After alignment and a non-force audit fix: 10 moderate, 0 high, 0 critical. `npm audit fix --force` was not used and is not advised; the remaining Expo config/xcode/uuid chain has no safe non-breaking audit remedy. Expo dependency checking and `npm ls` are clean. |
 
-The verification evidence above is local only. The current fixes, dependency alignment, and workbook artifacts are not part of the hosted deployment.
+Most verification evidence above is local. The current import-idempotency changes and workbook artifacts are not part of the hosted deployment; the separately evidenced UI routing fix, direct-provider scoring fix, and dependency alignment are live as described above.
 
 ## Remaining P0 blockers before showing cofounders
 
 - [x] Disable **Allow new users to sign up** in Supabase Auth and verify `disable_signup=true`; email sign-in remains available to existing named users.
 - [x] Confirm anonymous sign-in is disabled.
-- [x] Final independent readiness audit closed with no unresolved Critical/High finding; the hosted question-import idempotency Medium remains hard-gated until a durable source-key/idempotent retry path is implemented and reviewed.
+- [x] The prior independent readiness audit and follow-up independent read-only audit of this diff are closed with no unresolved Critical/High finding for their reviewed scopes. Residual Medium/Low release follow-ups remain documented above; hosted `040`, `050`, verification, and the two exact imports remain separately hard-gated.
 - [x] Stage the hosted-only reconciliation, three additive preview migrations, and final privilege cutover with fail-closed catalog/ACL checks.
 - [x] Independent static database review reports no blocking finding after exact ownership-policy repair.
 - [x] Run the complete versioned migration chain from an empty isolated local Supabase database and verify effective ACL/RLS postconditions.
@@ -173,14 +175,15 @@ The verification evidence above is local only. The current fixes, dependency ali
 - [x] Take a fresh read-only hosted catalog snapshot immediately before deployment and compare it with the scripts' exact preconditions. Completed `2026-08-25 05:59:23.339506 UTC`, catalog MD5 `0811d9d73c003ea1daba2efd2058c136`; no migration/Cron follow-up was applicable.
 - [x] The earlier, separately approved hosted-only reconciliation was applied outside `db push`.
 - [x] The earlier, separately approved additive migrations `20260825000000`, `20260825001000`, and `20260825002000` were applied. Migration `20260825004000` remains **not applied**.
-- [x] The reviewed JWT-verified `score-answer` and `manage-ai-key` Edge functions were earlier deployed as v3. The current local scoring fix is not deployed, and the hosted `openai`/`gpt-4o-mini` smoke still returned `provider_failed`.
-- [x] Exact `APP_ALLOWED_ORIGINS` for the stable Vercel origin and provider/model/key configuration were earlier completed through the server-only workflow; the hosted smoke nevertheless returned `provider_failed` with `openai` and `gpt-4o-mini`, and the current local scoring fix is not deployed.
+- [x] The reviewed JWT-verified `score-answer` Edge function is v4 ACTIVE and `manage-ai-key` remains v3. The direct-provider scoring fix is live in v4, but a post-v4 hosted scoring-success smoke remains unverified.
+- [x] Exact `APP_ALLOWED_ORIGINS` for the stable Vercel origin and provider/model/key configuration were earlier completed through the server-only workflow. The previously recorded hosted `openai`/`gpt-4o-mini` smoke returned `provider_failed`; do not treat it as post-v4 success evidence.
 - [x] Run the required local Supabase Edge-runtime smoke for allowed/disallowed origins, preflight, JWT, methods, content type, body limits, provider failure, and safe errors.
 - [ ] Migration `20260825004000` remains separately approval-gated and **not applied**; verify its postconditions read-only only after any future approval.
+- [ ] Migration `20260825005000` is also separately approval-gated and **not applied**. It depends on `040`; after its read-only verification, each workbook batch remains its own exact approval-gated operation.
 - [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` containing the `sb_publishable_...` value
-- [ ] The prior Vercel production deployment/alias is live at `https://mmi-hazel.vercel.app` from commit `ffa9cf7bcec6d6bd7e9795ad164376d03cf3fe69`; current local changes are not part of it. Confirm SPA deep-link rewriting and retain a hardened-compatible rollback deployment before any further promotion.
+- [ ] The stable Vercel production alias is live at `https://mmi-hazel.vercel.app` from commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; current import changes are not part of it. Confirm SPA deep-link rewriting and retain a hardened-compatible rollback deployment before any further promotion.
 - [ ] Create/invite only named cofounders and grant admin/content access through exact approved profile operations.
 - [ ] Execute one bounded hosted smoke with named accounts only after the database/functions/configuration are approved and deployed.
 - [ ] Obtain qualified legal review of the operator identity, contact, legal bases, transfers, retention, and final Terms/Privacy wording before anyone outside the founding team joins.
@@ -194,11 +197,13 @@ Each stage is a separate approval. A previous approval does not authorize the ne
 3. **Hosted-only reconciliation — complete:** the separately approved `supabase/reconciliation/20260825_cofounder_preview_security.sql` was applied outside `db push`.
 4. **Additive preview objects — complete:** the separately approved migrations `20260825000000`, `20260825001000`, and `20260825002000` were applied.
 5. **Read-only verification:** prove the expected tables, functions, RLS, owners, search paths, and ACLs before deploying clients.
-6. **Edge deployment — complete:** `score-answer` and `manage-ai-key` were deployed as v3. The current local scoring fix has not been deployed; hosted scoring still showed `provider_failed` with `openai` and `gpt-4o-mini`.
+6. **Edge deployment — complete:** `score-answer` is v4 ACTIVE and `manage-ai-key` remains v3. The direct-provider scoring fix is live; a post-v4 hosted scoring-success smoke remains unverified. The previously recorded hosted `openai`/`gpt-4o-mini` smoke returned `provider_failed` and is not post-v4 success evidence.
 7. **Secrets/config:** present only variable names, target function, and change intent—never values.
-8. **Hardened client smoke:** the prior production deployment/alias is live at `https://mmi-hazel.vercel.app` from `ffa9cf7bcec6d6bd7e9795ad164376d03cf3fe69`; current local changes are not included. Exercise safe RPC/Edge paths with named accounts before another promotion.
+8. **Hardened client smoke:** the stable production alias is live at `https://mmi-hazel.vercel.app` from `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; current import changes are not included. Exercise safe RPC/Edge paths with named accounts before another promotion.
 9. **Final privilege cutover — pending:** `20260825004000` remains not applied; separately present and approve it, then verify all table, column, policy, and function postconditions read-only.
-10. **Named accounts/roles and hosted smoke:** present each target and every expected bounded write before running it.
+10. **Retry-safe import migration — pending:** only after `040` verifies, separately present and approve `20260825005000_cofounder_question_import_idempotency.sql`; it adds provenance/ledger/RPC only, performs no content import, and must receive read-only ACL/catalog verification.
+11. **Workbook content imports — pending:** present the exact part-1 and part-2 RPC payloads, row counts, expected IDs/outcomes, and rollback/forward-correction plan as separate approvals. The RPC/CSV `source_manifest_sha256` value is the approved workbook/source-revision SHA `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`; separately verify the local operator artifacts: `manifest.json` SHA `959cbefcd557fe8833cc4e913241f45043a956cdd1b2884a24ab788e78478e98` and the per-part CSV SHA-256 values. Never retry a timed-out batch with altered content or a changed batch ID.
+12. **Named accounts/roles and hosted smoke:** present each target and every expected bounded write before running it.
 
 Never mark a migration applied until its complete reviewed effect is present. Never use the historical Phase 4 migration set to shortcut preview reconciliation.
 

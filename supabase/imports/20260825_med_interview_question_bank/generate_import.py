@@ -22,6 +22,7 @@ from xml.etree import ElementTree
 
 
 EXPECTED_SOURCE_SHA256 = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71'
+SOURCE_NAMESPACE = 'med_interview_question_bank'
 OUTPUT_DIRECTORY = Path(__file__).resolve().parent
 XML_NAMESPACE = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 CSV_HEADERS = [
@@ -32,6 +33,10 @@ CSV_HEADERS = [
     'university_tags',
     'is_mmi_suitable',
     'guidance_notes',
+    'source_namespace',
+    'source_id',
+    'source_manifest_sha256',
+    'source_batch_id',
 ]
 CATEGORY_MAPPING = {
     'ethics': 'ethics',
@@ -214,10 +219,8 @@ def main() -> None:
             'subcategory': station['topic'],
             'university_tags': normalized_tags(station['uni_tags']),
             'is_mmi_suitable': 'true',
-            'guidance_notes': (
-                f"source_id={station_id}/{sub_question['sub_q_id']}; "
-                f"timing=prep_time_sec:{station['prep_time_sec']},time_limit_sec:{sub_question['time_limit_sec']}"
-            ),
+            'guidance_notes': f"timing=prep_time_sec:{station['prep_time_sec']},time_limit_sec:{sub_question['time_limit_sec']}",
+            'source_id': f"{station_id}/{sub_question['sub_q_id']}",
         })
 
     panel_rows = [{
@@ -227,7 +230,8 @@ def main() -> None:
         'subcategory': panel['topic'],
         'university_tags': normalized_tags(panel['uni_tags']),
         'is_mmi_suitable': 'true',
-        'guidance_notes': f"source_id={panel['question_id']}",
+        'guidance_notes': '',
+        'source_id': panel['question_id'],
     } for _, panel in panels]
 
     if len(standard_rows) != 775 or len(panel_rows) != 10:
@@ -241,13 +245,29 @@ def main() -> None:
 
     all_rows = standard_rows + panel_rows
     normalized_prompts = {' '.join(row['text'].split()).lower() for row in all_rows}
-    source_ids = {row['guidance_notes'].split(';', 1)[0] for row in all_rows}
+    source_ids = {row['source_id'] for row in all_rows}
     if len(all_rows) != len(normalized_prompts) or len(all_rows) != len(source_ids):
         raise RuntimeError('Output contains a duplicate normalized prompt or source identity.')
 
     artifact_rows = {
-        'questions-part-1.csv': all_rows[:500],
-        'questions-part-2.csv': all_rows[500:],
+        'questions-part-1.csv': [
+            {
+                **row,
+                'source_namespace': SOURCE_NAMESPACE,
+                'source_manifest_sha256': EXPECTED_SOURCE_SHA256,
+                'source_batch_id': 'questions-part-1',
+            }
+            for row in all_rows[:500]
+        ],
+        'questions-part-2.csv': [
+            {
+                **row,
+                'source_namespace': SOURCE_NAMESPACE,
+                'source_manifest_sha256': EXPECTED_SOURCE_SHA256,
+                'source_batch_id': 'questions-part-2',
+            }
+            for row in all_rows[500:]
+        ],
     }
     for filename, rows in artifact_rows.items():
         if len(rows) > 500:
@@ -272,7 +292,7 @@ def main() -> None:
         for filename, rows in artifact_rows.items()
     }
     manifest = {
-        'artifact_version': 1,
+        'artifact_version': 2,
         'source': {
             'basename': source.name,
             'sha256': EXPECTED_SOURCE_SHA256,
@@ -300,7 +320,15 @@ def main() -> None:
             'criteria_excluded': True,
             'cached_model_answers_excluded': True,
             'panel_notes_excluded': True,
-            'guidance_notes_policy': 'source IDs and timing metadata only',
+            'guidance_notes_policy': 'timing metadata only',
+            'import_identity': {
+                'source_namespace': SOURCE_NAMESPACE,
+                'source_manifest_sha256': EXPECTED_SOURCE_SHA256,
+                'batch_ids': {
+                    filename: rows[0]['source_batch_id']
+                    for filename, rows in artifact_rows.items()
+                },
+            },
         },
         'relationships': {
             'complete_mmi_graphs': len(complete_station_ids),
