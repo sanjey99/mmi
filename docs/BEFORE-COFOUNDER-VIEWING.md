@@ -69,6 +69,8 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Web auth uses guarded `sessionStorage`; refresh in the same tab can restore a session while a new browser session starts without a retained login.
 - [x] Sign-out checks the Supabase result, clears local state, and returns to login with retryable feedback on failure.
 - [x] Sign-out and account changes clear all account-bound practice state; every in-flight session, restoration, scoring, and progress operation is epoch-bound so an old account cannot repopulate a new account's store or continue navigation.
+- [x] Account changes clear the previous profile synchronously; profile reads, writes, and loading completions require the initiating auth epoch and user ID to remain current, so delayed admin-profile data cannot cross a sign-out or account switch.
+- [x] The Supabase auth subscription returns synchronously and defers profile API work until after the callback releases auth-js's exclusive lock, preventing sign-in/token-refresh deadlocks.
 - [x] Practice availability comes from active server projections rather than a hard-coded default question.
 - [x] Empty categories are unavailable and route restoration validates the owned session/question identity.
 - [x] Submission shows validation, scoring, retry, saved, and provider-failure states instead of becoming inert.
@@ -116,28 +118,29 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] These scripts contain no top-level row DML, object deletion, Cron operation, or migration-history operation.
 - [x] The complete versioned migration chain was executed only against a fresh disposable local Supabase database; no staged SQL has been executed against hosted Supabase.
 - [x] Effective local ACL readback proves `cofounder_feedback` has no direct table privilege for `anon`, `authenticated`, or `service_role`; only the two authenticated security-definer RPCs are executable.
+- [x] Fresh-chain privilege normalization gives `authenticated` exactly `SELECT`/`INSERT`/`UPDATE`/`DELETE` on `app_config` behind four canonical non-secret RLS policies. On `profiles` and `app_config`, `service_role` receives only `profiles(id,is_admin)` read access and `app_config(key,value)` read/write access; scoring-ledger tables retain their separately verified service-only grants.
 
 ## Verification evidence — 25 August 2026
 
 | Gate | Result |
 |---|---|
 | Unit and contract tests | 35 Node tests passed |
-| Vitest | 178 passed; mutating integration suites are not part of the default command |
+| Vitest | 185 passed; mutating integration suites are not part of the default command |
 | Node coverage | 98.52% lines, 84.63% branches, 98.82% functions |
-| Vitest coverage | 94.42% lines, 89.47% statements, 85.26% branches, 96.80% functions |
+| Vitest coverage | 94.81% lines, 90.37% statements, 85.88% branches, 97.65% functions |
 | Default-suite isolation | Full tests and coverage passed with fake hosted-looking `SUPABASE_TEST_*` values without collecting an integration test or contacting Supabase |
 | Mutating-suite guard | With all mutation prerequisites removed, `npm run test:integration:mutating` exited 1 during global setup before running tests |
 | TypeScript | `npm run typecheck` passed, including the Edge handler configuration |
 | Production export | `npm run build` passed; static output in `dist/` |
 | Isolated browser E2E | 2/2 passed: partner practice/feedback/signout/account-switch isolation and admin draft/review; the affected cross-account journey also passed 10/10 across three workers |
 | Empty-database SQL proof | All twelve versioned migrations applied in order to a fresh disposable local stack; post-apply feedback table/RPC ACLs and RLS matched the fail-closed contract |
-| Edge-runtime smoke | Partial: local Edge Runtime served all reviewed functions; gateway JWT denial, handler-level allowed/disallowed origins, and method denial were observed. Authenticated content-type/body/provider paths remain pending a separately approved disposable local identity/fixture. |
+| Edge-runtime smoke | Passed on fresh unlinked local Supabase: Edge Runtime 1.74.3 / Deno 2.1.4; preflight 204; missing JWT 401; disallowed origin 403 without reflection; wrong method 405; invalid media type 415; oversized body 413; AI-key status/replacement/status 200; student-safe question read and owned session insert succeeded; provider failure returned safe 502 `provider_failed`. The terminal ledger contained one failed claim and attempt with the lease released, and zero answers or scores. |
 | Browser data isolation | Local app host enforced; only `e2e.supabase.co` is intercepted and every other `*.supabase.co` request fails closed; no production/shared credentials or rows used |
 | Mobile login accessibility | Lighthouse accessibility 100; best practices 100 |
 | Visual review | Desktop and 390px login/legal renders inspected |
 | Impeccable detector | One final invocation returned `[]` |
 | `$un-vibecode` | PASS across R01–R22 |
-| Independent local security review | No Critical, High, Medium, or Low finding remains in the Edge-key and mutating-integration remediation |
+| Independent local security review | No Critical, High, or Medium cofounder-preview finding remains after the Edge, migration, account-profile isolation, and auth callback-lock remediations |
 | Independent database review | No blocking finding remains; one optional Low notes that function identity/configuration is verified but function bodies are not hash-pinned against privileged out-of-band replacement |
 | Dependency audit | 27 total: 17 high, 9 moderate, 1 low; no critical; no force-fix attempted |
 
@@ -147,7 +150,7 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 
 - [x] Disable **Allow new users to sign up** in Supabase Auth and verify `disable_signup=true`; email sign-in remains available to existing named users.
 - [x] Confirm anonymous sign-in is disabled.
-- [x] Independent local security audit reports no unresolved Critical/High finding after delayed account-switch regression testing.
+- [x] Independent local security audit reports no unresolved Critical/High/Medium cofounder-preview finding after delayed profile read/write account-switch regression testing.
 - [x] Stage the hosted-only reconciliation, three additive preview migrations, and final privilege cutover with fail-closed catalog/ACL checks.
 - [x] Independent static database review reports no blocking finding after exact ownership-policy repair.
 - [x] Run the complete versioned migration chain from an empty isolated local Supabase database and verify effective ACL/RLS postconditions.
@@ -157,7 +160,7 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 - [ ] Separately approve and apply additive migrations `20260825000000` through `20260825002000`, then verify the created objects and ACLs read-only.
 - [ ] Separately approve deployment of the reviewed JWT-verified preview Edge function(s).
 - [ ] Configure exact `APP_ALLOWED_ORIGINS` for the stable Vercel origin and configure the provider/model/key through a server-only workflow.
-- [ ] Run the required local Supabase Edge-runtime smoke for allowed/disallowed origins, preflight, JWT, methods, content type, body limits, provider failure, and safe errors.
+- [x] Run the required local Supabase Edge-runtime smoke for allowed/disallowed origins, preflight, JWT, methods, content type, body limits, provider failure, and safe errors.
 - [ ] After the hardened Edge functions and Vercel client pass smoke testing, separately approve final privilege cutover `20260825004000` and verify its postconditions read-only.
 - [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
   - `EXPO_PUBLIC_SUPABASE_URL`
@@ -212,7 +215,7 @@ Never mark a migration applied until its complete reviewed effect is present. Ne
 - [ ] Feedback submission stores no screenshot, token, answer, transcript, or browser log.
 - [ ] Allowed origin succeeds; disallowed origin and invalid/absent JWT fail safely.
 - [ ] Chrome, Safari, Firefox, mobile width, keyboard-only, focus, and reduced-motion checks have dated evidence.
-- [ ] Edge-runtime smoke and the independent security review are complete.
+- [x] Edge-runtime smoke and the independent security review are complete.
 - [ ] Rollback owner can restore a hardened-compatible Vercel deployment and disable scoring; the owner does not rely on the archival pre-redesign client after privilege revocation.
 
 ## Release decision

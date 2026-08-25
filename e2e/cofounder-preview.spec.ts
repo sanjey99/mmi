@@ -75,6 +75,7 @@ const practiceSession = {
 
 async function installSyntheticSession(page: Page) {
   await page.addInitScript(({ storedUser, expiry }) => {
+    if (sessionStorage.getItem('sb-e2e-auth-token')) return;
     sessionStorage.setItem('sb-e2e-auth-token', JSON.stringify({
       access_token: 'synthetic-access-token',
       refresh_token: 'synthetic-refresh-token',

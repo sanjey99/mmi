@@ -7,17 +7,18 @@
 ## Current checkpoint — 25 August 2026
 
 - The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no hosted preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
-- Local preview verification passes: 35 Node tests, 178 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
+- Local preview verification passes: 35 Node tests, 185 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
 - Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
 - Default test and coverage commands exclude all integration paths even when credential-shaped environment variables are present. The dedicated mutating command requires an explicit acknowledgement, an HTTP loopback Supabase URL, and local credentials, and otherwise fails before test collection.
-- Account-switch isolation clears all cached practice data and epoch-binds every asynchronous session, restoration, scoring, and progress operation. The browser harness rejects non-local app hosts and every real Supabase project hostname.
-- The final independent Edge/integration re-review reports no Critical, High, Medium, or Low finding in that scope. Hosted execution and runtime evidence remain release blockers.
+- Account-switch isolation clears cached practice and profile data and epoch-binds every asynchronous session, restoration, scoring, progress, profile read/write, and auth-loading completion. The auth subscription returns synchronously and defers profile API calls outside auth-js's exclusive lock. The browser harness rejects non-local app hosts and every real Supabase project hostname.
+- The final independent security re-review reports no Critical, High, or Medium cofounder-preview finding after the Edge, migration, account-profile isolation, and auth callback-lock remediations. Fresh local Edge-runtime evidence is complete; hosted execution remains approval-gated and a release blocker.
 - The final independent static database review reports no blocking finding. Its only residual Low is optional function-body hash pinning against privileged out-of-band replacement; function signatures, uniqueness, owner, language, security-definer state, search path, and grants are already checked.
 - The one-time Impeccable detector returned no findings and the `$un-vibecode` audit passes R01–R22. Mobile login Lighthouse scores 100 for accessibility and best practices.
 - The read-only dependency audit reports 17 high, 9 moderate, and 1 low advisory, with no critical finding. The paths are concentrated in Expo/Metro/build tooling and require a supported compatibility review; force-fixing is prohibited.
 - Expo SDK-55 patch versions are behind the current supported set, and `react-native-worklets` is ahead of Expo's expected version. Resolve this through a dedicated compatibility change with full regression testing.
 - Hosted public signup is disabled and verified (`disable_signup=true`); email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled. The approximately 100-person round still requires an operational invite/allowlist workflow.
-- The versioned migration chain now applies cleanly from an empty disposable local database and its effective feedback ACL/RLS state is verified. Observed-legacy reconciliation proof and authenticated Edge-runtime smoke remain required; production/shared credentials must never be used for them.
+- The versioned migration chain applies cleanly from an empty disposable local database and its effective ACL/RLS state is verified, including canonical authenticated non-secret `app_config` access and minimal service-role column grants. The authenticated local Edge-runtime smoke passed every HTTP boundary and the expected safe provider-failure path. Observed-legacy reconciliation proof remains required; production/shared credentials must never be used for it.
+- The final unlinked runtime fixture created one local smoke user/admin/session, one failed claim, and one failed attempt; it persisted zero answers and scores, released the claim lease, stopped both disposable stacks with volumes preserved, and never contacted hosted Supabase.
 - The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. The versioned chain was executed only on a fresh disposable local stack; none has been executed remotely.
 - Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
 
@@ -63,6 +64,7 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Remove authenticated direct reads from all assessor-bearing MMI tables, including auxiliary marking/end/domain/response-rule tables.
 - [ ] Expose active student questions through a safe projection that excludes guidance/assessor fields.
 - [ ] Prevent direct authenticated score insertion and cross-user streak mutation.
+- [ ] Move direct authenticated `mock_sessions` insertion behind a bounded, rate-limited creation RPC with strict legacy-session fields; self-ownership RLS alone does not prevent storage abuse.
 - [ ] Keep attempt/results owner-readable and client-write-denied.
 - [ ] Review every `SECURITY DEFINER` function for fixed `search_path`, exact signature revokes, least-privilege grants, caller binding, and row locking.
 - [ ] Run adversarial RLS tests with anonymous, ordinary tester, content editor, founder, and service roles in an isolated project.
@@ -93,6 +95,7 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Bulk CSV validation before mutation with exact headers, RFC 4180 behavior, field/file/row bounds, enums, duplicate policy, and row-level errors.
 - [ ] Draft and published states; importing must not make content instantly student-visible.
 - [ ] Creator/updater identity, timestamps, and publication audit history.
+- [ ] Add caller-generated request IDs or an equivalent durable deduplication key so retries cannot duplicate question batches or feedback reports after ambiguous network results.
 - [ ] Content editor cannot access AI credentials or security configuration.
 - [ ] Student-safe projections exclude `guidance_notes`, cached model answers, actor details, rubrics, drafts, inactive rows, and future prompts.
 - [ ] Clinician/content review owner and documented publication checklist.
@@ -114,7 +117,7 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Unit tests for pure validation, parsing, lifecycle, aggregation, navigation, storage, and state transitions.
 - [ ] Integration tests against a local/disposable Supabase stack only.
 - [ ] Browser E2E for invite/login/reset, onboarding, practice, scoring, progress, question authoring, feedback, role denial, deep links, refresh, and sign-out.
-- [ ] Local Edge-runtime smoke for JWT, CORS preflight, allowed/disallowed origins, method/content-type/body limits, and safe errors.
+- [ ] Re-run the local Edge-runtime smoke for the closed-round release commit. The cofounder-preview baseline passed on 25 August 2026 for JWT, CORS preflight, allowed/disallowed origins, method/content-type/body limits, safe errors, and terminal provider-failure persistence.
 - [ ] At least 80% lines, functions, branches, and statements for changed/new logic.
 - [ ] Typecheck and static web export pass.
 - [ ] Chrome, Safari, Firefox, iOS-width, Android-width, keyboard-only, screen-reader, contrast, reduced-motion, and slow-network QA pass.
