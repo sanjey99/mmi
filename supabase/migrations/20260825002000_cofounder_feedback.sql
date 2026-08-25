@@ -49,7 +49,7 @@ CREATE INDEX cofounder_feedback_user_created_idx
   ON public.cofounder_feedback (user_id, created_at DESC);
 
 ALTER TABLE public.cofounder_feedback ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.cofounder_feedback FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.cofounder_feedback FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE FUNCTION public.submit_cofounder_feedback(
   p_category text,

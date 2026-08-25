@@ -50,7 +50,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - Public signup was disabled by the project owner and verified read-only on 25 August 2026: Auth settings returned `disable_signup=true`; email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled.
 - The public Supabase project endpoint is reachable. The prior browser `NetworkError` was a missing or stale client environment configuration, not an outage.
 - Hosted policies still expose assessor-bearing MMI/role-play content to authenticated users, allow unsafe legacy question fields, permit cross-user `update_streak`, and permit own-answer score insertion.
-- No migration, function deployment, secret update, user/profile mutation, or application-row mutation was performed during this implementation.
+- No hosted migration, function deployment, secret update, user/profile mutation, or application-row mutation was performed during this implementation.
 
 ## Implemented locally
 
@@ -114,14 +114,15 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Added the final privilege cutover migration `20260825004000_cofounder_preview_privilege_cutover.sql`.
 - [x] The cutover validates the exact legacy policy identities, repairs all seven ownership predicates, removes table and column grant drift, checks preview RPC identity/ACLs, and restores only the minimum browser privileges.
 - [x] These scripts contain no top-level row DML, object deletion, Cron operation, or migration-history operation.
-- [x] No staged SQL has been executed against hosted or local Supabase.
+- [x] The complete versioned migration chain was executed only against a fresh disposable local Supabase database; no staged SQL has been executed against hosted Supabase.
+- [x] Effective local ACL readback proves `cofounder_feedback` has no direct table privilege for `anon`, `authenticated`, or `service_role`; only the two authenticated security-definer RPCs are executable.
 
 ## Verification evidence — 25 August 2026
 
 | Gate | Result |
 |---|---|
 | Unit and contract tests | 35 Node tests passed |
-| Vitest | 177 passed; mutating integration suites are not part of the default command |
+| Vitest | 178 passed; mutating integration suites are not part of the default command |
 | Node coverage | 98.52% lines, 84.63% branches, 98.82% functions |
 | Vitest coverage | 94.42% lines, 89.47% statements, 85.26% branches, 96.80% functions |
 | Default-suite isolation | Full tests and coverage passed with fake hosted-looking `SUPABASE_TEST_*` values without collecting an integration test or contacting Supabase |
@@ -129,6 +130,8 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 | TypeScript | `npm run typecheck` passed, including the Edge handler configuration |
 | Production export | `npm run build` passed; static output in `dist/` |
 | Isolated browser E2E | 2/2 passed: partner practice/feedback/signout/account-switch isolation and admin draft/review; the affected cross-account journey also passed 10/10 across three workers |
+| Empty-database SQL proof | All twelve versioned migrations applied in order to a fresh disposable local stack; post-apply feedback table/RPC ACLs and RLS matched the fail-closed contract |
+| Edge-runtime smoke | Partial: local Edge Runtime served all reviewed functions; gateway JWT denial, handler-level allowed/disallowed origins, and method denial were observed. Authenticated content-type/body/provider paths remain pending a separately approved disposable local identity/fixture. |
 | Browser data isolation | Local app host enforced; only `e2e.supabase.co` is intercepted and every other `*.supabase.co` request fails closed; no production/shared credentials or rows used |
 | Mobile login accessibility | Lighthouse accessibility 100; best practices 100 |
 | Visual review | Desktop and 390px login/legal renders inspected |
@@ -147,7 +150,8 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 - [x] Independent local security audit reports no unresolved Critical/High finding after delayed account-switch regression testing.
 - [x] Stage the hosted-only reconciliation, three additive preview migrations, and final privilege cutover with fail-closed catalog/ACL checks.
 - [x] Independent static database review reports no blocking finding after exact ownership-policy repair.
-- [ ] Run the staged SQL from empty and observed-legacy states in an isolated local/disposable Supabase database; do not use production/shared credentials.
+- [x] Run the complete versioned migration chain from an empty isolated local Supabase database and verify effective ACL/RLS postconditions.
+- [ ] Prove the hosted-only reconciliation and subsequent additive/cutover stages against an isolated clone of the observed legacy schema; do not use production/shared credentials.
 - [ ] Take a fresh read-only hosted catalog snapshot immediately before deployment and compare it with the scripts' exact preconditions.
 - [ ] Separately approve and apply the hosted-only reconciliation; do not use `db push` for it.
 - [ ] Separately approve and apply additive migrations `20260825000000` through `20260825002000`, then verify the created objects and ACLs read-only.

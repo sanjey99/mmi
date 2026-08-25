@@ -59,6 +59,19 @@ describe('cofounder preview privilege cutover policy', () => {
     expect(grant).toBeGreaterThan(revoke);
   });
 
+  it('requires feedback storage to remain RPC-only for every runtime role', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+
+    expect(sql).toMatch(/FOREACH v_role IN ARRAY ARRAY\['anon', 'authenticated', 'service_role'\]/i);
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      expect(sql).toContain(`has_table_privilege(v_role, 'public.cofounder_feedback', '${privilege}')`);
+    }
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) {
+      expect(sql).toContain(`has_any_column_privilege(v_role, 'public.cofounder_feedback', '${privilege}')`);
+    }
+    expect(sql).toMatch(/feedback table must remain RPC-only/i);
+  });
+
   it('fails closed and contains no row DML or destructive object deletion', async () => {
     const sql = await readFile(migrationPath, 'utf8');
 

@@ -25,7 +25,8 @@ describe('cofounder feedback policy', () => {
     expect(migration).toMatch(/FROM PUBLIC, anon, authenticated, service_role/);
     expect(migration).toMatch(/CREATE TABLE public\.cofounder_feedback/i);
     expect(migration).toMatch(/ALTER TABLE public\.cofounder_feedback ENABLE ROW LEVEL SECURITY/i);
-    expect(migration).toMatch(/REVOKE ALL ON TABLE public\.cofounder_feedback FROM PUBLIC, anon, authenticated/i);
+    expect(migration).toMatch(/REVOKE ALL ON TABLE public\.cofounder_feedback FROM PUBLIC, anon, authenticated, service_role/i);
+    expect(migration).not.toMatch(/GRANT\s+.+ON TABLE public\.cofounder_feedback TO service_role/i);
     expect(migration.match(/SECURITY DEFINER/g)).toHaveLength(2);
     expect(migration.match(/SET search_path = pg_catalog, public/g)).toHaveLength(2);
   });

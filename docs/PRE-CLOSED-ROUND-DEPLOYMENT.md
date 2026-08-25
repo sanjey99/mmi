@@ -6,8 +6,8 @@
 
 ## Current checkpoint — 25 August 2026
 
-- The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
-- Local preview verification passes: 35 Node tests, 177 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
+- The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no hosted preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
+- Local preview verification passes: 35 Node tests, 178 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
 - Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
 - Default test and coverage commands exclude all integration paths even when credential-shaped environment variables are present. The dedicated mutating command requires an explicit acknowledgement, an HTTP loopback Supabase URL, and local credentials, and otherwise fails before test collection.
 - Account-switch isolation clears all cached practice data and epoch-binds every asynchronous session, restoration, scoring, and progress operation. The browser harness rejects non-local app hosts and every real Supabase project hostname.
@@ -17,8 +17,8 @@
 - The read-only dependency audit reports 17 high, 9 moderate, and 1 low advisory, with no critical finding. The paths are concentrated in Expo/Metro/build tooling and require a supported compatibility review; force-fixing is prohibited.
 - Expo SDK-55 patch versions are behind the current supported set, and `react-native-worklets` is ahead of Expo's expected version. Resolve this through a dedicated compatibility change with full regression testing.
 - Hosted public signup is disabled and verified (`disable_signup=true`); email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled. The approximately 100-person round still requires an operational invite/allowlist workflow.
-- Local Edge-runtime smoke and disposable Supabase integration tests remain required. Production/shared credentials must never be used for them.
-- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. None has been executed locally or remotely.
+- The versioned migration chain now applies cleanly from an empty disposable local database and its effective feedback ACL/RLS state is verified. Observed-legacy reconciliation proof and authenticated Edge-runtime smoke remain required; production/shared credentials must never be used for them.
+- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. The versioned chain was executed only on a fresh disposable local stack; none has been executed remotely.
 - Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
 
 ## Product boundary for the 100-person round

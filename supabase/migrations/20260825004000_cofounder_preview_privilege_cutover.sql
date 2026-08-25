@@ -263,8 +263,7 @@ BEGIN
 
   FOREACH v_table IN ARRAY ARRAY[
     'legacy_scoring_claims',
-    'legacy_scoring_attempts',
-    'cofounder_feedback'
+    'legacy_scoring_attempts'
   ]
   LOOP
     IF NOT has_table_privilege('service_role', 'public.' || v_table, 'SELECT')
@@ -295,6 +294,24 @@ BEGIN
         RAISE EXCEPTION 'service-only preview table ACL prerequisite failed for public.% role %', v_table, v_role;
       END IF;
     END LOOP;
+  END LOOP;
+
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role']
+  LOOP
+    IF has_table_privilege(v_role, 'public.cofounder_feedback', 'SELECT')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'INSERT')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'UPDATE')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'DELETE')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'TRUNCATE')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'REFERENCES')
+      OR has_table_privilege(v_role, 'public.cofounder_feedback', 'TRIGGER')
+      OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'SELECT')
+      OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'INSERT')
+      OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'UPDATE')
+      OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'REFERENCES')
+    THEN
+      RAISE EXCEPTION 'feedback table must remain RPC-only for role %', v_role;
+    END IF;
   END LOOP;
 END;
 $$;
