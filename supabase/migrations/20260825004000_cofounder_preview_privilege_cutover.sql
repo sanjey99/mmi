@@ -619,7 +619,7 @@ DECLARE
   v_table text;
   v_columns text;
 BEGIN
-  FOREACH v_table IN ARRAY ARRAY['profiles', 'app_config']
+  FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions', 'profiles', 'app_config']
   LOOP
     SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
     INTO v_columns
@@ -635,6 +635,11 @@ BEGIN
   END LOOP;
 END;
 $$;
+
+REVOKE ALL ON TABLE public.questions FROM service_role;
+REVOKE ALL ON TABLE public.answers FROM service_role;
+REVOKE ALL ON TABLE public.scores FROM service_role;
+REVOKE ALL ON TABLE public.mock_sessions FROM service_role;
 
 REVOKE ALL ON TABLE public.profiles FROM service_role;
 GRANT SELECT (id, is_admin) ON TABLE public.profiles TO service_role;
@@ -697,6 +702,7 @@ DO $$
 DECLARE
   v_column text;
   v_privilege text;
+  v_table text;
 BEGIN
   FOREACH v_privilege IN ARRAY ARRAY[
     'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
@@ -706,6 +712,29 @@ BEGIN
       OR has_table_privilege('service_role', 'public.app_config', v_privilege)
     THEN
       RAISE EXCEPTION 'service-role Edge ACL postcondition failed: table privilege % remains', v_privilege;
+    END IF;
+  END LOOP;
+
+  FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions']
+  LOOP
+    FOREACH v_privilege IN ARRAY ARRAY[
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+    ]
+    LOOP
+      IF has_table_privilege('service_role', 'public.' || v_table, v_privilege) THEN
+        RAISE EXCEPTION 'service-role legacy table ACL postcondition failed: public.% retains %',
+          v_table,
+          v_privilege;
+      END IF;
+    END LOOP;
+
+    IF has_any_column_privilege('service_role', 'public.' || v_table, 'SELECT')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'INSERT')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'UPDATE')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'REFERENCES')
+    THEN
+      RAISE EXCEPTION 'service-role legacy table ACL postcondition failed: public.% retains column grants',
+        v_table;
     END IF;
   END LOOP;
 

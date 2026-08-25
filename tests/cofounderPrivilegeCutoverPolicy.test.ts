@@ -136,6 +136,25 @@ describe('cofounder preview privilege cutover policy', () => {
     );
   });
 
+  it('keeps legacy persistence behind RPCs for the service role', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const normalizedSql = sql.replace(/\s+/g, ' ');
+
+    expect(normalizedSql).toContain(
+      "FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions', 'profiles', 'app_config']",
+    );
+    for (const table of ['questions', 'answers', 'scores', 'mock_sessions']) {
+      expect(sql).toMatch(new RegExp(`REVOKE ALL ON TABLE public\\.${table} FROM service_role`, 'i'));
+    }
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      expect(sql).toContain(`has_table_privilege('service_role', 'public.' || v_table, '${privilege}')`);
+    }
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) {
+      expect(sql).toContain(`has_any_column_privilege('service_role', 'public.' || v_table, '${privilege}')`);
+    }
+    expect(sql).toMatch(/service-role legacy table ACL postcondition failed/i);
+  });
+
   it('fails closed and contains no row DML or destructive object deletion', async () => {
     const sql = await readFile(migrationPath, 'utf8');
 
