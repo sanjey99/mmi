@@ -95,13 +95,38 @@ describe('cofounder preview privilege cutover policy', () => {
     expect(browserGrant).toBeGreaterThan(policyRepair);
   });
 
-  it('removes default streak execution before granting service-role-only execution', async () => {
+  it('removes every runtime grant from the unused legacy streak helper', async () => {
     const sql = await readFile(migrationPath, 'utf8');
     const revoke = sql.search(/REVOKE EXECUTE ON FUNCTION public\.update_streak\(UUID\)\s+FROM PUBLIC, anon, authenticated, service_role/);
-    const grant = sql.indexOf('GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role');
 
     expect(revoke).toBeGreaterThanOrEqual(0);
-    expect(grant).toBeGreaterThan(revoke);
+    expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.update_streak\(UUID\) TO service_role/i);
+    for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
+      expect(sql).toContain(
+        `has_function_privilege('${role}', 'public.update_streak(uuid)', 'EXECUTE')`,
+      );
+    }
+  });
+
+  it('hardens every legacy security-definer helper and keeps trigger/admin helpers non-callable', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const normalizedSql = sql.replace(/\s+/g, ' ');
+
+    for (const signature of ['handle_new_user()', 'is_admin()', 'update_streak(UUID)']) {
+      expect(normalizedSql).toContain(
+        `ALTER FUNCTION public.${signature} SET search_path = pg_catalog, public, pg_temp`,
+      );
+    }
+    for (const signature of ['handle_new_user()', 'is_admin()']) {
+      expect(normalizedSql).toContain(
+        `REVOKE EXECUTE ON FUNCTION public.${signature} FROM PUBLIC, anon, authenticated, service_role`,
+      );
+      for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
+        expect(normalizedSql).toContain(
+          `has_function_privilege('${role}', 'public.${signature.toLowerCase()}', 'EXECUTE')`,
+        );
+      }
+    }
   });
 
   it('requires feedback storage to remain RPC-only for every runtime role', async () => {
@@ -115,6 +140,26 @@ describe('cofounder preview privilege cutover policy', () => {
       expect(sql).toContain(`has_any_column_privilege(v_role, 'public.cofounder_feedback', '${privilege}')`);
     }
     expect(sql).toMatch(/feedback table must remain RPC-only/i);
+  });
+
+  it('fails closed unless the reconciliation already removed service-role assessor grants', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const assessorTables = [
+      'mmi_stations',
+      'mmi_sub_questions',
+      'roleplay_stations',
+      'mmi_marking_criteria',
+      'roleplay_end_criteria',
+      'roleplay_mark_domains',
+      'roleplay_response_rules',
+    ];
+
+    for (const table of assessorTables) {
+      expect(sql).toContain(`'${table}'`);
+    }
+    expect(sql).toMatch(/assessor table service-role ACL prerequisite failed/i);
+    expect(sql).toContain("has_table_privilege('service_role', 'public.' || v_table, 'SELECT')");
+    expect(sql).toContain("has_any_column_privilege('service_role', 'public.' || v_table, 'UPDATE')");
   });
 
   it('grants Edge Functions only the columns needed for admin checks and AI configuration', async () => {

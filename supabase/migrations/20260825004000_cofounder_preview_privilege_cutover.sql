@@ -169,6 +169,8 @@ BEGIN
     OR to_regprocedure('public.create_legacy_questions(jsonb)') IS NULL
     OR to_regprocedure('public.submit_cofounder_feedback(text,text,text,text,text,boolean)') IS NULL
     OR to_regprocedure('public.list_cofounder_feedback(integer)') IS NULL
+    OR to_regprocedure('public.handle_new_user()') IS NULL
+    OR to_regprocedure('public.is_admin()') IS NULL
     OR to_regprocedure('public.update_streak(uuid)') IS NULL
   THEN
     RAISE EXCEPTION 'one or more required cutover functions are missing';
@@ -212,6 +214,39 @@ BEGIN
       OR NOT (COALESCE(v_config, ARRAY[]::text[]) @> ARRAY['search_path=pg_catalog, public'])
     THEN
       RAISE EXCEPTION 'preview RPC identity prerequisite failed for %', v_rpc.signature;
+    END IF;
+  END LOOP;
+
+  FOR v_rpc IN
+    SELECT *
+    FROM (VALUES
+      ('handle_new_user', 'public.handle_new_user()', 'plpgsql'),
+      ('is_admin', 'public.is_admin()', 'sql'),
+      ('update_streak', 'public.update_streak(uuid)', 'plpgsql')
+    ) AS required(name, signature, language)
+  LOOP
+    SELECT count(*)
+    INTO v_overload_count
+    FROM pg_proc AS p
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = v_rpc.name;
+
+    SELECT
+      pg_get_userbyid(p.proowner),
+      p.prosecdef,
+      l.lanname
+    INTO v_owner, v_security_definer, v_language
+    FROM pg_proc AS p
+    JOIN pg_language AS l ON l.oid = p.prolang
+    WHERE p.oid = to_regprocedure(v_rpc.signature);
+
+    IF v_overload_count <> 1
+      OR v_owner <> 'postgres'
+      OR v_security_definer IS DISTINCT FROM TRUE
+      OR v_language <> v_rpc.language
+    THEN
+      RAISE EXCEPTION 'legacy security-definer identity prerequisite failed for %', v_rpc.signature;
     END IF;
   END LOOP;
 
@@ -399,6 +434,47 @@ BEGIN
       OR has_any_column_privilege(v_role, 'public.cofounder_feedback', 'REFERENCES')
     THEN
       RAISE EXCEPTION 'feedback table must remain RPC-only for role %', v_role;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+-- The hosted-only reconciliation is responsible for revoking assessor-table
+-- access. Refuse cutover if service_role can still read or mutate that hidden
+-- material through table or independently granted column privileges.
+DO $$
+DECLARE
+  v_table text;
+  v_privilege text;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY[
+    'mmi_stations',
+    'mmi_sub_questions',
+    'roleplay_stations',
+    'mmi_marking_criteria',
+    'roleplay_end_criteria',
+    'roleplay_mark_domains',
+    'roleplay_response_rules'
+  ]
+  LOOP
+    FOREACH v_privilege IN ARRAY ARRAY[
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+    ]
+    LOOP
+      IF has_table_privilege('service_role', 'public.' || v_table, v_privilege) THEN
+        RAISE EXCEPTION 'assessor table service-role ACL prerequisite failed for public.% privilege %',
+          v_table,
+          v_privilege;
+      END IF;
+    END LOOP;
+
+    IF has_any_column_privilege('service_role', 'public.' || v_table, 'SELECT')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'INSERT')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'UPDATE')
+      OR has_any_column_privilege('service_role', 'public.' || v_table, 'REFERENCES')
+    THEN
+      RAISE EXCEPTION 'assessor table service-role ACL prerequisite failed for public.% column grants',
+        v_table;
     END IF;
   END LOOP;
 END;
@@ -783,9 +859,56 @@ BEGIN
 END;
 $$;
 
+-- Existing hosted helpers predate fixed-path and least-privilege conventions.
+-- Keep the auth trigger installed, but remove its direct call surface. The
+-- admin helper is no longer needed by any restored browser policy, while the
+-- scoring workflow now updates streaks inside its server-owned RPC.
+ALTER FUNCTION public.handle_new_user()
+  SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION public.is_admin()
+  SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION public.update_streak(UUID)
+  SET search_path = pg_catalog, public, pg_temp;
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_user()
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.is_admin()
+  FROM PUBLIC, anon, authenticated, service_role;
 REVOKE EXECUTE ON FUNCTION public.update_streak(UUID)
   FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role;
+
+DO $$
+BEGIN
+  IF has_function_privilege('public', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('public', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('public', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
+    OR EXISTS (
+      SELECT 1
+      FROM (VALUES
+        ('public.handle_new_user()'),
+        ('public.is_admin()'),
+        ('public.update_streak(uuid)')
+      ) AS required(signature)
+      JOIN pg_proc AS p ON p.oid = to_regprocedure(required.signature)
+      WHERE NOT (
+        COALESCE(p.proconfig, ARRAY[]::text[])
+        @> ARRAY['search_path=pg_catalog, public, pg_temp']
+      )
+    )
+  THEN
+    RAISE EXCEPTION 'legacy security-definer hardening postcondition failed';
+  END IF;
+END;
+$$;
 
 DO $$
 DECLARE
@@ -862,7 +985,7 @@ BEGIN
     OR has_any_column_privilege('authenticated', 'public.profiles', 'REFERENCES')
     OR has_function_privilege('authenticated', 'public.update_streak(uuid)', 'EXECUTE')
     OR has_function_privilege('anon', 'public.update_streak(uuid)', 'EXECUTE')
-    OR NOT has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
   THEN
     RAISE EXCEPTION 'privilege cutover postcondition failed';
   END IF;
