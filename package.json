@@ -55,6 +55,7 @@
     "@playwright/test": "^1.62.1",
     "@types/react": "~19.2.10",
     "@vitest/coverage-v8": "^4.1.10",
+    "babel-preset-expo": "~55.0.24",
     "typescript": "^5.3.3",
     "vitest": "^4.1.10"
   },
