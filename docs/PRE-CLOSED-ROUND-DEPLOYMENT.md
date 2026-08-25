@@ -7,14 +7,18 @@
 ## Current checkpoint — 25 August 2026
 
 - The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
-- Local preview verification passes: 44 Node tests, 145 Vitest tests, both coverage gates above 80%, TypeScript, production web export, and 2/2 fully intercepted Playwright journeys.
+- Local preview verification passes: 35 Node tests, 177 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
+- Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
+- Default test and coverage commands exclude all integration paths even when credential-shaped environment variables are present. The dedicated mutating command requires an explicit acknowledgement, an HTTP loopback Supabase URL, and local credentials, and otherwise fails before test collection.
 - Account-switch isolation clears all cached practice data and epoch-binds every asynchronous session, restoration, scoring, and progress operation. The browser harness rejects non-local app hosts and every real Supabase project hostname.
-- The final independent local re-review reports no unresolved Critical, High, or Medium finding in that remediation. Hosted approval-gated findings remain release blockers.
+- The final independent Edge/integration re-review reports no Critical, High, Medium, or Low finding in that scope. Hosted execution and runtime evidence remain release blockers.
+- The final independent static database review reports no blocking finding. Its only residual Low is optional function-body hash pinning against privileged out-of-band replacement; function signatures, uniqueness, owner, language, security-definer state, search path, and grants are already checked.
 - The one-time Impeccable detector returned no findings and the `$un-vibecode` audit passes R01–R22. Mobile login Lighthouse scores 100 for accessibility and best practices.
 - The read-only dependency audit reports 17 high, 9 moderate, and 1 low advisory, with no critical finding. The paths are concentrated in Expo/Metro/build tooling and require a supported compatibility review; force-fixing is prohibited.
 - Expo SDK-55 patch versions are behind the current supported set, and `react-native-worklets` is ahead of Expo's expected version. Resolve this through a dedicated compatibility change with full regression testing.
 - Hosted public signup is disabled and verified (`disable_signup=true`); email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled. The approximately 100-person round still requires an operational invite/allowlist workflow.
 - Local Edge-runtime smoke and disposable Supabase integration tests remain required. Production/shared credentials must never be used for them.
+- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. None has been executed locally or remotely.
 - Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
 
 ## Product boundary for the 100-person round
@@ -176,13 +180,13 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 ### Safe reconciliation method
 
 1. Take a fresh read-only catalog/policy/function/grant/trigger/extension/Cron snapshot and hash the evidence.
-2. Prepare a dedicated additive reconciliation branch. Replace destructive policy/trigger patterns with exact additive or `ALTER` operations.
-3. Remove seed inserts, content backfills, Cron unscheduling, deletion loops, and unrelated row writes from the production path.
-4. Revoke base-table access from all assessor-bearing tables and add safe projections.
-5. Repair streak and score integrity before enabling tester traffic.
-6. Prove the revised migration chain from an empty local database and from a disposable clone of the observed live schema.
-7. Run independent database/security review.
-8. Present migration-history repair, schema hardening, secrets, function deployment, and any content inserts as separate exact approval requests.
+2. Prove `supabase/reconciliation/20260825_cofounder_preview_security.sql` against a disposable clone of the observed live schema. It uses exact `ALTER POLICY` operations and privilege revocation and must never enter `db push`.
+3. Prove additive migrations `20260825000000`, `20260825001000`, and `20260825002000` from an empty local database and after that reconciliation.
+4. Verify the created tables/RPCs, security-definer ownership/search paths, service-only storage, RLS, and exact function grants.
+5. Deploy and smoke-test the hardened Edge functions and Vercel client before revoking the legacy browser surface.
+6. Prove and separately approve final cutover `20260825004000`, which rewrites exact ownership policies, removes table/column grant drift, disables direct score/streak/question access, and restores only the minimum safe browser grants.
+7. Run independent database/security review and retain its findings with the release evidence.
+8. Present migration-history reconciliation, every SQL stage, secrets, function deployment, roles, and content inserts as separate exact approval requests.
 9. Re-audit hosted state after each approved operation before moving to the next.
 
 Never mark a migration applied until its complete reviewed effect exists. Never run the current `db push`, broad `migration repair`, or any Cron/purge operation against hosted Supabase without exact approval.
@@ -198,14 +202,16 @@ Never mark a migration applied until its complete reviewed effect exists. Never 
 
 ### Approval-gated production stages
 
-1. Back up/audit the hosted schema and repair only proven migration-history baselines.
-2. Apply the reviewed additive security/reconciliation migrations in timestamp order.
-3. Configure exact public origins, provider host allowlist if needed, provider/model/key, and later transcription key only if that feature is approved.
-4. Deploy only reviewed JWT-verified Edge functions.
-5. Insert only approved privacy/rubric/content rows through an audited workflow.
-6. Create a dedicated synthetic smoke user and run bounded production-safe checks.
-7. Verify client bundles contain no secret, RLS denies adversarial paths, and old deployments can be restored.
-8. Invite users in small cohorts; watch errors, latency, rate limits, spend, and support load before expanding to 100.
+1. Audit the hosted schema and repair only a separately proven migration-history baseline; never claim unapplied effects.
+2. Separately apply the hosted-only reconciliation artifact outside `db push`.
+3. Separately apply only additive preview migrations `000`–`020`, then re-audit all objects and grants.
+4. Configure exact public origins, provider host allowlist if needed, provider/model/key, and later transcription key only if that feature is approved.
+5. Deploy only reviewed JWT-verified Edge functions and the hardened Vercel client; complete bounded smoke while the legacy client surface still exists.
+6. Separately apply final privilege cutover `040`, then prove every policy, table/column privilege, and function grant postcondition.
+7. Insert only approved privacy/rubric/content rows through an audited workflow.
+8. Create a dedicated synthetic smoke user and run bounded production-safe checks.
+9. Verify client bundles contain no secret, RLS denies adversarial paths, and old deployments can be restored.
+10. Invite users in small cohorts; watch errors, latency, rate limits, spend, and support load before expanding to 100.
 
 ## Rollback and stop conditions
 

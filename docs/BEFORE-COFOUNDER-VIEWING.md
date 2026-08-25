@@ -72,6 +72,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Practice availability comes from active server projections rather than a hard-coded default question.
 - [x] Empty categories are unavailable and route restoration validates the owned session/question identity.
 - [x] Submission shows validation, scoring, retry, saved, and provider-failure states instead of becoming inert.
+- [x] A feedback deep link from another account/browser session renders a neutral unavailable state with no prior answer or feedback text, then lets the user explicitly return to Practice.
 
 ### Server-owned legacy scoring
 
@@ -80,6 +81,14 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Provider handling retains exact host/origin allowlists, HTTPS, DNS/private-network rejection, redirect rejection, timeouts, strict schema validation, and secret-safe errors.
 - [x] Local migration: `20260825000000_cofounder_preview_scoring.sql`.
 - [x] Hosted application/deployment remains approval-gated.
+
+### Edge configuration boundary
+
+- [x] `manage-ai-key` now uses the shared exact-origin, method, JSON media-type, streaming body-size, JWT, and live-admin boundary.
+- [x] Stored key material is never selected or returned; responses contain only fixed status/error fields.
+- [x] Handler behavior is executable under Node tests and included in the default Edge typecheck.
+- [x] Every mutating integration suite is excluded from default test/coverage commands and requires an explicit local-mutation acknowledgement, an HTTP loopback URL, and local credentials.
+- [x] The dedicated mutation command fails during global setup before test collection when any prerequisite is absent.
 
 ### Question Desk and student-safe reads
 
@@ -99,23 +108,34 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - [x] Local migration: `20260825002000_cofounder_feedback.sql`.
 - [x] Hosted application remains approval-gated.
 
+### Hosted security staging
+
+- [x] Added a hosted-only, separately approved reconciliation artifact at `supabase/reconciliation/20260825_cofounder_preview_security.sql`; it is intentionally outside the automatic migration chain.
+- [x] Added the final privilege cutover migration `20260825004000_cofounder_preview_privilege_cutover.sql`.
+- [x] The cutover validates the exact legacy policy identities, repairs all seven ownership predicates, removes table and column grant drift, checks preview RPC identity/ACLs, and restores only the minimum browser privileges.
+- [x] These scripts contain no top-level row DML, object deletion, Cron operation, or migration-history operation.
+- [x] No staged SQL has been executed against hosted or local Supabase.
+
 ## Verification evidence — 25 August 2026
 
 | Gate | Result |
 |---|---|
-| Unit and contract tests | 44 Node tests passed |
-| Vitest | 145 passed; 3 credential-gated tests safely skipped |
-| Node coverage | 91.62% lines, 84.19% branches, 91.74% functions |
-| Vitest coverage | 94.06% lines, 88.83% statements, 84.65% branches, 96.74% functions |
-| TypeScript | `npm run typecheck` passed |
+| Unit and contract tests | 35 Node tests passed |
+| Vitest | 177 passed; mutating integration suites are not part of the default command |
+| Node coverage | 98.52% lines, 84.63% branches, 98.82% functions |
+| Vitest coverage | 94.42% lines, 89.47% statements, 85.26% branches, 96.80% functions |
+| Default-suite isolation | Full tests and coverage passed with fake hosted-looking `SUPABASE_TEST_*` values without collecting an integration test or contacting Supabase |
+| Mutating-suite guard | With all mutation prerequisites removed, `npm run test:integration:mutating` exited 1 during global setup before running tests |
+| TypeScript | `npm run typecheck` passed, including the Edge handler configuration |
 | Production export | `npm run build` passed; static output in `dist/` |
-| Isolated browser E2E | 2/2 passed: partner practice/feedback/signout and admin draft/review |
+| Isolated browser E2E | 2/2 passed: partner practice/feedback/signout/account-switch isolation and admin draft/review; the affected cross-account journey also passed 10/10 across three workers |
 | Browser data isolation | Local app host enforced; only `e2e.supabase.co` is intercepted and every other `*.supabase.co` request fails closed; no production/shared credentials or rows used |
 | Mobile login accessibility | Lighthouse accessibility 100; best practices 100 |
 | Visual review | Desktop and 390px login/legal renders inspected |
 | Impeccable detector | One final invocation returned `[]` |
 | `$un-vibecode` | PASS across R01–R22 |
-| Independent local security review | No unresolved Critical, High, or Medium finding in the account-isolation and E2E remediation; hosted blockers remain separately open |
+| Independent local security review | No Critical, High, Medium, or Low finding remains in the Edge-key and mutating-integration remediation |
+| Independent database review | No blocking finding remains; one optional Low notes that function identity/configuration is verified but function bodies are not hash-pinned against privileged out-of-band replacement |
 | Dependency audit | 27 total: 17 high, 9 moderate, 1 low; no critical; no force-fix attempted |
 
 The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 55.0.29, React Native 0.83.2 expects 0.83.10, several Expo packages expect newer SDK-55 patches, and `react-native-worklets` expects 0.7.4 rather than 0.8.3. Treat this as a reviewed compatibility upgrade, not a blind install.
@@ -125,11 +145,16 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 - [x] Disable **Allow new users to sign up** in Supabase Auth and verify `disable_signup=true`; email sign-in remains available to existing named users.
 - [x] Confirm anonymous sign-in is disabled.
 - [x] Independent local security audit reports no unresolved Critical/High finding after delayed account-switch regression testing.
-- [ ] Review the exact additive SQL for the three cofounder-preview migrations against a fresh hosted catalog snapshot.
-- [ ] Separately approve and apply only the reviewed preview SQL; do not run the historical chain or a broad `db push`.
+- [x] Stage the hosted-only reconciliation, three additive preview migrations, and final privilege cutover with fail-closed catalog/ACL checks.
+- [x] Independent static database review reports no blocking finding after exact ownership-policy repair.
+- [ ] Run the staged SQL from empty and observed-legacy states in an isolated local/disposable Supabase database; do not use production/shared credentials.
+- [ ] Take a fresh read-only hosted catalog snapshot immediately before deployment and compare it with the scripts' exact preconditions.
+- [ ] Separately approve and apply the hosted-only reconciliation; do not use `db push` for it.
+- [ ] Separately approve and apply additive migrations `20260825000000` through `20260825002000`, then verify the created objects and ACLs read-only.
 - [ ] Separately approve deployment of the reviewed JWT-verified preview Edge function(s).
 - [ ] Configure exact `APP_ALLOWED_ORIGINS` for the stable Vercel origin and configure the provider/model/key through a server-only workflow.
 - [ ] Run the required local Supabase Edge-runtime smoke for allowed/disallowed origins, preflight, JWT, methods, content type, body limits, provider failure, and safe errors.
+- [ ] After the hardened Edge functions and Vercel client pass smoke testing, separately approve final privilege cutover `20260825004000` and verify its postconditions read-only.
 - [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` containing the `sb_publishable_...` value
@@ -142,13 +167,16 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 
 Each stage is a separate approval. A previous approval does not authorize the next stage.
 
-1. **Auth setting:** disable new user signup; no user rows are deleted or edited.
-2. **Fresh read-only audit:** catalog, policies, functions, grants, triggers, extensions, migration history, and Cron state.
-3. **Preview SQL:** present the exact additive/revocation statements from the three `20260825...` migrations plus any required AI-key function-only write reconciliation.
-4. **Edge deployment:** present the exact function names and CLI commands.
-5. **Secrets/config:** present only variable names, target function, and change intent—never values.
-6. **Named accounts/roles:** present each email/account target and exact role operation without exposing credentials.
-7. **Hosted smoke:** identify the synthetic/named account, endpoints, and expected bounded writes before running it.
+1. **Auth setting — complete:** new-user signup is disabled; no user row was deleted or edited.
+2. **Fresh read-only audit:** catalog, exact RLS definitions, functions, table/column/function grants, triggers, extensions, migration history, and Cron state.
+3. **Hosted-only reconciliation:** separately present and approve `supabase/reconciliation/20260825_cofounder_preview_security.sql`; never run it through `db push`.
+4. **Additive preview objects:** separately present and approve migrations `20260825000000`, `20260825001000`, and `20260825002000` only.
+5. **Read-only verification:** prove the expected tables, functions, RLS, owners, search paths, and ACLs before deploying clients.
+6. **Edge deployment:** present the exact function names (`score-answer`, `manage-ai-key`) and CLI commands.
+7. **Secrets/config:** present only variable names, target function, and change intent—never values.
+8. **Hardened client smoke:** deploy the Vercel build while legacy browser grants still exist, then exercise its safe RPC/Edge paths with named accounts.
+9. **Final privilege cutover:** separately present and approve `20260825004000`, then verify all table, column, policy, and function postconditions read-only.
+10. **Named accounts/roles and hosted smoke:** present each target and every expected bounded write before running it.
 
 Never mark a migration applied until its complete reviewed effect is present. Never use the historical Phase 4 migration set to shortcut preview reconciliation.
 
