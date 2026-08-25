@@ -25,19 +25,26 @@ describe('cofounder preview legacy scoring policy', () => {
     expect(sql).toContain('answer_hash');
   });
 
-  it('keeps claims and attempts service-only and closes legacy client mutation paths', () => {
+  it('stages claims and attempts without moving legacy browser privileges early', () => {
     const sql = compactSql();
 
+    expect(sql).toContain('begin;');
+    expect(sql).toContain("set local lock_timeout = '5s'");
+    expect(sql).toContain("set local statement_timeout = '30s'");
+    expect(sql).toContain("default extensions.uuid_generate_v4()");
+    expect(sql).toContain("to_regclass('public.legacy_scoring_claims')");
+    expect(sql).toContain("to_regclass('public.legacy_scoring_attempts')");
+    expect(sql).toContain("to_regprocedure('public.claim_legacy_scoring(uuid,uuid,uuid,text,text,uuid)')");
+    expect(sql).toContain("to_regprocedure('public.complete_legacy_scoring(uuid,uuid,uuid,text,text,smallint,smallint,smallint,smallint,smallint,text,text)')");
+    expect(sql).toContain("to_regprocedure('public.fail_legacy_scoring(uuid,uuid,uuid,text)')");
+    expect(sql).toContain("to_regprocedure('extensions.uuid_generate_v4()')");
+    expect(sql).not.toMatch(/create\s+or\s+replace\s+function/i);
     expect(sql).toContain('alter table public.legacy_scoring_claims enable row level security');
     expect(sql).toContain('alter table public.legacy_scoring_attempts enable row level security');
     expect(sql).toMatch(/revoke all on (table )?public\.legacy_scoring_claims from public, anon, authenticated/);
     expect(sql).toMatch(/revoke all on (table )?public\.legacy_scoring_attempts from public, anon, authenticated/);
-    expect(sql).toContain('revoke insert, update, delete on table public.answers from authenticated');
-    expect(sql).toContain('revoke insert, update, delete on table public.scores from authenticated');
-    expect(sql).toContain('revoke update, delete on table public.mock_sessions from authenticated');
-    expect(sql).toContain('revoke update on table public.profiles from authenticated');
-    expect(sql).toContain('grant update (full_name, avatar_url, university_target, entry_year, daily_goal, onboarding_complete, updated_at) on table public.profiles to authenticated');
-    expect(sql).toContain('revoke execute on function public.update_streak(uuid) from public, anon, authenticated');
+    expect(sql).not.toMatch(/revoke\s+(?:insert,\s*update,\s*delete|update,\s*delete|update)\s+on\s+table\s+public\.(?:answers|scores|mock_sessions|profiles)/i);
+    expect(sql).not.toMatch(/function\s+public\.update_streak/i);
   });
 
   it('exposes fixed hardened claim, completion, and failure RPCs only to service_role', () => {
@@ -50,6 +57,9 @@ describe('cofounder preview legacy scoring policy', () => {
     }
     expect(sql.match(/security definer/g)?.length).toBeGreaterThanOrEqual(3);
     expect(sql.match(/set search_path = pg_catalog, public/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(sql.match(/auth\.role\(\)\s+is\s+distinct\s+from\s+'service_role'/g)?.length).toBe(3);
+    expect(sql).not.toMatch(/auth\.role\(\)\s*<>\s*'service_role'/);
+    expect(sql).toMatch(/from public, anon, authenticated, service_role/);
   });
 
   it('binds ownership and active content, locks the logical claim, and rejects changed bodies', () => {

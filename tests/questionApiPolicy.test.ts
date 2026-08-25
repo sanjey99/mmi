@@ -12,8 +12,17 @@ const questionService = readFileSync(
 );
 
 describe('legacy question API SQL policy', () => {
-  it('removes direct browser table access and exposes only named RPCs', () => {
-    expect(migration).toMatch(/REVOKE ALL ON TABLE public\.questions FROM anon, authenticated/i);
+  it('stages named RPCs without prematurely cutting over direct browser table access', () => {
+    expect(migration).toContain('BEGIN;');
+    expect(migration).toContain("SET LOCAL lock_timeout = '5s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '30s'");
+    expect(migration).toContain("to_regprocedure('public.list_legacy_questions(public.question_category,public.question_difficulty,text,integer)')");
+    expect(migration).toContain("to_regprocedure('public.get_legacy_question(uuid)')");
+    expect(migration).toContain("to_regprocedure('public.get_legacy_question_counts()')");
+    expect(migration).toContain("to_regprocedure('public.create_legacy_questions(jsonb)')");
+    expect(migration).not.toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION/i);
+    expect(migration).not.toMatch(/REVOKE ALL ON TABLE public\.questions FROM/i);
+    expect(migration).toMatch(/FROM PUBLIC, anon, authenticated, service_role/);
     expect(migration).toMatch(/GRANT EXECUTE ON FUNCTION public\.list_legacy_questions/i);
     expect(migration).toMatch(/GRANT EXECUTE ON FUNCTION public\.get_legacy_question\(uuid\)/i);
     expect(migration).toMatch(/GRANT EXECUTE ON FUNCTION public\.get_legacy_question_counts\(\)/i);
@@ -26,7 +35,7 @@ describe('legacy question API SQL policy', () => {
     expect(migration.match(/SET search_path = pg_catalog, public/g)).toHaveLength(4);
     expect(migration).toMatch(/WHERE q\.is_active IS TRUE/g);
     const studentFunctionPrefix = migration.split(
-      'CREATE OR REPLACE FUNCTION public.create_legacy_questions',
+      'CREATE FUNCTION public.create_legacy_questions',
     )[0];
     expect(studentFunctionPrefix).not.toMatch(/guidance_notes/i);
   });

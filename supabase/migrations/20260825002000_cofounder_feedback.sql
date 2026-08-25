@@ -2,8 +2,27 @@
 -- Additive migration: no rows or database objects are deleted.
 -- This migration is committed for review and must not be applied without approval.
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
+DO $$
+BEGIN
+  IF to_regprocedure('extensions.uuid_generate_v4()') IS NULL THEN
+    RAISE EXCEPTION 'required UUID function extensions.uuid_generate_v4() is missing';
+  END IF;
+
+  IF to_regclass('public.cofounder_feedback') IS NOT NULL
+    OR to_regprocedure('public.submit_cofounder_feedback(text,text,text,text,text,boolean)') IS NOT NULL
+    OR to_regprocedure('public.list_cofounder_feedback(integer)') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'cofounder preview feedback migration must be applied exactly once';
+  END IF;
+END;
+$$;
+
 CREATE TABLE public.cofounder_feedback (
-  id uuid PRIMARY KEY DEFAULT public.uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   user_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   category text NOT NULL CHECK (category IN ('bug', 'usability', 'content', 'scoring', 'idea', 'other')),
   severity text NOT NULL CHECK (severity IN ('blocking', 'major', 'minor', 'suggestion')),
@@ -32,7 +51,7 @@ CREATE INDEX cofounder_feedback_user_created_idx
 ALTER TABLE public.cofounder_feedback ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.cofounder_feedback FROM PUBLIC, anon, authenticated;
 
-CREATE OR REPLACE FUNCTION public.submit_cofounder_feedback(
+CREATE FUNCTION public.submit_cofounder_feedback(
   p_category text,
   p_severity text,
   p_screen text,
@@ -120,7 +139,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.list_cofounder_feedback(p_limit integer DEFAULT 100)
+CREATE FUNCTION public.list_cofounder_feedback(p_limit integer DEFAULT 100)
 RETURNS TABLE (
   id uuid,
   category text,
@@ -180,8 +199,8 @@ REVOKE EXECUTE ON FUNCTION public.submit_cofounder_feedback(
   text,
   text,
   boolean
-) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.list_cofounder_feedback(integer) FROM PUBLIC, anon;
+) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.list_cofounder_feedback(integer) FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION public.submit_cofounder_feedback(
   text,
@@ -192,3 +211,5 @@ GRANT EXECUTE ON FUNCTION public.submit_cofounder_feedback(
   boolean
 ) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.list_cofounder_feedback(integer) TO authenticated;
+
+COMMIT;

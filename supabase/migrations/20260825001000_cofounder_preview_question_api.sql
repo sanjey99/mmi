@@ -2,7 +2,23 @@
 -- Additive migration: no rows or database objects are deleted.
 -- This migration is committed for review and must not be applied without approval.
 
-CREATE OR REPLACE FUNCTION public.list_legacy_questions(
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
+DO $$
+BEGIN
+  IF to_regprocedure('public.list_legacy_questions(public.question_category,public.question_difficulty,text,integer)') IS NOT NULL
+    OR to_regprocedure('public.get_legacy_question(uuid)') IS NOT NULL
+    OR to_regprocedure('public.get_legacy_question_counts()') IS NOT NULL
+    OR to_regprocedure('public.create_legacy_questions(jsonb)') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'cofounder preview question API migration must be applied exactly once';
+  END IF;
+END;
+$$;
+
+CREATE FUNCTION public.list_legacy_questions(
   p_category public.question_category DEFAULT NULL,
   p_difficulty public.question_difficulty DEFAULT NULL,
   p_university text DEFAULT NULL,
@@ -59,7 +75,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.get_legacy_question(p_question_id uuid)
+CREATE FUNCTION public.get_legacy_question(p_question_id uuid)
 RETURNS TABLE (
   id uuid,
   category public.question_category,
@@ -102,7 +118,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.get_legacy_question_counts()
+CREATE FUNCTION public.get_legacy_question_counts()
 RETURNS TABLE (
   category public.question_category,
   question_count bigint
@@ -127,7 +143,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.create_legacy_questions(p_rows jsonb)
+CREATE FUNCTION public.create_legacy_questions(p_rows jsonb)
 RETURNS TABLE (
   source_index integer,
   id uuid
@@ -250,17 +266,15 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON TABLE public.questions FROM anon, authenticated;
-
 REVOKE EXECUTE ON FUNCTION public.list_legacy_questions(
   public.question_category,
   public.question_difficulty,
   text,
   integer
-) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.get_legacy_question(uuid) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.get_legacy_question_counts() FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.create_legacy_questions(jsonb) FROM PUBLIC, anon;
+) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.get_legacy_question(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.get_legacy_question_counts() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.create_legacy_questions(jsonb) FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION public.list_legacy_questions(
   public.question_category,
@@ -271,3 +285,5 @@ GRANT EXECUTE ON FUNCTION public.list_legacy_questions(
 GRANT EXECUTE ON FUNCTION public.get_legacy_question(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_legacy_question_counts() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_legacy_questions(jsonb) TO authenticated;
+
+COMMIT;

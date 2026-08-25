@@ -15,6 +15,14 @@ const feedbackApi = readFileSync(resolve(
 
 describe('cofounder feedback policy', () => {
   it('keeps the table service-only and exposes two hardened RPCs', () => {
+    expect(migration).toContain('BEGIN;');
+    expect(migration).toContain("DEFAULT extensions.uuid_generate_v4()");
+    expect(migration).toContain("to_regclass('public.cofounder_feedback')");
+    expect(migration).toContain("to_regprocedure('public.submit_cofounder_feedback(text,text,text,text,text,boolean)')");
+    expect(migration).toContain("to_regprocedure('public.list_cofounder_feedback(integer)')");
+    expect(migration).toContain("to_regprocedure('extensions.uuid_generate_v4()')");
+    expect(migration).not.toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION/i);
+    expect(migration).toMatch(/FROM PUBLIC, anon, authenticated, service_role/);
     expect(migration).toMatch(/CREATE TABLE public\.cofounder_feedback/i);
     expect(migration).toMatch(/ALTER TABLE public\.cofounder_feedback ENABLE ROW LEVEL SECURITY/i);
     expect(migration).toMatch(/REVOKE ALL ON TABLE public\.cofounder_feedback FROM PUBLIC, anon, authenticated/i);

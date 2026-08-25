@@ -1,11 +1,32 @@
 -- Cofounder preview: server-owned, retry-safe legacy answer scoring.
 --
--- This migration is intentionally additive. It creates durable claim metadata,
--- exposes service-role-only transaction boundaries, and revokes the browser
--- mutations that those boundaries replace. It does not delete rows or objects.
+-- This migration is intentionally additive. It creates durable claim metadata
+-- and exposes service-role-only transaction boundaries. Browser privilege
+-- cutover is deliberately deferred to 20260825004000.
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
+DO $$
+BEGIN
+  IF to_regprocedure('extensions.uuid_generate_v4()') IS NULL THEN
+    RAISE EXCEPTION 'required UUID function extensions.uuid_generate_v4() is missing';
+  END IF;
+
+  IF to_regclass('public.legacy_scoring_claims') IS NOT NULL
+    OR to_regclass('public.legacy_scoring_attempts') IS NOT NULL
+    OR to_regprocedure('public.claim_legacy_scoring(uuid,uuid,uuid,text,text,uuid)') IS NOT NULL
+    OR to_regprocedure('public.complete_legacy_scoring(uuid,uuid,uuid,text,text,smallint,smallint,smallint,smallint,smallint,text,text)') IS NOT NULL
+    OR to_regprocedure('public.fail_legacy_scoring(uuid,uuid,uuid,text)') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'cofounder preview scoring migration must be applied exactly once';
+  END IF;
+END;
+$$;
 
 CREATE TABLE public.legacy_scoring_claims (
-  id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id               UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   user_id          UUID NOT NULL REFERENCES public.profiles(id) ON DELETE RESTRICT,
   session_id       UUID NOT NULL REFERENCES public.mock_sessions(id) ON DELETE RESTRICT,
   question_id      UUID NOT NULL REFERENCES public.questions(id) ON DELETE RESTRICT,
@@ -23,7 +44,7 @@ CREATE TABLE public.legacy_scoring_claims (
 );
 
 CREATE TABLE public.legacy_scoring_attempts (
-  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id           UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   claim_id     UUID NOT NULL REFERENCES public.legacy_scoring_claims(id) ON DELETE RESTRICT,
   user_id      UUID NOT NULL REFERENCES public.profiles(id) ON DELETE RESTRICT,
   lease_token  UUID NOT NULL,
@@ -46,18 +67,7 @@ REVOKE ALL ON TABLE public.legacy_scoring_attempts FROM PUBLIC, anon, authentica
 GRANT ALL ON TABLE public.legacy_scoring_claims TO service_role;
 GRANT ALL ON TABLE public.legacy_scoring_attempts TO service_role;
 
--- The Edge function now owns these legacy writes. Existing SELECT grants and
--- own-row read policies remain unchanged for progress and restoration.
-REVOKE INSERT, UPDATE, DELETE ON TABLE public.answers FROM authenticated;
-REVOKE INSERT, UPDATE, DELETE ON TABLE public.scores FROM authenticated;
-REVOKE UPDATE, DELETE ON TABLE public.mock_sessions FROM authenticated;
-REVOKE UPDATE ON TABLE public.profiles FROM authenticated;
-GRANT UPDATE (full_name, avatar_url, university_target, entry_year, daily_goal, onboarding_complete, updated_at)
-  ON TABLE public.profiles TO authenticated;
-REVOKE EXECUTE ON FUNCTION public.update_streak(UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role;
-
-CREATE OR REPLACE FUNCTION public.claim_legacy_scoring(
+CREATE FUNCTION public.claim_legacy_scoring(
   p_user_id UUID,
   p_session_id UUID,
   p_question_id UUID,
@@ -81,6 +91,10 @@ DECLARE
   v_recent_attempts INTEGER;
   v_result JSONB;
 BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
+  END IF;
+
   IF p_user_id IS NULL
     OR p_session_id IS NULL
     OR p_question_id IS NULL
@@ -272,7 +286,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.complete_legacy_scoring(
+CREATE FUNCTION public.complete_legacy_scoring(
   p_user_id UUID,
   p_claim_id UUID,
   p_lease_token UUID,
@@ -302,6 +316,10 @@ DECLARE
   v_longest INTEGER;
   v_result JSONB;
 BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
+  END IF;
+
   IF p_user_id IS NULL
     OR p_claim_id IS NULL
     OR p_lease_token IS NULL
@@ -509,7 +527,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.fail_legacy_scoring(
+CREATE FUNCTION public.fail_legacy_scoring(
   p_user_id UUID,
   p_claim_id UUID,
   p_lease_token UUID,
@@ -521,6 +539,10 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
+  END IF;
+
   IF p_error_code IS NULL
     OR p_error_code NOT IN ('provider_failed', 'invalid_provider_response', 'persistence_failed')
   THEN
@@ -550,11 +572,11 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.claim_legacy_scoring(UUID, UUID, UUID, TEXT, TEXT, UUID)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.complete_legacy_scoring(UUID, UUID, UUID, TEXT, TEXT, SMALLINT, SMALLINT, SMALLINT, SMALLINT, SMALLINT, TEXT, TEXT)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.fail_legacy_scoring(UUID, UUID, UUID, TEXT)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION public.claim_legacy_scoring(UUID, UUID, UUID, TEXT, TEXT, UUID)
   TO service_role;
@@ -562,3 +584,5 @@ GRANT EXECUTE ON FUNCTION public.complete_legacy_scoring(UUID, UUID, UUID, TEXT,
   TO service_role;
 GRANT EXECUTE ON FUNCTION public.fail_legacy_scoring(UUID, UUID, UUID, TEXT)
   TO service_role;
+
+COMMIT;
