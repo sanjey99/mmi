@@ -87,6 +87,79 @@ BEGIN
     RAISE EXCEPTION 'hosted RLS policy prerequisite failed';
   END IF;
 
+  SELECT count(*)
+  INTO v_policy_count
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND tablename = 'app_config';
+
+  IF v_policy_count <> 4
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'app_config'
+        AND policyname = 'app_config_read_non_secret'
+    )
+    OR NOT (
+      (
+        EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_insert_admin'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_update_admin'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_delete_admin'
+        )
+      )
+      OR
+      (
+        EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_insert_admin_non_secret'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_update_admin_non_secret'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'app_config'
+            AND policyname = 'app_config_delete_admin_non_secret'
+        )
+      )
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM pg_policies
+      WHERE schemaname = 'public'
+        AND tablename = 'app_config'
+        AND (
+          permissive <> 'PERMISSIVE'
+          OR CASE policyname
+            WHEN 'app_config_read_non_secret' THEN cmd <> 'SELECT'
+            WHEN 'app_config_insert_admin' THEN cmd <> 'INSERT'
+            WHEN 'app_config_insert_admin_non_secret' THEN cmd <> 'INSERT'
+            WHEN 'app_config_update_admin' THEN cmd <> 'UPDATE'
+            WHEN 'app_config_update_admin_non_secret' THEN cmd <> 'UPDATE'
+            WHEN 'app_config_delete_admin' THEN cmd <> 'DELETE'
+            WHEN 'app_config_delete_admin_non_secret' THEN cmd <> 'DELETE'
+            ELSE TRUE
+          END
+        )
+    )
+  THEN
+    RAISE EXCEPTION 'app_config policy generation prerequisite failed';
+  END IF;
+
   IF to_regprocedure('public.claim_legacy_scoring(uuid,uuid,uuid,text,text,uuid)') IS NULL
     OR to_regprocedure('public.complete_legacy_scoring(uuid,uuid,uuid,text,text,smallint,smallint,smallint,smallint,smallint,text,text)') IS NULL
     OR to_regprocedure('public.fail_legacy_scoring(uuid,uuid,uuid,text)') IS NULL
@@ -331,6 +404,135 @@ BEGIN
 END;
 $$;
 
+-- Hosted and pristine databases use two reviewed policy-name generations.
+-- Normalize the hosted generation without dropping an RLS object, then force
+-- the same canonical predicates in both environments.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'app_config'
+      AND policyname = 'app_config_insert_admin'
+  ) THEN
+    EXECUTE 'ALTER POLICY app_config_insert_admin ON public.app_config RENAME TO app_config_insert_admin_non_secret';
+    EXECUTE 'ALTER POLICY app_config_update_admin ON public.app_config RENAME TO app_config_update_admin_non_secret';
+    EXECUTE 'ALTER POLICY app_config_delete_admin ON public.app_config RENAME TO app_config_delete_admin_non_secret';
+  END IF;
+END;
+$$;
+
+ALTER POLICY app_config_read_non_secret
+  ON public.app_config
+  TO authenticated
+  USING (auth.role() = 'authenticated' AND key <> 'ai_api_key');
+
+ALTER POLICY app_config_insert_admin_non_secret
+  ON public.app_config
+  TO authenticated
+  WITH CHECK (
+    key <> 'ai_api_key'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  );
+
+ALTER POLICY app_config_update_admin_non_secret
+  ON public.app_config
+  TO authenticated
+  USING (
+    key <> 'ai_api_key'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  )
+  WITH CHECK (
+    key <> 'ai_api_key'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  );
+
+ALTER POLICY app_config_delete_admin_non_secret
+  ON public.app_config
+  TO authenticated
+  USING (
+    key <> 'ai_api_key'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  );
+
+DO $$
+DECLARE
+  v_policy_count integer;
+BEGIN
+  SELECT count(*)
+  INTO v_policy_count
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND tablename = 'app_config'
+    AND roles = ARRAY['authenticated'::name];
+
+  IF v_policy_count <> 4 OR EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'app_config'
+      AND (
+        permissive <> 'PERMISSIVE'
+        OR CASE policyname
+          WHEN 'app_config_read_non_secret' THEN
+            cmd <> 'SELECT'
+            OR position('auth.role' IN COALESCE(qual, '')) = 0
+            OR position('authenticated' IN COALESCE(qual, '')) = 0
+            OR position('ai_api_key' IN COALESCE(qual, '')) = 0
+            OR with_check IS NOT NULL
+          WHEN 'app_config_insert_admin_non_secret' THEN
+            cmd <> 'INSERT'
+            OR qual IS NOT NULL
+            OR position('is_admin' IN COALESCE(with_check, '')) = 0
+            OR position('profiles' IN COALESCE(with_check, '')) = 0
+            OR position('auth.uid' IN COALESCE(with_check, '')) = 0
+            OR position('ai_api_key' IN COALESCE(with_check, '')) = 0
+          WHEN 'app_config_update_admin_non_secret' THEN
+            cmd <> 'UPDATE'
+            OR position('is_admin' IN COALESCE(qual, '')) = 0
+            OR position('profiles' IN COALESCE(qual, '')) = 0
+            OR position('auth.uid' IN COALESCE(qual, '')) = 0
+            OR position('ai_api_key' IN COALESCE(qual, '')) = 0
+            OR position('is_admin' IN COALESCE(with_check, '')) = 0
+            OR position('profiles' IN COALESCE(with_check, '')) = 0
+            OR position('auth.uid' IN COALESCE(with_check, '')) = 0
+            OR position('ai_api_key' IN COALESCE(with_check, '')) = 0
+          WHEN 'app_config_delete_admin_non_secret' THEN
+            cmd <> 'DELETE'
+            OR position('is_admin' IN COALESCE(qual, '')) = 0
+            OR position('profiles' IN COALESCE(qual, '')) = 0
+            OR position('auth.uid' IN COALESCE(qual, '')) = 0
+            OR position('ai_api_key' IN COALESCE(qual, '')) = 0
+            OR with_check IS NOT NULL
+          ELSE TRUE
+        END
+      )
+  ) THEN
+    RAISE EXCEPTION 'app_config policy cutover postcondition failed';
+  END IF;
+END;
+$$;
+
 -- Repair the exact ownership semantics before browser privileges are restored.
 -- For ALL policies, define both predicates explicitly so unsafe WITH CHECK
 -- drift cannot survive an otherwise valid policy object.
@@ -392,7 +594,7 @@ DECLARE
   v_table text;
   v_columns text;
 BEGIN
-  FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions', 'profiles']
+  FOREACH v_table IN ARRAY ARRAY['questions', 'answers', 'scores', 'mock_sessions', 'profiles', 'app_config']
   LOOP
     SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
     INTO v_columns
@@ -446,11 +648,13 @@ REVOKE ALL ON TABLE public.answers FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.scores FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.mock_sessions FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.app_config FROM PUBLIC, anon, authenticated;
 
 GRANT SELECT ON TABLE public.answers TO authenticated;
 GRANT SELECT ON TABLE public.scores TO authenticated;
 GRANT SELECT, INSERT ON TABLE public.mock_sessions TO authenticated;
 GRANT SELECT ON TABLE public.profiles TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO authenticated;
 GRANT UPDATE (
   full_name,
   avatar_url,
@@ -460,6 +664,32 @@ GRANT UPDATE (
   onboarding_complete,
   updated_at
 ) ON TABLE public.profiles TO authenticated;
+
+DO $$
+BEGIN
+  IF NOT has_table_privilege('authenticated', 'public.app_config', 'SELECT')
+    OR NOT has_table_privilege('authenticated', 'public.app_config', 'INSERT')
+    OR NOT has_table_privilege('authenticated', 'public.app_config', 'UPDATE')
+    OR NOT has_table_privilege('authenticated', 'public.app_config', 'DELETE')
+    OR has_table_privilege('authenticated', 'public.app_config', 'TRUNCATE')
+    OR has_table_privilege('authenticated', 'public.app_config', 'REFERENCES')
+    OR has_table_privilege('authenticated', 'public.app_config', 'TRIGGER')
+    OR has_table_privilege('anon', 'public.app_config', 'SELECT')
+    OR has_table_privilege('anon', 'public.app_config', 'INSERT')
+    OR has_table_privilege('anon', 'public.app_config', 'UPDATE')
+    OR has_table_privilege('anon', 'public.app_config', 'DELETE')
+    OR has_table_privilege('anon', 'public.app_config', 'TRUNCATE')
+    OR has_table_privilege('anon', 'public.app_config', 'REFERENCES')
+    OR has_table_privilege('anon', 'public.app_config', 'TRIGGER')
+    OR has_any_column_privilege('anon', 'public.app_config', 'SELECT')
+    OR has_any_column_privilege('anon', 'public.app_config', 'INSERT')
+    OR has_any_column_privilege('anon', 'public.app_config', 'UPDATE')
+    OR has_any_column_privilege('anon', 'public.app_config', 'REFERENCES')
+  THEN
+    RAISE EXCEPTION 'app_config browser ACL postcondition failed';
+  END IF;
+END;
+$$;
 
 -- Check effective Edge privileges only after every browser table grant has
 -- reached its final state in this transaction.

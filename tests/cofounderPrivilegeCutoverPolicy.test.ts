@@ -29,7 +29,11 @@ describe('cofounder preview privilege cutover policy', () => {
     const firstBrowserGrant = normalizedSql.indexOf('GRANT SELECT ON TABLE public.answers TO authenticated');
     expect(finalPolicyRepair).toBeGreaterThanOrEqual(0);
     expect(firstBrowserGrant).toBeGreaterThan(finalPolicyRepair);
-    expect(sql).not.toMatch(/position\s*\(/i);
+    const legacyPolicyRepairs = sql.slice(
+      sql.indexOf('-- Repair the exact ownership semantics'),
+      sql.indexOf('-- Remove both table-level'),
+    );
+    expect(legacyPolicyRepairs).not.toMatch(/position\s*\(/i);
   });
 
   it('makes legacy browser privilege changes only in the final cutover transaction', async () => {
@@ -48,6 +52,47 @@ describe('cofounder preview privilege cutover policy', () => {
     expect(sql).toMatch(/GRANT SELECT, INSERT ON TABLE public\.mock_sessions TO authenticated/i);
     expect(sql).toMatch(/GRANT SELECT ON TABLE public\.profiles TO authenticated/i);
     expect(sql).toMatch(/GRANT UPDATE\s*\(\s*full_name,\s*avatar_url,\s*university_target,\s*entry_year,\s*daily_goal,\s*onboarding_complete,\s*updated_at\s*\)\s*ON TABLE public\.profiles TO authenticated/i);
+  });
+
+  it('restores the hardened non-secret app-config browser surface on a fresh chain', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.app_config FROM PUBLIC, anon, authenticated/i);
+    expect(sql).toMatch(/GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.app_config TO authenticated/i);
+    expect(sql).toMatch(/app_config browser ACL postcondition failed/i);
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+      expect(sql).toContain(`has_table_privilege('authenticated', 'public.app_config', '${privilege}')`);
+    }
+    for (const privilege of ['TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      expect(sql).toContain(`has_table_privilege('anon', 'public.app_config', '${privilege}')`);
+    }
+    expect(sql.lastIndexOf('service-role Edge ACL postcondition failed')).toBeGreaterThan(
+      sql.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO authenticated'),
+    );
+  });
+
+  it('normalizes one recognized app-config policy generation before restoring browser grants', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const normalizedSql = sql.replace(/\s+/g, ' ');
+
+    for (const policy of [
+      'app_config_read_non_secret',
+      'app_config_insert_admin',
+      'app_config_update_admin',
+      'app_config_delete_admin',
+      'app_config_insert_admin_non_secret',
+      'app_config_update_admin_non_secret',
+      'app_config_delete_admin_non_secret',
+    ]) expect(sql).toContain(policy);
+    expect(sql).toMatch(/ALTER POLICY app_config_insert_admin ON public\.app_config RENAME TO app_config_insert_admin_non_secret/i);
+    expect(normalizedSql).toContain("ALTER POLICY app_config_read_non_secret ON public.app_config TO authenticated USING (auth.role() = 'authenticated' AND key <> 'ai_api_key')");
+    expect(normalizedSql).toContain("ALTER POLICY app_config_insert_admin_non_secret ON public.app_config TO authenticated WITH CHECK ( key <> 'ai_api_key' AND EXISTS ( SELECT 1 FROM public.profiles AS p WHERE p.id = auth.uid() AND p.is_admin IS TRUE ) )");
+    expect(sql).toMatch(/app_config policy cutover postcondition failed/i);
+    expect(sql.match(/permissive\s*<>\s*'PERMISSIVE'/g)).toHaveLength(2);
+    const policyRepair = sql.lastIndexOf('ALTER POLICY app_config_delete_admin_non_secret');
+    const browserGrant = sql.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO authenticated');
+    expect(policyRepair).toBeGreaterThanOrEqual(0);
+    expect(browserGrant).toBeGreaterThan(policyRepair);
   });
 
   it('removes default streak execution before granting service-role-only execution', async () => {
