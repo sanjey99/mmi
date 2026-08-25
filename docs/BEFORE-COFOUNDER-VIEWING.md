@@ -47,7 +47,7 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 - Hosted legacy content contains two active questions: one Ethics and one Motivation. Four categories are empty.
 - `app_config` contains provider/model rows; `ai_api_key` and `ai_base_url` were not configured when last inspected.
 - `pg_trgm` and `uuid-ossp` are installed; `on_auth_user_created` is enabled.
-- Public signup was enabled when checked: Auth settings returned `disable_signup=false`.
+- Public signup was disabled by the project owner and verified read-only on 25 August 2026: Auth settings returned `disable_signup=true`; email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled.
 - The public Supabase project endpoint is reachable. The prior browser `NetworkError` was a missing or stale client environment configuration, not an outage.
 - Hosted policies still expose assessor-bearing MMI/role-play content to authenticated users, allow unsafe legacy question fields, permit cross-user `update_streak`, and permit own-answer score insertion.
 - No migration, function deployment, secret update, user/profile mutation, or application-row mutation was performed during this implementation.
@@ -122,8 +122,8 @@ The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 
 
 ## Remaining P0 blockers before showing cofounders
 
-- [ ] Disable **Allow new users to sign up** in Supabase Auth and re-check `disable_signup=true`. Existing named users must remain able to sign in.
-- [ ] Confirm anonymous sign-in is disabled.
+- [x] Disable **Allow new users to sign up** in Supabase Auth and verify `disable_signup=true`; email sign-in remains available to existing named users.
+- [x] Confirm anonymous sign-in is disabled.
 - [x] Independent local security audit reports no unresolved Critical/High finding after delayed account-switch regression testing.
 - [ ] Review the exact additive SQL for the three cofounder-preview migrations against a fresh hosted catalog snapshot.
 - [ ] Separately approve and apply only the reviewed preview SQL; do not run the historical chain or a broad `db push`.
