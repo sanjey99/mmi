@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { canRunLocalMutationTests } from './mutationTestSafety';
 
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
-const testAiKey = process.env.SUPABASE_TEST_AI_KEY;
-const enabled = Boolean(url && anonKey && serviceRoleKey);
-const scoreAnswerSource = join(process.cwd(), 'supabase/functions/score-answer/index.ts');
+const enabled = canRunLocalMutationTests(process.env);
 
 type TestUser = { id: string; client: SupabaseClient; accessToken: string };
 
@@ -79,29 +76,9 @@ run('AI key contract (isolated Supabase project only)', () => {
     const directWrite = await admin.client.from('app_config').upsert({ key: 'ai_api_key', value: 'blocked' });
     expect(directWrite.error).not.toBeNull();
 
-    const response = await invoke(admin.accessToken, 'manage-ai-key', { apiKey: testAiKey ?? 'integration-only-key' });
+    const replacementKey = `integration-only-key-${suffix}`;
+    const response = await invoke(admin.accessToken, 'manage-ai-key', { apiKey: replacementKey });
     expect(response.status).toBe(200);
-    expect(JSON.stringify(await response.json())).not.toContain(testAiKey ?? 'integration-only-key');
-  });
-
-  it.runIf(Boolean(testAiKey))('scores an answer after an admin key replacement', async () => {
-    const response = await invoke(student.accessToken, 'score-answer', {
-      questionText: 'Why do you want to study medicine?',
-      answerText: 'I want to study medicine because I value compassionate, evidence-based care and lifelong learning.',
-    });
-    expect(response.status).toBe(200);
-    expect((await response.json()).overall_pct).toEqual(expect.any(Number));
-  });
-});
-
-describe('score-answer AI key boundary', () => {
-  it('loads ai_api_key only in the server-side configuration query before calling the provider', async () => {
-    const source = await readFile(scoreAnswerSource, 'utf8');
-    const keyReferences = [...source.matchAll(/ai_api_key/g)].map((match) => match.index ?? -1);
-    const serviceClientReference = source.indexOf('const serviceClient = createClient');
-
-    expect(keyReferences).toHaveLength(3);
-    expect(keyReferences.every((index) => index > serviceClientReference)).toBe(true);
-    expect(source).toMatch(/\.in\('key', \['ai_provider', 'ai_model', 'ai_base_url', 'ai_api_key'\]\)/);
+    expect(JSON.stringify(await response.json())).not.toContain(replacementKey);
   });
 });

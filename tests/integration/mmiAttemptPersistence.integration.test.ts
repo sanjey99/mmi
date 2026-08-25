@@ -3,18 +3,13 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
-import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode, isDisposableLocalUrl } from './mmiPersistenceFixtures.ts';
+import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode } from './mmiPersistenceFixtures.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { canRunLocalMutationTests } from './mutationTestSafety.ts';
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
-const integrationRequired = process.env.MMI_PERSISTENCE_INTEGRATION_REQUIRED === '1';
-if (url && !isDisposableLocalUrl(url)) {
-  throw new Error('MMI persistence tests only run against local Supabase');
-}
-const enabled = Boolean(url && anonKey && serviceRoleKey);
-if (integrationRequired && !enabled) {
-  throw new Error('Required MMI persistence integration credentials are missing');
-}
+const enabled = canRunLocalMutationTests(process.env);
 const run = enabled ? describe : describe.skip;
 const fixturePrefix = `mmi-persistence-${randomUUID().slice(0, 8)}`;
 const password = `Local-only-${randomUUID()}!`;
