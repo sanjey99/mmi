@@ -177,6 +177,33 @@ test.beforeEach(async ({ page }) => {
   await installSupabaseMocks(page);
 });
 
+test('orientation keeps the next-station plate above its heading', async ({ page }) => {
+  await page.goto('/');
+
+  const stationPlate = page.getByText('NEXT STATION', { exact: true }).locator('..');
+  const heading = page.getByText('Choose an interview station', { exact: true });
+  await expect(stationPlate).toBeVisible();
+  await expect(heading).toBeVisible();
+
+  const [stationPlateBox, headingBox] = await Promise.all([
+    stationPlate.boundingBox(),
+    heading.boundingBox(),
+  ]);
+
+  expect(stationPlateBox).not.toBeNull();
+  expect(headingBox).not.toBeNull();
+  expect(stationPlateBox!.y + stationPlateBox!.height).toBeLessThanOrEqual(headingBox!.y);
+});
+
+test('admin profile links directly to the Question Desk', async ({ page }) => {
+  await page.goto('/profile');
+
+  await page.getByText('Question Desk', { exact: true }).click();
+
+  await expect(page).toHaveURL(/\/admin\/questions$/);
+  await expect(page.getByText('Add practice questions')).toBeVisible();
+});
+
 test('partner completes practice, sends feedback, and signs out', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Ready, Partner.')).toBeVisible();

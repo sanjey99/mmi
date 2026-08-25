@@ -158,6 +158,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.white,
     position: 'relative',
     overflow: 'hidden',
+    padding: 24,
     marginBottom: 16,
   },
   routeLine: {
@@ -169,16 +170,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.teal[400],
   },
   stationPlate: {
-    position: 'absolute',
-    left: 24,
-    top: 24,
+    alignSelf: 'flex-start',
     width: 88,
     backgroundColor: colors.primary[800],
     padding: 12,
   },
   stationKicker: { ...text.labelMd, color: colors.teal[200] },
   stationNumber: { ...text.displayXl, color: colors.bg.white, lineHeight: 66 },
-  thresholdCopy: { paddingTop: 132, paddingHorizontal: 24, paddingBottom: 24 },
+  thresholdCopy: { marginTop: 16 },
   thresholdTitle: { ...text.headingLg, color: colors.primary[800], marginBottom: 6 },
   thresholdText: { ...text.bodyMd, color: colors.neutral[600], lineHeight: 23, marginBottom: 18, maxWidth: 620 },
   statusRail: {

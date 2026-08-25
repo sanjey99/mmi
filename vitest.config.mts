@@ -24,6 +24,7 @@ export default defineConfig({
       'tests/questionCsv.test.ts',
       'tests/questionApi.test.ts',
       'tests/questionApiPolicy.test.ts',
+      'tests/medInterviewQuestionBankImport.test.ts',
       'tests/cofounderFeedback.test.ts',
       'tests/cofounderFeedbackPolicy.test.ts',
       'tests/cofounderHostedReconciliationPolicy.test.ts',

@@ -6,24 +6,25 @@
 
 ## Current checkpoint — 25 August 2026
 
-- The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no hosted preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
-- Local preview verification passes: 35 Node tests, 190 Vitest tests, both coverage systems exceed 80% for lines/branches/functions, TypeScript (including the Edge handler), production web export, and 2/2 fully intercepted Playwright journeys.
+- The current cofounder-preview reliability changes exist locally on `feat/cofounder-ui-reliability` and are not deployed. During this current fix phase, no hosted mutation was performed.
+- Earlier separately approved operations applied the hosted-only reconciliation and additive migrations `20260825000000`, `20260825001000`, and `20260825002000`, and deployed `score-answer` and `manage-ai-key` as v3. Migration `20260825004000` remains not applied. The prior Vercel production deployment/alias is live at `https://mmi-hazel.vercel.app` from commit `ffa9cf7bcec6d6bd7e9795ad164376d03cf3fe69`; it does not include the current local changes.
+- Latest local preview verification passes: 35 Node tests; 203 Vitest tests; Node coverage 98.52% lines, 84.63% branches, 98.82% functions; Vitest coverage 95.62% lines, 86.87% branches, 97.7% functions; TypeScript including the Edge handler; Expo web export; and 4/4 fully intercepted local Playwright tests, including station-overlap geometry and Profile → `/admin/questions` direct routing.
 - Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
 - Default test and coverage commands exclude all integration paths even when credential-shaped environment variables are present. The dedicated mutating command requires an explicit acknowledgement, an HTTP loopback Supabase URL, and local credentials, and otherwise fails before test collection.
 - Account-switch isolation clears cached practice and profile data and epoch-binds every asynchronous session, restoration, scoring, progress, profile read/write, and auth-loading completion. The auth subscription returns synchronously and defers profile API calls outside auth-js's exclusive lock. The browser harness rejects non-local app hosts and every real Supabase project hostname.
-- The final independent security re-review reports no Critical, High, or Medium cofounder-preview finding after the Edge, migration, account-profile isolation, and auth callback-lock remediations. Fresh local Edge-runtime evidence is complete; hosted execution remains approval-gated and a release blocker.
-- The final independent static database review reports no blocking finding. Its only residual Low is optional function-body hash pinning against privileged out-of-band replacement; function signatures, uniqueness, owner, language, security-definer state, search path, and grants are already checked.
+- The final independent readiness audit is closed with no unresolved Critical or High finding. Its hosted two-batch question-import idempotency Medium remains hard-gated: no hosted import may occur until a durable source-key/idempotent retry path is implemented and reviewed; hosted execution remains approval-gated and a release blocker.
+- The earlier scoped static database review found no blocking finding. Its only residual Low is optional function-body hash pinning against privileged out-of-band replacement; function signatures, uniqueness, owner, language, security-definer state, search path, and grants are already checked. The final audit also records 10 Expo configuration dependency advisories as a Medium follow-up.
 - The one-time Impeccable detector returned no findings and the `$un-vibecode` audit passes R01–R22. Mobile login Lighthouse scores 100 for accessibility and best practices.
-- The read-only dependency audit reports 17 high, 9 moderate, and 1 low advisory, with no critical finding. The paths are concentrated in Expo/Metro/build tooling and require a supported compatibility review; force-fixing is prohibited.
-- Expo SDK-55 patch versions are behind the current supported set, and `react-native-worklets` is ahead of Expo's expected version. Resolve this through a dedicated compatibility change with full regression testing.
+- Before SDK-55 patch alignment, `npm audit --omit=dev` reported 27 findings, including 17 high. After alignment and a non-force audit fix, it reports 10 moderate, 0 high, and 0 critical; Expo dependency checking and `npm ls` are clean. `npm audit fix --force` was not used and is not advised. The remaining Expo config/xcode/uuid chain has no safe non-breaking audit remedy.
 - Hosted public signup is disabled and verified (`disable_signup=true`); email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled. The approximately 100-person round still requires an operational invite/allowlist workflow.
 - The versioned migration chain applies cleanly from an empty disposable local database and its effective ACL/RLS state is verified, including canonical authenticated non-secret `app_config` access and minimal service-role column grants. The authenticated local Edge-runtime smoke passed every HTTP boundary and the expected safe provider-failure path.
 - A fresh unlinked contract-level clone reproduced every observed hosted fact consumed by the scripts. Hosted-only reconciliation, additive migrations `000`/`010`/`020`, and revised cutover `040` passed without row-count changes. Effective service privilege on `questions`/`answers`/`scores`/`mock_sessions` moved from 16/44 checks to 0/44, while exact scoring RPC execution and minimal profile/config columns remained.
 - The fresh hosted SELECT-only snapshot completed at `2026-08-25 05:59:23.339506 UTC` with catalog MD5 `0811d9d73c003ea1daba2efd2058c136`. It confirmed the staged legacy schema/policy/grant assumptions and absent preview objects; `migration_relation` and `cron_relation` were both `null`, so no conditional follow-up was required or run. No hosted mutation occurred.
 - Hosted public-schema default ACLs are broad. The reconciliation removes current browser and service-role assessor access at table and column scope, but every future hosted object must receive an explicit ACL review; changing default ACLs is a separately approved hardening decision.
-- The scoring Edge smoke was repeated after that service-role reduction: it returned safe `502 provider_failed`, persisted one failed claim/attempt, released the lease, and wrote no answer or score. No direct service privilege on the four legacy tables was required.
+- The local scoring fix lets pinned direct OpenAI/Anthropic endpoints run without `Deno.resolveDns`; custom `openai_compatible` endpoints retain exact allowlisting and dual DNS revalidation, and server logs retain only safe stages. This is local only and not deployed. Hosted scoring still returned `provider_failed` with `openai` and `gpt-4o-mini`.
 - The final unlinked runtime fixture created one local smoke user/admin/session, one failed claim, and one failed attempt; it persisted zero answers and scores, released the claim lease, stopped both disposable stacks with volumes preserved, and never contacted hosted Supabase.
-- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. The versioned chain was executed only on a fresh disposable local stack; none has been executed remotely.
+- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, and one final privilege cutover. The reconciliation and additive migrations `000`/`010`/`020` were earlier applied under exact approvals; cutover `040` remains not applied. No hosted mutation occurred during the current local fix phase.
+- A local-only workbook artifact stages 785 inactive compatible drafts (500/285) from source SHA-256 `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`; criteria, model answers, and panel notes are excluded. Its CSV payloads are local ignored/private proof, not committed or public, and are not hosted or imported; only the converter, manifest, and provenance/count/hash metadata are commit candidates. Part hashes are `021267a618a781d18b7c9b5e4321df56150b53c4f764cccb8ab03bd46786b54a` and `0e4897dcb7da1aa10cb2b4ab7475db7d949ca35c90146054d458c5783e09305e`; manifest hash is `0bbb3c9efffb14bcbb59642054271098f5f7c8d31da3cd31edf2a54e5e5d8318`. The two hosted batches remain blocked until a durable source-key/idempotent retry path is implemented and reviewed; the current CSV-validation UI is not a safe import mechanism. Released Practice still reads the two legacy live rows.
 - Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
 
 ## Product boundary for the 100-person round
@@ -100,6 +101,7 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Draft and published states; importing must not make content instantly student-visible.
 - [ ] Creator/updater identity, timestamps, and publication audit history.
 - [ ] Add caller-generated request IDs or an equivalent durable deduplication key so retries cannot duplicate question batches or feedback reports after ambiguous network results.
+- [ ] Keep the two workbook-derived hosted question batches blocked until that durable source-key/idempotent retry path is implemented and reviewed; do not use the current CSV-validation UI as their import mechanism.
 - [ ] Content editor cannot access AI credentials or security configuration.
 - [ ] Student-safe projections exclude `guidance_notes`, cached model answers, actor details, rubrics, drafts, inactive rows, and future prompts.
 - [ ] Clinician/content review owner and documented publication checklist.
@@ -126,8 +128,8 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Typecheck and static web export pass.
 - [ ] Chrome, Safari, Firefox, iOS-width, Android-width, keyboard-only, screen-reader, contrast, reduced-motion, and slow-network QA pass.
 - [ ] `$un-vibecode` and the one-time Impeccable final detector pass against real copy and all empty/error/loading states.
-- [ ] Independent security review reports no unresolved Critical/High finding.
-- [ ] `npm audit --omit=dev` findings are classified by direct dependency, transitive path, runtime reachability, compatible mitigation, and owner. Never use `npm audit fix --force`.
+- [x] Final independent readiness audit reports no unresolved Critical/High finding; the hosted question-import idempotency Medium remains hard-gated until a durable source-key/idempotent retry path is implemented and reviewed.
+- [x] `npm audit --omit=dev` findings are classified by direct dependency, transitive path, runtime reachability, compatible mitigation, and owner: 10 Expo configuration dependency advisories remain a Medium follow-up. Never use `npm audit fix --force`.
 
 ## CI/CD and analytics plan — planned, not implemented
 
@@ -195,26 +197,27 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 
 ## Hosted Supabase drift and reconciliation
 
-### Current read-only classification
+### Observed prior hosted snapshot classification
 
-- Early legacy schema and initial RLS are substantially present but migration history is empty.
-- AI-key read protection exists, but function-only write hardening is not fully represented.
-- Base MMI content tables exist without the complete local reconciliation constraints/indexes/role-play additions.
-- Student-safe MMI projection RPCs and later attempt persistence/RPCs are absent.
-- Additional assessor-bearing tables exist outside the migration chain.
-- Hosted policies currently expose hidden MMI/role-play/auxiliary assessor content to authenticated users.
-- `update_streak` can be invoked without adequate caller binding.
-- Authenticated users can insert scores for their own answers.
-- Legacy question reads include inactive rows and `guidance_notes`.
+- This classification records what the prior SELECT-only snapshot showed; it does not describe the current state after separately approved operations.
+- The prior snapshot showed an early legacy schema and initial RLS substantially present but migration history empty.
+- The prior snapshot showed AI-key read protection, but function-only write hardening was not fully represented.
+- The prior snapshot showed base MMI content tables without the complete local reconciliation constraints/indexes/role-play additions.
+- The prior snapshot showed student-safe MMI projection RPCs and later attempt persistence/RPCs absent.
+- The prior snapshot showed additional assessor-bearing tables outside the migration chain.
+- The prior snapshot showed hosted policies exposing hidden MMI/role-play/auxiliary assessor content to authenticated users.
+- The prior snapshot showed `update_streak` invocable without adequate caller binding.
+- The prior snapshot showed authenticated users able to insert scores for their own answers.
+- The prior snapshot showed legacy question reads including inactive rows and `guidance_notes`.
 
 ### Safe reconciliation method
 
 1. Complete the fresh snapshot gate: `supabase/reconciliation/20260825_hosted_catalog_snapshot.sql` returned at `2026-08-25 05:59:23.339506 UTC` with catalog MD5 `0811d9d73c003ea1daba2efd2058c136`. `migration_relation` and `cron_relation` were `null`, so no conditional follow-up ran; compare this retained SELECT-only evidence with every fail-closed script precondition.
-2. Prove `supabase/reconciliation/20260825_cofounder_preview_security.sql` against a disposable clone of the observed live schema. It uses exact `ALTER POLICY` operations and privilege revocation and must never enter `db push`.
-3. Prove additive migrations `20260825000000`, `20260825001000`, and `20260825002000` from an empty local database and after that reconciliation. Completed for the 25 August 2026 preview commit; repeat for a changed release commit.
+2. The hosted-only reconciliation was earlier applied under an exact approval, outside `db push`. Re-audit before any additional hosted operation.
+3. Additive migrations `20260825000000`, `20260825001000`, and `20260825002000` were earlier applied under exact approvals. Re-prove changed release commits locally; migration `20260825004000` remains not applied.
 4. Verify the created tables/RPCs, security-definer ownership/search paths, service-only storage, RLS, and exact function grants.
-5. Deploy and smoke-test the hardened Edge functions and Vercel client before revoking the legacy browser surface.
-6. Prove and separately approve final cutover `20260825004000`, which rewrites exact ownership policies, removes table/column grant drift, disables direct score/streak/question access, and restores only the minimum safe browser grants.
+5. `score-answer` and `manage-ai-key` are deployed as v3, and the prior Vercel production alias is live; the current local fixes are not deployed. Complete a bounded hosted smoke before any further promotion.
+6. Prove and separately approve final cutover `20260825004000`, which remains not applied and rewrites exact ownership policies, removes table/column grant drift, disables direct score/streak/question access, and restores only the minimum safe browser grants.
 7. Run independent database/security review and retain its findings with the release evidence.
 8. Present migration-history reconciliation, every SQL stage, secrets, function deployment, roles, and content inserts as separate exact approval requests.
 9. Re-audit hosted state after each approved operation before moving to the next.
