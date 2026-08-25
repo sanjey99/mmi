@@ -146,11 +146,11 @@ export default function AIConfigScreen() {
   };
 
   const handleTestConfig = async () => {
-    if (!apiKey.trim() && !isConfigured) {
+    if (!isConfigured) {
       setNotice({ title: 'Configuration incomplete', message: 'Enter and save an API key before testing scoring.', tone: 'error' });
       return;
     }
-    setNotice({ title: 'Test through Practice', message: 'Open an available station and submit a synthetic response. Do not use real personal or patient data.', tone: 'info' });
+    router.push('/(tabs)/practice');
   };
 
   if (loading) {
@@ -287,7 +287,7 @@ export default function AIConfigScreen() {
         </Card>
 
         <Button label={saving ? 'Saving...' : 'Save Configuration'} onPress={handleSave} loading={saving} style={{ marginTop: 8 }} />
-        <Button label="Test Config →" onPress={handleTestConfig} variant="secondary" style={{ marginTop: 12 }} />
+        <Button label="Open practice to test" onPress={handleTestConfig} variant="secondary" style={{ marginTop: 12 }} />
 
       </ScrollView>
     </SafeAreaView>

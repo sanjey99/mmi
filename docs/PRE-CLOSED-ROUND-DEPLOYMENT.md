@@ -129,6 +129,29 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Independent security review reports no unresolved Critical/High finding.
 - [ ] `npm audit --omit=dev` findings are classified by direct dependency, transitive path, runtime reachability, compatible mitigation, and owner. Never use `npm audit fix --force`.
 
+## CI/CD and analytics plan — planned, not implemented
+
+No tracked CI workflow or analytics integration exists at this checkpoint. Neither is authorized for deployment until this plan has an approved implementation and dated evidence.
+
+### CI/CD release controls
+
+- [ ] Add a required CI workflow for every pull request and the production branch. It must use the locked dependencies (`npm ci`) and pass `npm test`, `npm run test:coverage`, `npm run typecheck`, `npm run build`, and `npm run test:e2e` before a release candidate can advance.
+- [ ] Require CI to check the committed pull-request range with `git diff --check "$(git merge-base origin/<protected-branch> HEAD)" HEAD` (or `git show --check <commit>` for a single-commit release), plus a reviewed secret scan and security review. A developer may separately run `git diff --check` for uncommitted work. Classify the output of `npm audit --omit=dev`; do not auto-remediate and never use `npm audit fix --force`.
+- [ ] Protect the production branch: require the named checks and an approving reviewer, disallow direct pushes and force-pushes, and record any administrator bypass with a release reason.
+- [ ] Keep Vercel Preview and Production deployments distinct. Preview must use non-production Supabase, provider, and analytics credentials; no production secret, user data, or hosted mutation may be reachable from Preview.
+- [ ] Retain release evidence for each promoted commit: commit SHA, lockfile digest, CI logs/results, scanned artifact or `dist/` digest, Vercel deployment URL, and the known-good hardened-compatible rollback deployment.
+- [ ] CI may validate and create Preview artifacts only. Every hosted Supabase mutation and every Vercel Production mutation remains a separate manual approval: show the exact target, command or console change, reviewed diff, expected effect, rollback, and read-only post-check before executing it. This includes reconciliation, migrations, Edge deployments, secret/Auth/role changes, and Production promotion.
+
+### Privacy-safe analytics plan
+
+- [ ] Select an analytics provider only after legal/privacy, data-processing, transfer, consent, retention, and access reviews are approved. Provider choice is intentionally undecided; do not add an SDK, provider environment variable, or collection endpoint before explicit approval.
+- [ ] Use an allowlist of exactly these low-cardinality product events: `page_view`, `onboarding_completed`, `practice_started`, `practice_completed`, `feedback_submitted`, and `scoring_outcome`. Each event may contain only its event name, timestamp, deployment environment, canonical route identifier (for `page_view`), a documented enum/boolean outcome where applicable, and optional ephemeral `analytics_session_id`; additions require renewed approval.
+- [ ] If used, `analytics_session_id` must be a random analytics-only value, rotate on sign-out and browser-session expiry, never persist in Supabase, and never be joined to an account ID or other identifier. Never send answers, prompts/question text, rubrics, feedback text, emails, names, Supabase user IDs, free-form fields, URLs/query strings, screenshots, transcripts, provider payloads, access tokens, API keys, or other secrets to analytics. Disable autocapture, session replay, DOM/text capture, and IP/geolocation enrichment; require provider-level raw-IP truncation or non-retention unless a separately approved review changes this rule.
+- [ ] Set and approve a finite provider retention period, least-privilege analytics access roles, and a periodic access review before collection begins.
+- [ ] Keep Preview and Production analytics data, projects/collections, credentials, and retention policies separate. Any browser-visible analytics write key must be environment-specific, treated as non-secret only after review, and introduced through the approved build environment; no server-side analytics secret may enter an `EXPO_PUBLIC_*` variable.
+- [ ] Before enabling analytics, approve the provider domain in CSP/`connect-src`, test the consent and opt-out path, inspect captured events in a non-production collection, and verify the network payload contains only the allowlisted schema. Preserve this verification evidence with the release.
+- [ ] Provide an owner-operated analytics kill switch that disables client initialization/collection, document provider-side collection disablement and deletion/retention handling, and rehearse rollback by disabling collection and restoring the prior hardened-compatible deployment. Analytics must remain disabled until these controls and explicit approval are complete.
+
 ## Phase 4 MMI roadmap
 
 ### Completed locally and merged
