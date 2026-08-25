@@ -4,6 +4,19 @@
 
 **Entry condition:** Every release gate in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md) is complete and evidenced.
 
+## Current checkpoint — 25 August 2026
+
+- The cofounder-preview implementation exists locally on `feat/cofounder-ui-reliability`; no preview migration, Edge deployment, secret/configuration change, role change, or hosted application-row mutation has been performed.
+- Local preview verification passes: 44 Node tests, 145 Vitest tests, both coverage gates above 80%, TypeScript, production web export, and 2/2 fully intercepted Playwright journeys.
+- Account-switch isolation clears all cached practice data and epoch-binds every asynchronous session, restoration, scoring, and progress operation. The browser harness rejects non-local app hosts and every real Supabase project hostname.
+- The final independent local re-review reports no unresolved Critical, High, or Medium finding in that remediation. Hosted approval-gated findings remain release blockers.
+- The one-time Impeccable detector returned no findings and the `$un-vibecode` audit passes R01–R22. Mobile login Lighthouse scores 100 for accessibility and best practices.
+- The read-only dependency audit reports 17 high, 9 moderate, and 1 low advisory, with no critical finding. The paths are concentrated in Expo/Metro/build tooling and require a supported compatibility review; force-fixing is prohibited.
+- Expo SDK-55 patch versions are behind the current supported set, and `react-native-worklets` is ahead of Expo's expected version. Resolve this through a dedicated compatibility change with full regression testing.
+- Hosted public signup was still enabled at the last check. Disabling it is a cofounder-preview blocker and remains mandatory for the 100-person round.
+- Local Edge-runtime smoke and disposable Supabase integration tests remain required. Production/shared credentials must never be used for them.
+- Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
+
 ## Product boundary for the 100-person round
 
 - Invite/allowlist enrollment only; no public account creation.
@@ -207,7 +220,7 @@ Stop or disable the affected feature on any of these:
 - Error monitoring captures sensitive answer/transcript/auth material.
 - Critical/High security finding without a verified fix.
 
-Rollback uses the previous Vercel deployment plus server-side feature/kill switches. Database rollback is forward-fix only unless a separately reviewed reversible operation exists; never delete user data as an improvised rollback.
+Rollback uses a previously verified **hardened-compatible** Vercel deployment plus server-side feature/kill switches. The archival pre-redesign client is not a safe rollback after backend privilege revocation unless it has separately passed compatibility testing. Database rollback is forward-fix only unless a separately reviewed reversible operation exists; never delete user data as an improvised rollback.
 
 ## Authoritative external references
 

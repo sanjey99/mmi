@@ -1,298 +1,188 @@
 # Before Cofounder Viewing
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` task-by-task. Follow `AGENTS.md`, run GitNexus impact analysis before editing existing symbols, use strict TDD, and run an independent security review before release.
+This is the authoritative release runbook for the private founding-team preview. It replaces the historical implementation plans and security checklist.
 
-**Goal:** Put a private, truthful, reliable Interview Station preview in front of the founding team so they can test the core practice loop, manage legacy questions, and give structured product feedback.
+## Goal and release scope
 
-**Architecture:** Deploy the Expo Router static web export to Vercel and keep Supabase as the only backend. The preview exposes the legacy single-question free/timed practice flow; unfinished Phase 4 MMI, MMI Circuit, Tutor, and student question-browser surfaces remain hidden. Browser authentication lasts for the browser session and explicit sign-out clears it immediately.
+Deploy the smallest truthful product slice that lets named cofounders:
 
-**Current branch:** `feat/cofounder-ui-reliability`, based on `origin/main` at `9cf4311`.
+- sign in with an issued account;
+- complete onboarding;
+- run free or eight-minute legacy question practice;
+- submit an answer for server-owned AI scoring;
+- review feedback and progress;
+- create one question or validate a CSV batch from the Question Desk;
+- send privacy-minimal product feedback; and
+- sign out reliably.
 
-**Pre-redesign backup:** commit `9cf4311`, local branch `backup/pre-redesign-ui-2026-08-25`.
+Keep public signup, Tutor, MMI Circuit, the student Questions placeholder, and all unfinished Phase 4 MMI routes hidden. This preview is not the approximately 100-person closed round; that later gate is defined in [Pre-Closed-Round Deployment](./PRE-CLOSED-ROUND-DEPLOYMENT.md).
 
-**Approved UI contract:** [PRODUCT.md](../PRODUCT.md) and [surface-brief.md](../.impeccable/surface-brief.md). The approved direction is **The Numbered Station Corridor**, composition **Doorway Threshold**.
+## Architecture and source state
 
-## Non-negotiable boundaries
+- Web: Expo Router static export on Vercel.
+- Backend: Supabase Auth, Postgres, and Edge Functions.
+- Render: not used.
+- Active implementation branch: `feat/cofounder-ui-reliability`.
+- Branch base: `origin/main` at `9cf4311`.
+- Pre-redesign UI backup: local branch `backup/pre-redesign-ui-2026-08-25` at `9cf4311`.
+- Approved visual direction: **The Numbered Station Corridor**, composition **Doorway Threshold**.
+- Design contract: [PRODUCT.md](../PRODUCT.md) and [surface brief](../.impeccable/surface-brief.md).
 
-- Treat hosted Supabase as read-only until the user approves an exact operation.
+The original navy/teal/ecru interface remains recoverable from the backup branch. The active branch uses Barlow Condensed and Source Sans 3 with the deliberate palette `#F7F8F6`, `#25272A`, `#F4C542`, and `#B3342B`.
+
+## Safety boundary
+
+- Treat hosted Supabase as read-only until an exact operation is shown and separately approved.
 - Never delete hosted rows or database objects.
-- Do not apply migrations, deploy functions, modify secrets, repair migration history, or insert/update/delete hosted data without showing the exact operation and receiving approval.
-- Never run credential-gated integration tests against production or shared data.
-- Never place a Supabase secret/service-role key in Vercel or any client bundle. Vercel receives only the project URL and publishable key.
+- Do not run `supabase db push`, broad migration repair, migrations, function deployments, secret changes, role changes, or row writes without explicit approval.
+- Never run credential-gated tests against production or shared data.
+- Never put a Supabase secret/service-role key in Vercel or an `EXPO_PUBLIC_*` variable.
+- Never print or commit `.env` values.
 - Never run `npm audit fix --force`.
-- Do not deploy unfinished Phase 4 MMI functions or UI as part of the cofounder preview.
-- `ai_api_key` remains write-only to every client, including administrators.
+- Do not deploy Phase 4 persistence/Cron merely to enable this preview; its retention workflow includes mutations and deletion behavior that requires a separate privacy decision.
 
-## Preview scope
+## Read-only hosted facts — 25 August 2026
 
-### Included
+- The remote migration-history table contains none of the local migration versions even though an early schema was manually/partially applied.
+- Hosted legacy content contains two active questions: one Ethics and one Motivation. Four categories are empty.
+- `app_config` contains provider/model rows; `ai_api_key` and `ai_base_url` were not configured when last inspected.
+- `pg_trgm` and `uuid-ossp` are installed; `on_auth_user_created` is enabled.
+- Public signup was enabled when checked: Auth settings returned `disable_signup=false`.
+- The public Supabase project endpoint is reachable. The prior browser `NetworkError` was a missing or stale client environment configuration, not an outage.
+- Hosted policies still expose assessor-bearing MMI/role-play content to authenticated users, allow unsafe legacy question fields, permit cross-user `update_streak`, and permit own-answer score insertion.
+- No migration, function deployment, secret update, user/profile mutation, or application-row mutation was performed during this implementation.
 
-- Invite-only email/password login.
-- Onboarding.
-- Home/orientation.
-- Legacy free practice and eight-minute timed practice.
-- Clear category availability based on real active-question counts.
-- Written answer submission with explicit loading, success, and recoverable failure states.
-- AI feedback and progress only when the configured server flow succeeds.
-- Profile editing and reliable explicit sign-out.
-- Cofounder-only Question Desk for safe question creation and CSV-assisted bulk authoring.
-- Structured cofounder feedback capture.
+## Implemented locally
 
-### Hidden or disabled
+### Interface and navigation
 
-- Public signup.
-- Student Questions placeholder.
-- Tutor marketplace.
-- MMI Circuit.
-- Phase 4 station-library/client flows.
-- Any category with zero active questions.
-- AI scoring when server configuration is unavailable; the UI must explain the recovery rather than silently failing.
+- [x] Replaced the prior competitor-adjacent visual world with the researched station-corridor system.
+- [x] Added a responsive square-geometry component system, accessible labelled controls, explicit state copy, and no emoji navigation.
+- [x] Added deterministic back navigation with safe deep-link fallbacks.
+- [x] Replaced React Native Web `Alert.alert()` flows with rendered confirmation and notice components.
+- [x] Added substantive, reachable Terms and Privacy screens labelled for legal review.
+- [x] Preserved the legacy `/signup` route as an invitation-only notice with no `auth.signUp()` call.
+- [x] Added a final UI policy test covering legal reachability, invitation-only signup, shadows, and stock left-strip treatments.
 
-## Verified starting facts — 2026-08-25
+### Authentication and practice reliability
 
-- `origin/main` includes Phase 4 Tasks 1–6. Task 6 merged through PR #5 at `9cf4311`; Tasks 7–15 are unfinished.
-- Hosted Supabase migration history is empty even though parts of the early schema exist. Do not run the current migration chain directly.
-- Hosted legacy questions: two active rows, one Ethics and one Motivation. NHS, Teamwork, Resilience, and Scenarios have no active questions.
-- Hosted `app_config`: provider and model are present; `ai_api_key` and `ai_base_url` are not configured.
-- Hosted extensions observed: `pg_trgm` and `uuid-ossp`; the `on_auth_user_created` trigger is enabled.
-- Render is not required. The preview architecture is Vercel static web plus Supabase.
-- The current functional failures share a web-specific root cause: React Native Web's `Alert.alert()` is a no-op, so confirmation callbacks and error dialogs never run.
-- Direct `router.back()` calls have no fallback for refreshes and deep links.
-- Practice session state currently lives only in Zustand memory, so a refresh loses the question and attempts a dead back navigation.
-- Legacy submission currently inserts an answer before AI scoring and performs score/session/streak writes client-side. This is not safe enough for closed release and must be made server-owned before real scoring is enabled.
-- Current production dependency audit evidence must be refreshed before release. The last audit reported Expo/Metro transitive advisories; incompatible force-fixes are prohibited.
+- [x] Web auth uses guarded `sessionStorage`; refresh in the same tab can restore a session while a new browser session starts without a retained login.
+- [x] Sign-out checks the Supabase result, clears local state, and returns to login with retryable feedback on failure.
+- [x] Sign-out and account changes clear all account-bound practice state; every in-flight session, restoration, scoring, and progress operation is epoch-bound so an old account cannot repopulate a new account's store or continue navigation.
+- [x] Practice availability comes from active server projections rather than a hard-coded default question.
+- [x] Empty categories are unavailable and route restoration validates the owned session/question identity.
+- [x] Submission shows validation, scoring, retry, saved, and provider-failure states instead of becoming inert.
 
-## Implementation plan
+### Server-owned legacy scoring
 
-### Task 1: Establish the corridor design system and accessible application shell
+- [x] The client no longer inserts authoritative answers/scores, updates session totals, or invokes arbitrary streak mutations.
+- [x] The authenticated Edge path loads server-owned state and applies body bounds, durable rate limiting, idempotency, a lease, safe provider errors, and atomic persistence.
+- [x] Provider handling retains exact host/origin allowlists, HTTPS, DNS/private-network rejection, redirect rejection, timeouts, strict schema validation, and secret-safe errors.
+- [x] Local migration: `20260825000000_cofounder_preview_scoring.sql`.
+- [x] Hosted application/deployment remains approval-gated.
 
-**Files:**
+### Question Desk and student-safe reads
 
-- Modify: `app/_layout.tsx`
-- Modify: `app/(tabs)/_layout.tsx`
-- Modify: `src/theme/colors.ts`
-- Modify: `src/theme/spacing.ts`
-- Modify: `src/theme/typography.ts`
-- Modify: `src/theme/index.ts`
-- Modify: `src/components/layout/ScreenWrapper.tsx`
-- Modify: `src/components/ui/Button.tsx`
-- Modify: `src/components/ui/Card.tsx`
-- Create: `src/components/navigation/AppHeader.tsx`
-- Create: `src/components/navigation/CircuitRoute.tsx`
-- Create: `src/components/feedback/InlineNotice.tsx`
-- Create: `src/components/feedback/ConfirmAction.tsx`
-- Test: `tests/uiContracts.test.ts`
-- E2E: `e2e/cofounder-preview.spec.ts`
+- [x] Added fixed-shape active question/count/read RPC clients.
+- [x] Added single-question authoring and CSV preview with field, row, enum, duplicate, and size validation.
+- [x] Draft content stays non-student-visible; admin authorization is enforced by the proposed server boundary.
+- [x] Guidance/assessor fields are excluded from student responses.
+- [x] Local migration: `20260825001000_cofounder_preview_question_api.sql`.
+- [x] Hosted application remains approval-gated.
 
-**Produces:** one responsive component grammar for orientation, practice, feedback, progress, profile, auth, and admin screens.
+### Cofounder feedback
 
-- [ ] RED: add source-level and pure-contract tests for the approved palette, no emoji tab configuration, named route states, accessible focus/state copy, and removal of unsupported web alerts from preview routes.
-- [ ] GREEN: replace teal/navy/cream, serif display type, pills, emoji tabs, soft card grids, and generic dashboard composition with the approved corridor tokens and route/plate/sheet components.
-- [ ] Add visible selected, unavailable, loading, error, success, and keyboard-focus states that do not rely on colour alone.
-- [ ] Use a sourced, open-licensed wayfinding typeface; record its package/license and keep long-form copy readable at 65–75 characters per line.
-- [ ] Verify desktop, tablet, and phone breakpoints; the painted route must remain navigation rather than decorative overflow.
-- [ ] Commit after focused tests pass.
+- [x] Added structured category, severity, screen, message, app version, reply permission, and founder review UI.
+- [x] Screenshots, logs, tokens, answers, and transcripts are not attached.
+- [x] Author identity is masked from the review response when reply permission is off.
+- [x] Added bounded validation and a durable per-user rate limit.
+- [x] Local migration: `20260825002000_cofounder_feedback.sql`.
+- [x] Hosted application remains approval-gated.
 
-### Task 2: Make navigation, confirmation, and status feedback work on web
+## Verification evidence — 25 August 2026
 
-**Files:**
+| Gate | Result |
+|---|---|
+| Unit and contract tests | 44 Node tests passed |
+| Vitest | 145 passed; 3 credential-gated tests safely skipped |
+| Node coverage | 91.62% lines, 84.19% branches, 91.74% functions |
+| Vitest coverage | 94.06% lines, 88.83% statements, 84.65% branches, 96.74% functions |
+| TypeScript | `npm run typecheck` passed |
+| Production export | `npm run build` passed; static output in `dist/` |
+| Isolated browser E2E | 2/2 passed: partner practice/feedback/signout and admin draft/review |
+| Browser data isolation | Local app host enforced; only `e2e.supabase.co` is intercepted and every other `*.supabase.co` request fails closed; no production/shared credentials or rows used |
+| Mobile login accessibility | Lighthouse accessibility 100; best practices 100 |
+| Visual review | Desktop and 390px login/legal renders inspected |
+| Impeccable detector | One final invocation returned `[]` |
+| `$un-vibecode` | PASS across R01–R22 |
+| Independent local security review | No unresolved Critical, High, or Medium finding in the account-isolation and E2E remediation; hosted blockers remain separately open |
+| Dependency audit | 27 total: 17 high, 9 moderate, 1 low; no critical; no force-fix attempted |
 
-- Create: `src/lib/navigation.ts`
-- Modify: `app/(auth)/signup.tsx`
-- Modify: `app/profile.tsx`
-- Modify: `app/admin/index.tsx`
-- Modify: `app/admin/questions.tsx`
-- Modify: `app/admin/ai-config.tsx`
-- Modify: `app/practice/session.tsx`
-- Test: `tests/navigation.test.ts`
-- E2E: `e2e/cofounder-preview.spec.ts`
+The Expo server also reports supported-version patch drift: Expo 55.0.8 expects 55.0.29, React Native 0.83.2 expects 0.83.10, several Expo packages expect newer SDK-55 patches, and `react-native-worklets` expects 0.7.4 rather than 0.8.3. Treat this as a reviewed compatibility upgrade, not a blind install.
 
-**Interface:** `navigateBackOr(fallback)` uses safe history when available and otherwise replaces with a named route.
+## Remaining P0 blockers before showing cofounders
 
-- [ ] RED: test history-present and deep-link/no-history decisions for every route fallback.
-- [ ] GREEN: replace direct `router.back()` handlers with `navigateBackOr` using explicit fallbacks: signup → login, profile → home, admin child → admin, admin root → home, practice session → practice.
-- [ ] Replace `Alert.alert()` confirmations and errors with accessible in-page notice/confirmation UI.
-- [ ] Prevent navigation side effects during render when restoring a session.
-- [ ] E2E: deep-link each protected screen, use Back, and verify a deterministic destination.
-- [ ] Commit after focused tests pass.
+- [ ] Disable **Allow new users to sign up** in Supabase Auth and re-check `disable_signup=true`. Existing named users must remain able to sign in.
+- [ ] Confirm anonymous sign-in is disabled.
+- [x] Independent local security audit reports no unresolved Critical/High finding after delayed account-switch regression testing.
+- [ ] Review the exact additive SQL for the three cofounder-preview migrations against a fresh hosted catalog snapshot.
+- [ ] Separately approve and apply only the reviewed preview SQL; do not run the historical chain or a broad `db push`.
+- [ ] Separately approve deployment of the reviewed JWT-verified preview Edge function(s).
+- [ ] Configure exact `APP_ALLOWED_ORIGINS` for the stable Vercel origin and configure the provider/model/key through a server-only workflow.
+- [ ] Run the required local Supabase Edge-runtime smoke for allowed/disallowed origins, preflight, JWT, methods, content type, body limits, provider failure, and safe errors.
+- [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
+  - `EXPO_PUBLIC_SUPABASE_URL`
+  - `EXPO_PUBLIC_SUPABASE_ANON_KEY` containing the `sb_publishable_...` value
+- [ ] Confirm the Vercel deployment has SPA deep-link rewriting and retains the previous deployment for rollback.
+- [ ] Create/invite only named cofounders and grant admin/content access through exact approved profile operations.
+- [ ] Execute one bounded hosted smoke with named accounts only after the database/functions/configuration are approved and deployed.
+- [ ] Obtain qualified legal review of the operator identity, contact, legal bases, transfers, retention, and final Terms/Privacy wording before anyone outside the founding team joins.
 
-### Task 3: Make web authentication session-only and explicit sign-out reliable
+## Approval-gated Supabase sequence
 
-**Files:**
+Each stage is a separate approval. A previous approval does not authorize the next stage.
 
-- Create: `src/lib/authStorage.ts`
-- Modify: `src/lib/supabase.ts`
-- Modify: `src/stores/authStore.ts`
-- Modify: `app/profile.tsx`
-- Modify: `app/(auth)/login.tsx`
-- Modify: `app/(auth)/signup.tsx`
-- Test: `tests/authStorage.test.ts`
-- E2E: `e2e/cofounder-preview.spec.ts`
+1. **Auth setting:** disable new user signup; no user rows are deleted or edited.
+2. **Fresh read-only audit:** catalog, policies, functions, grants, triggers, extensions, migration history, and Cron state.
+3. **Preview SQL:** present the exact additive/revocation statements from the three `20260825...` migrations plus any required AI-key function-only write reconciliation.
+4. **Edge deployment:** present the exact function names and CLI commands.
+5. **Secrets/config:** present only variable names, target function, and change intent—never values.
+6. **Named accounts/roles:** present each email/account target and exact role operation without exposing credentials.
+7. **Hosted smoke:** identify the synthetic/named account, endpoints, and expected bounded writes before running it.
 
-**Interface:** web uses a guarded `sessionStorage` adapter; native retains `AsyncStorage`.
-
-- [ ] RED: test get/set/remove behavior, server/static-export safety, and storage failure handling without logging tokens.
-- [ ] GREEN: inject platform storage into Supabase Auth and preserve refreshes in the same tab without localStorage persistence.
-- [ ] Make `signOut()` check and throw Supabase errors before clearing local state.
-- [ ] Show an explicit confirmation, pending state, success route replacement, and retryable failure.
-- [ ] Hide public signup entry points for the preview; do not claim open membership.
-- [ ] E2E: refresh retains auth, successful sign-out returns to login, and a new browser session has no retained auth.
-- [ ] Commit after focused tests pass.
-
-### Task 4: Make question availability and safe session restoration truthful
-
-**Files:**
-
-- Modify: `src/lib/questions.ts`
-- Modify: `src/stores/practiceStore.ts`
-- Modify: `app/(tabs)/practice.tsx`
-- Modify: `app/practice/session.tsx`
-- Create: `tests/questions.test.ts`
-- Create: `tests/practiceRestoration.test.ts`
-- E2E: `e2e/cofounder-preview.spec.ts`
-
-**Interfaces:**
-
-```ts
-getActiveQuestionCounts(): Promise<Record<QuestionCategory, number>>
-getQuestionById(questionId: string): Promise<Question | null>
-restoreSession(sessionId: string, questionId: string): Promise<void>
-```
-
-- [ ] RED: test active counts, empty categories, exact question lookup, malformed route identifiers, ownership-safe restoration, and explicit not-found errors.
-- [ ] GREEN: show real availability, disable empty categories, and label the current two-question bank truthfully.
-- [ ] Restore the current owned session/question after refresh instead of depending on in-memory Zustand state.
-- [ ] Keep question selection within the chosen category. Avoid promising variety when only one row exists.
-- [ ] Show no-question and load errors inline with a useful recovery action.
-- [ ] E2E: Ethics and Motivation open; the four empty categories do not; refresh on a session restores the prompt.
-- [ ] Commit after focused tests pass.
-
-### Task 5: Repair question authoring for cofounders
-
-**Files:**
-
-- Modify: `src/lib/questions.ts`
-- Modify: `app/admin/questions.tsx`
-- Create: `src/features/questions/csv.ts`
-- Create: `src/features/questions/validation.ts`
-- Create: `tests/questionCsv.test.ts`
-- Create: `tests/questionValidation.test.ts`
-- E2E: `e2e/admin-question-desk.spec.ts`
-
-**Produces:** validated preview-before-write input for single-question and CSV authoring.
-
-- [ ] RED: test exact header mapping `category,text,difficulty,subcategory,university_tags,is_mmi_suitable,guidance_notes`, quoted commas/newlines/escaped quotes, blank text, enum errors, field limits, row/file limits, and duplicate policy.
-- [ ] GREEN: fix the current header/parser mismatch and show parsed rows plus row-level errors before any write.
-- [ ] Add a single-question form suitable for ordinary cofounder iteration; CSV remains optional bulk input.
-- [ ] Make mutation semantics honest. Do not say “upsert” unless a stable identifier and real update path exist.
-- [ ] Separate draft/active publication state in the UI. Any required schema change remains an approval-gated Supabase operation.
-- [ ] Keep guidance/assessor notes out of all student query projections.
-- [ ] E2E uses mocked/local isolated boundaries only; it must never create hosted rows.
-- [ ] Commit after focused tests pass.
-
-### Task 6: Make legacy scoring server-owned and retry-safe
-
-**Files:**
-
-- Create: a reviewed additive migration and Edge function only after the local design is approved
-- Modify: `supabase/functions/score-answer/index.ts`
-- Modify: `src/stores/practiceStore.ts`
-- Modify: `app/practice/session.tsx`
-- Modify: `app/practice/feedback.tsx`
-- Create: focused unit and isolated integration tests
-
-**Security requirements:** the client supplies an owned identifier and answer text only; the server loads authoritative question/session/user state, rate-limits durable requests, calls the provider, and persists the result atomically and idempotently.
-
-- [ ] RED: prove cross-user IDs, inactive questions, changed-body idempotency reuse, concurrent duplicates, provider failure/retry, malformed output, and arbitrary client score/streak writes fail.
-- [ ] GREEN: move score, session-total, and streak persistence behind the authenticated server boundary.
-- [ ] Preserve the Task 5 provider hardening: exact allowlisted hosts/origins, DNS/private-network rejection, redirect rejection, timeouts, and generic safe errors.
-- [ ] The UI must never become inert: show pending, provider-not-configured, rate-limited, retryable, and saved states inline.
-- [ ] Do not deploy or apply its migration without presenting exact operations and receiving approval.
-- [ ] Commit local code only after 80%+ coverage and independent security review.
-
-### Task 7: Add a privacy-minimal cofounder feedback loop
-
-**Files:**
-
-- Create: feedback UI, validation, isolated tests, and an approved persistence boundary
-- Modify: navigation to expose `SEND FEEDBACK`
-
-- [ ] Capture category, severity, screen, message, app version, and optional reply permission.
-- [ ] Do not attach screenshots, tokens, answer text, transcripts, or console/network logs by default.
-- [ ] Restrict users to own inserts and founders/admins to review access.
-- [ ] If a temporary external form is chosen for the first viewing, state it explicitly and keep the in-app schema out of the preview migration set.
-- [ ] Any table/function/policy creation and any test submission to hosted Supabase require exact approval.
-
-### Task 8: Consolidate documentation and run local release gates
-
-**Files:**
-
-- Keep authoritative: `docs/BEFORE-COFOUNDER-VIEWING.md`
-- Keep authoritative: `docs/PRE-CLOSED-ROUND-DEPLOYMENT.md`
-- Reduce: `README.md` to setup/status/index
-- Remove after consolidation: historical blueprint, plans, specs, and `security-revisions.md`
-
-- [ ] Preserve all durable architecture, security, Phase 4, deployment, and rollback decisions in the two authoritative documents.
-- [ ] Update checkboxes and dated evidence as work completes.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:coverage` and require 80%+ lines/functions/branches/statements for changed logic.
-- [ ] Run `npm run typecheck`.
-- [ ] Run `npm run build`.
-- [ ] Run `npm run test:e2e` against a local mocked/isolated environment.
-- [ ] Run local Supabase Edge-runtime CORS/auth smoke for the exact functions proposed for deployment.
-- [ ] Run the Impeccable detector exactly once against final changed UI targets, then complete the `$un-vibecode` audit.
-- [ ] Run an independent security review and resolve every Critical/High finding.
-- [ ] Run `gitnexus_detect_changes`, `git diff --check`, and review the complete diff before every commit/push.
-- [ ] Refresh `npm audit --omit=dev`; classify every finding by runtime reachability and supported upgrade path. Never force-fix.
-
-## Approval-gated hosted operations
-
-None of these is authorized by this document. Present each exact SQL/CLI/dashboard action separately:
-
-1. Repair selected migration-history rows only after metadata confirms their full effects.
-2. Apply a revised non-destructive AI-key function-only-write hardening.
-3. Revoke unsafe direct access to assessor-bearing MMI tables and legacy hidden question fields.
-4. Fix cross-user `update_streak` execution and direct score insertion.
-5. Apply the reviewed server-owned legacy-scoring migration.
-6. Configure exact `APP_ALLOWED_ORIGINS`, scoring provider/model/key, and optional custom-provider host allowlist.
-7. Deploy only the preview-approved JWT-verified functions.
-8. Disable public signup and create/invite named cofounders.
-9. Assign the minimum necessary admin/content role to named accounts.
-10. Create feedback persistence only if the in-app option is approved.
-
-Do not apply the current Phase 4 persistence/Cron migration merely to deploy this preview. Its retention job includes row mutations/deletions and requires a separate privacy decision.
+Never mark a migration applied until its complete reviewed effect is present. Never use the historical Phase 4 migration set to shortcut preview reconciliation.
 
 ## Vercel deployment contract
 
-- Render: not used.
 - Framework preset: Other.
+- Install command: `npm ci` or Vercel default.
 - Build command: `npm run build`.
 - Output directory: `dist`.
-- Public environment variables only:
-  - `EXPO_PUBLIC_SUPABASE_URL`
-  - `EXPO_PUBLIC_SUPABASE_ANON_KEY` set to the Supabase publishable key
-- `vercel.json` rewrites deep links to `index.html`.
-- Add the stable Vercel origin exactly to the Edge allowlist before browser scoring is enabled.
-- Keep the previous known-good Vercel deployment available for rollback.
+- Client variables: the project URL and publishable key only.
+- A local `.env` is ignored by Git and does not configure Vercel.
+- Environment-variable changes require a new deployment because Expo inlines `EXPO_PUBLIC_*` values during the build.
+- Use the stable Vercel URL in Supabase Site URL/redirect configuration and the Edge origin allowlist.
+- The pre-redesign branch is a visual/source backup, not automatically a deployment rollback. After backend privileges are revoked, an older client is safe only if it has been verified against the hardened server contract.
+- Preserve a hardened-compatible Vercel deployment before cutover and use server-side scoring disablement as the immediate kill switch; database rollback is forward-fix only.
 
 ## Cofounder go/no-go script
 
-- [ ] Named tester can sign in and complete onboarding.
-- [ ] Public signup is unavailable.
-- [ ] Refresh retains the same-tab session; explicit sign-out works; a new browser session starts signed out.
-- [ ] Deep links and every visible Back action reach a deterministic safe destination.
-- [ ] Ethics and Motivation are available; empty categories are visibly unavailable.
-- [ ] Practice start, session refresh, validation, submission, failure recovery, feedback, and progress work.
-- [ ] A failed provider call does not leave a duplicate/orphaned logical submission.
-- [ ] Non-admin testers cannot open or invoke admin/content/AI-key operations.
-- [ ] An authorized cofounder can validate a single question and a CSV without ambiguous column mapping.
-- [ ] Student APIs never expose inactive content, guidance notes, model answers, actor context, rubrics, or future prompts.
-- [ ] Feedback can be sent without capturing sensitive answer/session data.
-- [ ] Allowed origin works; disallowed origin and invalid/absent JWT fail safely.
-- [ ] Chrome, Safari, Firefox, mobile-width, keyboard-only, focus, and reduced-motion checks pass.
-- [ ] Unit/integration/E2E, 80%+ coverage, typecheck, build, Edge smoke, security review, and visual audits have dated evidence.
-- [ ] Rollback owner knows how to restore the previous Vercel deployment and disable scoring.
+- [ ] Named tester signs in and completes onboarding.
+- [ ] Public API signup is rejected; `/signup` shows the invitation-only notice.
+- [ ] Same-tab refresh restores auth; explicit sign-out returns to login; a new browser session starts signed out.
+- [ ] Every visible Back action and protected deep link reaches a safe destination.
+- [ ] Ethics and Motivation are available; the four empty categories are visibly unavailable.
+- [ ] Practice start, refresh restoration, validation, scoring, failure recovery, feedback, and progress work once each.
+- [ ] A retry does not create a duplicate logical submission or paid provider call.
+- [ ] An ordinary tester cannot invoke admin, question-write, feedback-read, AI-key, or cross-user operations.
+- [ ] An authorized founder creates a draft single question and previews a CSV without ambiguous column mapping.
+- [ ] Student responses exclude inactive/draft content, guidance, model answers, actor context, rubrics, and future prompts.
+- [ ] Feedback submission stores no screenshot, token, answer, transcript, or browser log.
+- [ ] Allowed origin succeeds; disallowed origin and invalid/absent JWT fail safely.
+- [ ] Chrome, Safari, Firefox, mobile width, keyboard-only, focus, and reduced-motion checks have dated evidence.
+- [ ] Edge-runtime smoke and the independent security review are complete.
+- [ ] Rollback owner can restore a hardened-compatible Vercel deployment and disable scoring; the owner does not rely on the archival pre-redesign client after privilege revocation.
 
-## Release gate
+## Release decision
 
-Do not show the preview to cofounders until every P0 path above has evidence, hosted drift has an approved non-destructive treatment, and independent review reports no unresolved Critical or High security issue.
+Do not show the hosted preview to cofounders while any P0 item is unresolved. Local tests prove the proposed code; they do not repair the current hosted policy/function drift.
