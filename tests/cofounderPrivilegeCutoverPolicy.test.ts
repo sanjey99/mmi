@@ -72,6 +72,25 @@ describe('cofounder preview privilege cutover policy', () => {
     expect(sql).toMatch(/feedback table must remain RPC-only/i);
   });
 
+  it('grants Edge Functions only the columns needed for admin checks and AI configuration', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.profiles FROM service_role/i);
+    expect(sql).toMatch(/GRANT SELECT \(id, is_admin\) ON TABLE public\.profiles TO service_role/i);
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.app_config FROM service_role/i);
+    expect(sql).toMatch(/GRANT SELECT \(key, value\), INSERT \(key, value\), UPDATE \(key, value\)\s+ON TABLE public\.app_config TO service_role/i);
+    expect(sql).toMatch(/service-role Edge ACL postcondition failed/i);
+    expect(sql).toMatch(/has_column_privilege\('service_role', 'public\.profiles', 'is_admin', 'SELECT'\)/i);
+    expect(sql).toMatch(/has_column_privilege\('service_role', 'public\.app_config', 'value', 'UPDATE'\)/i);
+    expect(sql).toContain("column_name NOT IN ('id', 'is_admin')");
+    expect(sql).toContain("column_name NOT IN ('key', 'value')");
+    expect(sql).not.toMatch(/GRANT ALL(?: PRIVILEGES)? ON TABLE public\.(?:profiles|app_config) TO service_role/i);
+    expect(sql).not.toMatch(/GRANT (?:DELETE|TRUNCATE|REFERENCES|TRIGGER).*public\.app_config TO service_role/i);
+    expect(sql.lastIndexOf('service-role Edge ACL postcondition failed')).toBeGreaterThan(
+      sql.indexOf('GRANT UPDATE (\n  full_name,'),
+    );
+  });
+
   it('fails closed and contains no row DML or destructive object deletion', async () => {
     const sql = await readFile(migrationPath, 'utf8');
 

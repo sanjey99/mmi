@@ -12,6 +12,7 @@ describe('cofounder preview hosted reconciliation policy', () => {
     const sql = (await readFile(migrationPath, 'utf8')).toLowerCase();
     const requiredTables = [
       'app_config',
+      'profiles',
       'mmi_stations',
       'mmi_sub_questions',
       'roleplay_stations',
@@ -57,6 +58,25 @@ describe('cofounder preview hosted reconciliation policy', () => {
     expect(sql).not.toMatch(/public\.is_admin\(\)/i);
     expect(sql).not.toMatch(/\bcreate\s+policy\b/i);
     expect(sql).not.toMatch(/\bdrop\s+(?:policy|table|function|trigger|schema|type|extension)\b/i);
+  });
+
+  it('establishes the least-privilege Edge ACL before functions are deployed', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.profiles FROM service_role/i);
+    expect(sql).toMatch(/GRANT SELECT \(id, is_admin\) ON TABLE public\.profiles TO service_role/i);
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.app_config FROM service_role/i);
+    expect(sql).toMatch(/GRANT SELECT \(key, value\), INSERT \(key, value\), UPDATE \(key, value\)\s+ON TABLE public\.app_config TO service_role/i);
+    expect(sql).toMatch(/service-role Edge ACL postcondition failed/i);
+    expect(sql).toMatch(/has_column_privilege\('service_role', 'public\.profiles', 'id', 'SELECT'\)/i);
+    expect(sql).toMatch(/has_column_privilege\('service_role', 'public\.app_config', 'key', 'INSERT'\)/i);
+    expect(sql).toContain("column_name NOT IN ('id', 'is_admin')");
+    expect(sql).toContain("column_name NOT IN ('key', 'value')");
+    expect(sql).not.toMatch(/GRANT ALL(?: PRIVILEGES)? ON TABLE public\.(?:profiles|app_config) TO service_role/i);
+    expect(sql).not.toMatch(/GRANT (?:DELETE|TRUNCATE|REFERENCES|TRIGGER).*public\.app_config TO service_role/i);
+    expect(sql.lastIndexOf('service-role Edge ACL postcondition failed')).toBeGreaterThan(
+      sql.indexOf('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO authenticated'),
+    );
   });
 
   it('cannot be applied by the automatic migration chain', async () => {

@@ -27,6 +27,7 @@ BEGIN
     'scores',
     'mock_sessions',
     'profiles',
+    'app_config',
     'legacy_scoring_claims',
     'legacy_scoring_attempts',
     'cofounder_feedback'
@@ -142,6 +143,7 @@ BEGIN
   END LOOP;
 
   FOREACH v_column IN ARRAY ARRAY[
+    'id',
     'full_name',
     'avatar_url',
     'university_target',
@@ -163,6 +165,19 @@ BEGIN
         AND column_name = v_column
     ) THEN
       RAISE EXCEPTION 'required profiles column public.profiles.% is missing', v_column;
+    END IF;
+  END LOOP;
+
+  FOREACH v_column IN ARRAY ARRAY['key', 'value', 'updated_at']
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'app_config'
+        AND column_name = v_column
+    ) THEN
+      RAISE EXCEPTION 'required app_config column public.app_config.% is missing', v_column;
     END IF;
   END LOOP;
 
@@ -394,6 +409,38 @@ BEGIN
 END;
 $$;
 
+-- Normalize the privileged Edge surface separately from browser ACLs. Column
+-- revokes are explicit because REVOKE ALL ON TABLE does not remove grants made
+-- directly on individual columns.
+DO $$
+DECLARE
+  v_table text;
+  v_columns text;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY['profiles', 'app_config']
+  LOOP
+    SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+    INTO v_columns
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = v_table;
+
+    EXECUTE format(
+      'REVOKE SELECT (%1$s), INSERT (%1$s), UPDATE (%1$s), REFERENCES (%1$s) ON TABLE public.%2$I FROM service_role',
+      v_columns,
+      v_table
+    );
+  END LOOP;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.profiles FROM service_role;
+GRANT SELECT (id, is_admin) ON TABLE public.profiles TO service_role;
+
+REVOKE ALL ON TABLE public.app_config FROM service_role;
+GRANT SELECT (key, value), INSERT (key, value), UPDATE (key, value)
+  ON TABLE public.app_config TO service_role;
+
 REVOKE ALL ON TABLE public.questions FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.answers FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.scores FROM PUBLIC, anon, authenticated;
@@ -413,6 +460,69 @@ GRANT UPDATE (
   onboarding_complete,
   updated_at
 ) ON TABLE public.profiles TO authenticated;
+
+-- Check effective Edge privileges only after every browser table grant has
+-- reached its final state in this transaction.
+DO $$
+DECLARE
+  v_column text;
+  v_privilege text;
+BEGIN
+  FOREACH v_privilege IN ARRAY ARRAY[
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+  ]
+  LOOP
+    IF has_table_privilege('service_role', 'public.profiles', v_privilege)
+      OR has_table_privilege('service_role', 'public.app_config', v_privilege)
+    THEN
+      RAISE EXCEPTION 'service-role Edge ACL postcondition failed: table privilege % remains', v_privilege;
+    END IF;
+  END LOOP;
+
+  IF NOT has_column_privilege('service_role', 'public.profiles', 'id', 'SELECT')
+    OR NOT has_column_privilege('service_role', 'public.profiles', 'is_admin', 'SELECT')
+    OR has_any_column_privilege('service_role', 'public.profiles', 'INSERT')
+    OR has_any_column_privilege('service_role', 'public.profiles', 'UPDATE')
+    OR has_any_column_privilege('service_role', 'public.profiles', 'REFERENCES')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'key', 'SELECT')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'value', 'SELECT')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'key', 'INSERT')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'value', 'INSERT')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'key', 'UPDATE')
+    OR NOT has_column_privilege('service_role', 'public.app_config', 'value', 'UPDATE')
+    OR has_any_column_privilege('service_role', 'public.app_config', 'REFERENCES')
+  THEN
+    RAISE EXCEPTION 'service-role Edge ACL postcondition failed: required column privilege differs';
+  END IF;
+
+  FOR v_column IN
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'profiles'
+      AND column_name NOT IN ('id', 'is_admin')
+  LOOP
+    IF has_column_privilege('service_role', 'public.profiles', v_column, 'SELECT') THEN
+      RAISE EXCEPTION 'service-role Edge ACL postcondition failed: unexpected profiles SELECT on %', v_column;
+    END IF;
+  END LOOP;
+
+  FOR v_column IN
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'app_config'
+      AND column_name NOT IN ('key', 'value')
+  LOOP
+    FOREACH v_privilege IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+    LOOP
+      IF has_column_privilege('service_role', 'public.app_config', v_column, v_privilege) THEN
+        RAISE EXCEPTION 'service-role Edge ACL postcondition failed: unexpected app_config % on %', v_privilege, v_column;
+      END IF;
+    END LOOP;
+  END LOOP;
+END;
+$$;
 
 REVOKE EXECUTE ON FUNCTION public.update_streak(UUID)
   FROM PUBLIC, anon, authenticated, service_role;
