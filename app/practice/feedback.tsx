@@ -7,9 +7,11 @@ import {
   TouchableOpacity,
   Animated,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePracticeStore } from '../../src/stores/practiceStore';
+import { useAuthStore } from '../../src/stores/authStore';
+import { ownsCachedPracticeSession } from '../../src/features/practice/restoration';
 import { RadarChart } from '../../src/components/ui/RadarChart';
 import { ScoreDimensionBar, SCORE_COLORS } from '../../src/components/ui/ScoreDimensionBar';
 import { Button } from '../../src/components/ui/Button';
@@ -49,12 +51,20 @@ function ScoreBadge({ percentage }: { percentage: number }) {
 }
 
 export default function FeedbackScreen() {
-  const { scoreResult, currentQuestion, answerText, clearFeedback } = usePracticeStore();
+  const { session: cachedSession, scoreResult, currentQuestion, answerText, clearFeedback } = usePracticeStore();
+  const authenticatedUserId = useAuthStore(state => state.session?.user.id);
+  const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
+  const routeSessionId = typeof sessionId === 'string' ? sessionId : '';
+  const hasOwnedCachedSession = ownsCachedPracticeSession({
+    authenticatedUserId,
+    routeSessionId,
+    cachedSession,
+  });
   const slideAnimation = useRef(new Animated.Value(24)).current;
   const fadeAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!scoreResult || !currentQuestion) {
+    if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) {
       router.replace('/(tabs)/practice');
       return;
     }
@@ -64,7 +74,7 @@ export default function FeedbackScreen() {
       Animated.spring(slideAnimation, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
     ]).start();
 
-  }, [scoreResult, currentQuestion]);
+  }, [hasOwnedCachedSession, scoreResult, currentQuestion]);
 
   const handleTryAgain = () => {
     clearFeedback();
@@ -76,7 +86,7 @@ export default function FeedbackScreen() {
     router.replace('/(tabs)/practice');
   };
 
-  if (!scoreResult || !currentQuestion) return null;
+  if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) return null;
 
   return (
     <SafeAreaView style={styles.safe}>

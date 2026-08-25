@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { colors, layout, shadows, text } from '../../theme';
+import { colors, layout, text } from '../../theme';
 
 interface StatCardProps {
   icon: string;
@@ -12,7 +12,7 @@ interface StatCardProps {
 
 export function StatCard({ icon, label, value, sub, active }: StatCardProps) {
   return (
-    <View style={[styles.card, active && styles.cardActive, shadows.sm]}>
+    <View style={[styles.card, active && styles.cardActive]}>
       <Text style={styles.icon}>{icon}</Text>
       <Text style={[styles.label, active && styles.labelActive]}>{label}</Text>
       <Text style={[styles.value, active && styles.valueActive]}>{value}</Text>
@@ -27,11 +27,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.white,
     borderRadius: layout.cardRadius,
     padding: 14,
+    borderWidth: 1,
+    borderColor: colors.primary[200],
   },
   cardActive: {
     backgroundColor: colors.teal[100],
-    borderLeftWidth: 3,
-    borderLeftColor: colors.teal[400],
+    borderTopWidth: 4,
+    borderTopColor: colors.teal[400],
   },
   icon: { fontSize: 22, marginBottom: 8 },
   label: {

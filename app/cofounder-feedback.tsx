@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
   title: { ...text.displayLg, color: colors.primary[800] },
   subtitle: { ...text.bodyMd, color: colors.neutral[500], lineHeight: 23, marginTop: 5, maxWidth: 680 },
   privacyNotice: {
-    borderLeftWidth: 8,
+    borderTopWidth: 8,
     borderColor: colors.teal[400],
     backgroundColor: colors.bg.white,
     padding: 16,

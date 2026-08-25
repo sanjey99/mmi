@@ -13,6 +13,7 @@ export default defineConfig({
       'tests/authStore.test.ts',
       'tests/questions.test.ts',
       'tests/practiceRestoration.test.ts',
+      'tests/practiceStoreIsolation.test.ts',
       'tests/legacyScoringApi.test.ts',
       'tests/legacyScoringCore.test.ts',
       'tests/legacyScoringEdge.test.ts',
@@ -23,6 +24,7 @@ export default defineConfig({
       'tests/questionApiPolicy.test.ts',
       'tests/cofounderFeedback.test.ts',
       'tests/cofounderFeedbackPolicy.test.ts',
+      'tests/releaseUiPolicy.test.ts',
       'tests/integration/aiKeyContract.integration.test.ts',
     ],
     coverage: {

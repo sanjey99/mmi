@@ -15,20 +15,3 @@ export const layout = {
   buttonRadius: 4,
   inputRadius: 2,
 } as const;
-
-export const shadows = {
-  sm: {
-    shadowColor: '#25272A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-  md: {
-    shadowColor: '#25272A',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    elevation: 4,
-  },
-} as const;

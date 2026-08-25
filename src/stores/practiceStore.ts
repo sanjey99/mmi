@@ -6,6 +6,8 @@ import { restorePracticeSession } from '../features/practice/restoration';
 import type { Answer, MockSession, Question, ScoreResult } from '../types';
 
 interface PracticeState {
+  accountEpoch: number;
+
   // Active session
   session: MockSession | null;
   currentQuestion: Question | null;
@@ -33,25 +35,57 @@ interface PracticeState {
   fetchStreakData: (userId: string) => Promise<void>;
   dimensionAverages: Record<string, number>;
   fetchDimensionAverages: (userId: string) => Promise<void>;
+  reset: () => void;
+}
+
+class StalePracticeRequestError extends Error {
+  constructor() {
+    super('This practice request is no longer active because the account changed.');
+    this.name = 'StalePracticeRequestError';
+  }
+}
+
+function assertCurrentAccountEpoch(currentEpoch: number, requestEpoch: number) {
+  if (currentEpoch !== requestEpoch) throw new StalePracticeRequestError();
+}
+
+function emptyPracticeData() {
+  return {
+    session: null,
+    currentQuestion: null,
+    answerText: '',
+    scoreResult: null,
+    scoring: false,
+    scoringError: null,
+    sessionAnswers: [],
+    recentSessions: [],
+    streakData: [],
+    dimensionAverages: {},
+  } satisfies Pick<
+    PracticeState,
+    | 'session'
+    | 'currentQuestion'
+    | 'answerText'
+    | 'scoreResult'
+    | 'scoring'
+    | 'scoringError'
+    | 'sessionAnswers'
+    | 'recentSessions'
+    | 'streakData'
+    | 'dimensionAverages'
+  >;
 }
 
 export const usePracticeStore = create<PracticeState>((set, get) => ({
-  session: null,
-  currentQuestion: null,
-  answerText: '',
-  scoreResult: null,
-  scoring: false,
-  scoringError: null,
-  sessionAnswers: [],
-  recentSessions: [],
-  streakData: [],
-  dimensionAverages: {},
+  ...emptyPracticeData(),
+  accountEpoch: 0,
 
   setCurrentQuestion: (q) => set({ currentQuestion: q, answerText: '', scoreResult: null, scoringError: null }),
   setAnswerText: (text) => set({ answerText: text }),
   clearFeedback: () => set({ scoreResult: null, scoringError: null }),
 
   startSession: async (userId, question) => {
+    const requestEpoch = get().accountEpoch;
     const { data, error } = await supabase
       .from('mock_sessions')
       .insert({
@@ -62,13 +96,16 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       })
       .select()
       .single();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
     if (error) throw error;
     set({ session: data as MockSession, currentQuestion: question, answerText: '' });
     return data.id;
   },
 
   restoreSession: async (sessionId, questionId) => {
+    const requestEpoch = get().accountEpoch;
     const { data: { user }, error: userError } = await supabase.auth.getUser();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
     if (userError) throw userError;
     if (!user) throw new Error('Authentication is required to restore this session.');
 
@@ -85,6 +122,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       },
       getActiveQuestion: getQuestionById,
     }, { userId: user.id, sessionId, questionId });
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
 
     set({
       session: restored.session,
@@ -96,6 +134,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   },
 
   submitAnswer: async (sessionId, questionId) => {
+    const requestEpoch = get().accountEpoch;
     const { answerText, currentQuestion } = get();
     if (!answerText.trim()) throw new Error('Please write an answer before submitting.');
     if (!currentQuestion || currentQuestion.id !== questionId) {
@@ -103,6 +142,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
     }
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
     if (userError) throw userError;
     if (!user) throw new Error('Authentication is required to submit an answer.');
 
@@ -113,9 +153,11 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
         questionId,
         answerText,
       });
+      assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
 
       set({ scoreResult: result, scoring: false });
     } catch (error) {
+      assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
       const message = error instanceof Error ? error.message : 'submission_failed';
       set({ scoring: false, scoringError: message });
       throw error;
@@ -123,6 +165,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   },
 
   fetchRecentSessions: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     const { data } = await supabase
       .from('mock_sessions')
       .select('*')
@@ -130,10 +173,12 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       .eq('completed', true)
       .order('started_at', { ascending: false })
       .limit(10);
+    if (get().accountEpoch !== requestEpoch) return;
     set({ recentSessions: (data ?? []) as MockSession[] });
   },
 
   fetchStreakData: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     // Get last 30 days of session dates
     const since = new Date();
     since.setDate(since.getDate() - 29);
@@ -142,6 +187,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       .select('started_at')
       .eq('user_id', userId)
       .gte('started_at', since.toISOString());
+    if (get().accountEpoch !== requestEpoch) return;
 
     const practicedDates = new Set(
       (data ?? []).map(s => s.started_at.split('T')[0])
@@ -157,13 +203,18 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   },
 
   fetchDimensionAverages: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     const { data } = await supabase
       .from('scores')
       .select('structure, ethics, communication, reflection, nhs_awareness, answers!inner(user_id)')
       .eq('answers.user_id', userId)
       .limit(50);
+    if (get().accountEpoch !== requestEpoch) return;
 
-    if (!data?.length) return;
+    if (!data?.length) {
+      set({ dimensionAverages: {} });
+      return;
+    }
     const avg = (key: string) =>
       Math.round((data.reduce((s: number, r: any) => s + (r[key] ?? 0), 0) / data.length) * 10) / 10;
 
@@ -177,4 +228,9 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       },
     });
   },
+
+  reset: () => set(state => ({
+    ...emptyPracticeData(),
+    accountEpoch: state.accountEpoch + 1,
+  })),
 }));

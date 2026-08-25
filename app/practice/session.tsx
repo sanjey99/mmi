@@ -13,12 +13,14 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePracticeStore } from '../../src/stores/practiceStore';
+import { useAuthStore } from '../../src/stores/authStore';
 import { TimerRing } from '../../src/components/ui/TimerRing';
 import { Button } from '../../src/components/ui/Button';
 import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { navigateBackOr } from '../../src/lib/navigation';
 import { LegacyScoringError } from '../../src/features/practice/scoringApi';
+import { ownsCachedPracticeSession } from '../../src/features/practice/restoration';
 import { colors, text, layout } from '../../src/theme';
 
 const TIME_LIMIT_SECONDS = 8 * 60;
@@ -30,6 +32,7 @@ export default function SessionScreen() {
     timed: string;
   }>();
   const {
+    session: cachedSession,
     currentQuestion,
     answerText,
     setAnswerText,
@@ -37,6 +40,7 @@ export default function SessionScreen() {
     restoreSession,
     scoring,
   } = usePracticeStore();
+  const authenticatedUserId = useAuthStore(state => state.session?.user.id);
   const [submitted, setSubmitted] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -48,9 +52,15 @@ export default function SessionScreen() {
   const routeSessionId = typeof sessionId === 'string' ? sessionId : '';
   const routeQuestionId = typeof questionId === 'string' ? questionId : '';
   const isTimed = timed === '1';
+  const hasOwnedCachedSession = ownsCachedPracticeSession({
+    authenticatedUserId,
+    routeSessionId,
+    cachedSession,
+  });
+  const hasOwnedCachedQuestion = hasOwnedCachedSession && currentQuestion?.id === routeQuestionId;
 
   useEffect(() => {
-    if (currentQuestion?.id === routeQuestionId) {
+    if (hasOwnedCachedQuestion) {
       setRestoring(false);
       return;
     }
@@ -74,7 +84,7 @@ export default function SessionScreen() {
       });
 
     return () => { active = false; };
-  }, [currentQuestion?.id, restoreSession, routeQuestionId, routeSessionId]);
+  }, [hasOwnedCachedQuestion, restoreSession, routeQuestionId, routeSessionId]);
 
   const handleTextChange = (value: string) => {
     setFormError(null);
@@ -112,7 +122,7 @@ export default function SessionScreen() {
     void handleSubmit();
   };
 
-  if (restoring && currentQuestion?.id !== routeQuestionId) {
+  if (restoring && !hasOwnedCachedQuestion) {
     return (
       <SafeAreaView style={styles.centeredState}>
         <ActivityIndicator color={colors.primary[800]} size="large" />
@@ -122,7 +132,7 @@ export default function SessionScreen() {
     );
   }
 
-  if (!currentQuestion || currentQuestion.id !== routeQuestionId || restoreError) {
+  if (!hasOwnedCachedQuestion || !currentQuestion || restoreError) {
     return (
       <SafeAreaView style={styles.centeredState}>
         <InlineNotice

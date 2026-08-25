@@ -24,6 +24,25 @@ interface PracticeRestorationRequest {
   questionId: string;
 }
 
+interface CachedPracticeSessionIdentity {
+  authenticatedUserId: string | null | undefined;
+  routeSessionId: string;
+  cachedSession: Pick<MockSession, 'id' | 'user_id'> | null;
+}
+
+export function ownsCachedPracticeSession({
+  authenticatedUserId,
+  routeSessionId,
+  cachedSession,
+}: CachedPracticeSessionIdentity): boolean {
+  return Boolean(
+    authenticatedUserId
+      && routeSessionId
+      && cachedSession?.id === routeSessionId
+      && cachedSession.user_id === authenticatedUserId,
+  );
+}
+
 export async function restorePracticeSession(
   source: PracticeRestorationSource,
   request: PracticeRestorationRequest,

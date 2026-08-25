@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Profile } from '../types';
+import { usePracticeStore } from './practiceStore';
 
 interface AuthState {
   session: Session | null;
@@ -9,7 +10,6 @@ interface AuthState {
   loading: boolean;
   init: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -22,16 +22,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   init: async () => {
     const { data: { session } } = await supabase.auth.getSession();
+    const currentUserId = get().session?.user.id;
+    if (!session || currentUserId !== session.user.id) {
+      usePracticeStore.getState().reset();
+    }
     set({ session });
     if (session) await get().refreshProfile();
     set({ loading: false });
 
     supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session) {
+        if (get().session?.user.id !== session.user.id) {
+          usePracticeStore.getState().reset();
+        }
         set({ session, loading: true });
         await get().refreshProfile();
         set({ loading: false });
       } else {
+        usePracticeStore.getState().reset();
         set({ session: null, profile: null, loading: false });
       }
     });
@@ -42,18 +50,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (error) throw error;
   },
 
-  signUp: async (email, password, fullName) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    });
-    if (error) throw error;
-  },
-
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    usePracticeStore.getState().reset();
     set({ session: null, profile: null });
   },
 

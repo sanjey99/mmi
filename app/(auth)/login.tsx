@@ -9,6 +9,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { FloatingInput } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
+import { LegalFooter } from '../../src/components/legal/LegalFooter';
 import { colors, text } from '../../src/theme';
 
 export default function LoginScreen() {
@@ -83,6 +84,7 @@ export default function LoginScreen() {
 
           <Button label="Enter circuit" onPress={handleLogin} loading={loading} style={styles.btn} />
           <Text style={styles.accessNote}>Access is invitation-only. Password resets are handled by the founding team during this preview.</Text>
+          <LegalFooter />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { restorePracticeSession } from '../src/features/practice/restoration';
+import { ownsCachedPracticeSession, restorePracticeSession } from '../src/features/practice/restoration';
 import type { MockSession, Question } from '../src/types';
 
 const session: MockSession = {
@@ -70,5 +70,21 @@ describe('restorePracticeSession', () => {
     await expect(restorePracticeSession(source({ activeQuestion: { ...question, category: 'nhs' } }), {
       userId: 'user-1', sessionId: 'session-1', questionId: 'question-1',
     })).rejects.toMatchObject({ code: 'restore_mismatch' });
+  });
+
+  it('trusts cached practice data only when route, session, and authenticated owner agree', () => {
+    expect(ownsCachedPracticeSession({
+      authenticatedUserId: 'user-1',
+      routeSessionId: 'session-1',
+      cachedSession: session,
+    })).toBe(true);
+
+    for (const values of [
+      { authenticatedUserId: 'user-2', routeSessionId: 'session-1', cachedSession: session },
+      { authenticatedUserId: 'user-1', routeSessionId: 'session-2', cachedSession: session },
+      { authenticatedUserId: 'user-1', routeSessionId: 'session-1', cachedSession: null },
+    ]) {
+      expect(ownsCachedPracticeSession(values)).toBe(false);
+    }
   });
 });

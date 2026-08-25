@@ -18,6 +18,13 @@ const user = {
   updated_at: now,
 };
 
+const secondUser = {
+  ...user,
+  id: '55555555-5555-4555-8555-555555555555',
+  email: 'second@example.test',
+  user_metadata: { full_name: 'Second Tester' },
+};
+
 const profile = {
   id: userId,
   full_name: 'Partner Tester',
@@ -32,6 +39,13 @@ const profile = {
   is_admin: true,
   created_at: now,
   updated_at: now,
+};
+
+const secondProfile = {
+  ...profile,
+  id: secondUser.id,
+  full_name: 'Second Tester',
+  is_admin: false,
 };
 
 const question = {
@@ -73,6 +87,16 @@ async function installSyntheticSession(page: Page) {
 }
 
 async function installSupabaseMocks(page: Page) {
+  let activeUser = user;
+
+  await page.route('https://*.supabase.co/**', async route => {
+    const hostname = new URL(route.request().url()).hostname;
+    await route.abort('blockedbyclient');
+    throw new Error(`Unexpected Supabase host reached by isolated E2E: ${hostname}`);
+  });
+
+  // Playwright evaluates routes in reverse registration order, so this narrow
+  // synthetic route takes precedence over the fail-closed wildcard above.
   await page.route('https://e2e.supabase.co/**', async route => {
     const request = route.request();
     const url = new URL(request.url());
@@ -82,9 +106,23 @@ async function installSupabaseMocks(page: Page) {
       body: JSON.stringify(body),
     });
 
-    if (url.pathname === '/auth/v1/user') return json(user);
+    if (url.pathname === '/auth/v1/token' && request.method() === 'POST') {
+      const credentials = request.postDataJSON() as { email?: string };
+      activeUser = credentials.email === secondUser.email ? secondUser : user;
+      return json({
+        access_token: `synthetic-access-token-${activeUser.id}`,
+        refresh_token: `synthetic-refresh-token-${activeUser.id}`,
+        expires_in: 3600,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        token_type: 'bearer',
+        user: activeUser,
+      });
+    }
+    if (url.pathname === '/auth/v1/user') return json(activeUser);
     if (url.pathname === '/auth/v1/logout') return json({});
-    if (url.pathname === '/rest/v1/profiles') return json(profile);
+    if (url.pathname === '/rest/v1/profiles') {
+      return json(activeUser.id === secondUser.id ? secondProfile : profile);
+    }
 
     if (url.pathname === '/rest/v1/rpc/get_legacy_question_counts') {
       return json([
@@ -174,6 +212,20 @@ test('partner completes practice, sends feedback, and signs out', async ({ page 
   await page.getByText('Sign out', { exact: true }).last().click();
   await expect(page.getByText('Enter the circuit')).toBeVisible();
   await expect(page.evaluate(() => sessionStorage.getItem('sb-e2e-auth-token'))).resolves.toBeNull();
+
+  await page.getByLabel('Email address').fill('second@example.test');
+  await page.getByLabel('Password').fill('synthetic-password');
+  await page.getByText('Enter circuit', { exact: true }).click();
+  await expect(page.getByText('Ready, Second.').last()).toBeVisible();
+
+  await page.goto(`/practice/feedback?sessionId=${sessionId}`);
+  await expect(page.getByText('Choose a station')).toBeVisible();
+  await expect(page.getByText('Your response balanced autonomy with a clear safety plan.')).toHaveCount(0);
+  await expect(page.getByText(/I would first explore the patient/)).toHaveCount(0);
+
+  await page.goto('/admin/questions');
+  await expect(page.getByText('Ready, Second.').last()).toBeVisible();
+  await expect(page.getByText('Add practice questions')).toHaveCount(0);
 });
 
 test('admin creates a draft and reviews masked partner feedback', async ({ page }) => {

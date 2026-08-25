@@ -10,6 +10,7 @@ import { Card } from '../src/components/ui/Card';
 import { Button } from '../src/components/ui/Button';
 import { ConfirmAction } from '../src/components/feedback/ConfirmAction';
 import { InlineNotice } from '../src/components/feedback/InlineNotice';
+import { LegalFooter } from '../src/components/legal/LegalFooter';
 import { navigateBackOr } from '../src/lib/navigation';
 import { colors, text, layout } from '../src/theme';
 
@@ -195,7 +196,8 @@ export default function ProfileScreen() {
           />
         )}
 
-        <Text style={styles.version}>Interview Station · v0.1.0 · Phase 3</Text>
+        <LegalFooter />
+        <Text style={styles.version}>Interview Station · v1.0.0 · Closed preview</Text>
       </ScrollView>
     </SafeAreaView>
   );
