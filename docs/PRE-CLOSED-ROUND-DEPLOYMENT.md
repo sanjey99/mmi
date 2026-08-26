@@ -85,7 +85,7 @@ Replace each planning bound with a measured/approved value before go-live:
 - [ ] Approve privacy notice, terms, processor disclosure, AI-provider disclosure, retention period, account deletion, data export, and support contact.
 - [ ] State clearly what answer/transcript content is sent to the configured AI provider.
 - [ ] **Current retained Phase 4 boundary:** do not persist raw audio; only a user-reviewed transcript may enter scoring/persistence, and the pinned scoring contract is text/rubric based and explicitly forbids inference of vocal confidence, hesitation, or delivery. This is the retained Phase 4 contract; this plan does not change it or claim it is hosted/deployed.
-- [ ] **Future automated-media proposal only:** the proposed voice/webcam capability below is not implemented, deployed, or deployment authorization. It cannot launch or alter the current contract until its retention/audit tradeoff and a separately reviewed media-scoring contract are explicitly approved.
+- [ ] **Future automated-media proposal only:** the planned cofounder media experience is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). It is not implemented, deployed, or deployment authorization, and cannot launch or alter the current contract until its retention/audit tradeoff and a separately reviewed media-scoring contract are explicitly approved.
 - [ ] Define account-deletion and fixed-retention behavior before enabling any Cron/purge job.
 - [ ] Validate deletion/retention against an isolated fixture database before any hosted schedule is approved.
 - [ ] Keep screenshots, access tokens, answer text, transcripts, rubric text, provider bodies, and secrets out of analytics/error logs.
@@ -163,33 +163,7 @@ No tracked CI workflow or analytics integration exists at this checkpoint. Neith
 
 ## Phase 4 MMI roadmap
 
-### Planned automated voice/webcam scoring capability — not implemented, not deployment authorization
-
-The product decision is **automated scoring**, but this section is a pre-deployment capability specification only. It does not authorize a schema migration, content mutation, camera/microphone capture, transcription/media provider, storage bucket, Edge deployment, Vercel deployment, or hosted test.
-
-#### Standard-station flow and source transformation
-
-- For each standard workbook MMI station, show `scenario_text` as a read-only brief for exactly 60 seconds. During that reading phase there is no text box, answer control, recording, or scoring; media scoring must cover response windows only.
-- Then reveal exactly five ordered `sub_questions`, one at a time. Each response window is exactly 120 seconds, accepts voice recording only, automatically stops/submits at timeout, and never exposes future prompts. The nominal station duration is exactly 660 seconds (11 minutes): 60 + (5 × 120).
-- Camera preview and device/calibration setup may happen before timing begins. Webcam-derived signals are limited to posture, camera-engagement/eye-contact proxy, movement, and hesitation/delivery. Camera engagement is an on-camera proxy, not ground-truth eye contact.
-- Server-trusted timing is authoritative for reveal, recording eligibility, stop/submit, and scoring-window evidence timestamps. Client timers are display-only and cannot extend a response window.
-- The verified generator/converter output contains 775 flattened standard rows from exactly 155 complete station IDs × orders 1..5, mapping each row as `scenario_text + question_text` with source ID `station/subquestion`, plus 10 standalone panel rows. A separately reviewed, forward-only transformation must create/populate the existing `mmi_stations`/`mmi_sub_questions` domain while preserving source identity and provenance. It must not delete the active flat rows as an improvised rollback.
-- The 10 standalone panel questions remain outside the 11-minute standard-station flow until a separate product decision defines their format, timing, scoring, and safety boundary.
-
-#### Automated-media scoring contract
-
-- The current pinned contract grades only a reviewed transcript and explicitly forbids inference of vocal confidence, hesitation, or delivery. It is unchanged by this plan.
-- Automated media requires a new immutable, versioned contract and parser/schema; exact model/provider/version pin; scoring-window evidence timestamps; confidence and quality flags; clinician-approved dimensions and weights; calibration and drift thresholds; explainable feedback; audit/appeal path; and a server-side kill switch.
-- Transcript/rubric reasoning, verbal-delivery scoring, and nonverbal-behavior scoring must be separately represented and reported. Missing, interrupted, or low-confidence media must yield an unavailable/needs-review outcome, never a low score or negative inference.
-- The capability must not perform facial identity recognition, emotion diagnosis, protected-attribute inference, or make admissions or clinical claims.
-
-#### Consent, privacy, accessibility, and validation gates
-
-- Require explicit just-in-time microphone/camera consent and a purpose/processing/privacy disclosure, plus device and calibration checks before the server starts a timer. Support permission denial, device loss, and upload interruption recovery without silently converting media failure into a score.
-- Provide an accessibility/accommodation route despite the standard route having no text box, and validate supported browsers/devices, keyboard and assistive-technology flows, and alternate approved response modes.
-- Require encrypted transport. Raw media storage is prohibited unless separately approved; if approved, it may use only private encrypted storage. Media must never enter analytics, error logs, public URLs, session replay, or autocapture. The current raw-audio-transient rule remains in force; raw audio/video retention is an unresolved explicit approval gate covering numeric retention, deletion/export, processor/region, and access controls. Keep the feature disabled until that retention/audit tradeoff is approved.
-- Before any release, evaluate validity and disparate impact across lighting/hardware, skin tones/demographics, disabilities/assistive devices, speech/accent variation, neurodivergence, eye conditions, and cultural eye-contact norms. Require clinician, legal, and privacy review, documented acceptable calibration/drift and bias thresholds, and an approved remediation/kill-switch plan.
-- Run unit, integration, browser/device, timing, interruption/recovery, security, privacy, and scoring-calibration tests in isolated/local environments with synthetic media only. Do not run credential-gated media tests against shared or production infrastructure.
+The planned automated voice/webcam cofounder experience is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). It is not implemented, deployed, or authorized here; this roadmap retains the current transcript-only contract and does not restore a standard typed-answer box.
 
 ### Completed locally and merged
 
@@ -205,11 +179,11 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 ### Remaining before Phase 4 can be exposed
 
 7. Idempotent rubric-driven scoring and atomic progression.
-8. Provider-isolated transcription and ephemeral recording validation for the retained transcript-only contract; any automated-media contract follows the separately gated plan above.
+8. Provider-isolated transcription and ephemeral recording validation for the retained transcript-only contract; automated-media work follows the separately gated pre-cofounder specification.
 9. Typed station-library data layer and filters.
 10. Dedicated MMI client state engine.
 11. Student station library replacing the hidden Questions placeholder.
-12. Retained transcript-review flow and accessibility accommodations; the proposed standard-station route is voice-only for its five timed response windows, with no standard text box, but requires a separately approved accommodation route and media-safety gates.
+12. Retained transcript-review flow and accessibility accommodations; the planned voice/webcam station experience follows the separately gated pre-cofounder specification.
 13. Immediate feedback, explicit sole forward progression, deterministic summary, and single-turn role-play.
 14. Separate completed MMI history in Progress without changing legacy aggregates.
 15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
@@ -223,7 +197,7 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 - Preparation reveals no prompt until trusted server time allows it.
 - The client receives only the current prompt and never future prompts or hidden assessor context.
 - **Current retained scoring contract:** the user reviews the transcript before scoring; raw audio is transient and never persisted. It assesses transcript/rubric dimensions only and forbids vocal-confidence, hesitation, delivery, posture, movement, or camera-engagement inference.
-- Applicable current transcript/rubric dimensions are structure, ethics, communication, reflection, and NHS awareness; zero-weight dimensions are N/A. The planned media dimensions, if separately approved, must be versioned and separated from these dimensions.
+- Applicable current transcript/rubric dimensions are structure, ethics, communication, reflection, and NHS awareness; zero-weight dimensions are N/A.
 - Server code computes overall percentage. Provider output cannot supply it authoritatively.
 - Successful scoring is idempotent and cannot be pedagogically retried; technical retries reuse the same logical request.
 - Feedback is restored after refresh. The next prompt appears only after explicit **Continue to next prompt**.

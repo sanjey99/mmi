@@ -169,6 +169,34 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 
 Most verification evidence above is local. The import-idempotency database capability and both separately approved workbook content batches are hosted as active candidate-visible rows, but its Vercel client workflow is not deployed; any next content operation remains separately exact-approval-gated and forward-only. The separately evidenced UI routing fix, direct-provider scoring fix, and dependency alignment are live as described above.
 
+## Required planned voice/webcam station workstream — not implemented, not deployment authorization
+
+The product decision is **automated scoring**, but this is a pre-cofounder-viewing capability specification only. It does not authorize a schema migration, content mutation, camera/microphone capture, transcription/media provider, storage bucket, Edge deployment, Vercel deployment, or hosted test.
+
+### Standard-station flow and source transformation
+
+- For each standard workbook MMI station, show `scenario_text` as a read-only brief for exactly 60 seconds. During that reading phase there is no text box, answer control, recording, or scoring; media scoring must cover response windows only.
+- Then reveal exactly five ordered `sub_questions`, one at a time. Each response window is exactly 120 seconds, accepts voice recording only, automatically stops/submits at timeout, and never exposes future prompts. The nominal station duration is exactly 660 seconds (11 minutes): 60 + (5 × 120).
+- Camera preview and device/calibration setup may happen before timing begins. Webcam-derived signals are limited to posture, camera-engagement/eye-contact proxy, movement, and hesitation/delivery. Camera engagement is an on-camera proxy, not ground-truth eye contact.
+- Server-trusted timing is authoritative for reveal, recording eligibility, stop/submit, and scoring-window evidence timestamps. Client timers are display-only and cannot extend a response window.
+- The verified generator/converter output contains 775 flattened standard rows from exactly 155 complete station IDs × orders 1..5, mapping each row as `scenario_text + question_text` with source ID `station/subquestion`, plus 10 standalone panel rows. A separately reviewed, forward-only transformation must create/populate the existing `mmi_stations`/`mmi_sub_questions` domain while preserving source identity and provenance. It must not delete the active flat rows as an improvised rollback.
+- The 10 standalone panel questions remain outside the 11-minute standard-station flow until a separate product decision defines their format, timing, scoring, and safety boundary.
+
+### Automated-media scoring contract
+
+- The current pinned contract grades only a reviewed transcript and explicitly forbids inference of vocal confidence, hesitation, or delivery. It is unchanged by this plan.
+- Automated media requires a new immutable, versioned contract and parser/schema; exact model/provider/version pin; scoring-window evidence timestamps; confidence and quality flags; clinician-approved dimensions and weights; calibration and drift thresholds; explainable feedback; audit/appeal path; and a server-side kill switch.
+- Transcript/rubric reasoning, verbal-delivery scoring, and nonverbal-behavior scoring must be separately represented and reported. Missing, interrupted, or low-confidence media must yield an unavailable/needs-review outcome, never a low score or negative inference.
+- The capability must not perform facial identity recognition, emotion diagnosis, protected-attribute inference, or make admissions or clinical claims.
+
+### Consent, privacy, accessibility, and validation gates
+
+- Require explicit just-in-time microphone/camera consent and a purpose/processing/privacy disclosure, plus device and calibration checks before the server starts a timer. Support permission denial, device loss, and upload interruption recovery without silently converting media failure into a score.
+- Provide an accessibility/accommodation route despite the standard route having no text box, and validate supported browsers/devices, keyboard and assistive-technology flows, and alternate approved response modes.
+- Require encrypted transport. Raw media storage is prohibited unless separately approved; if approved, it may use only private encrypted storage. Media must never enter analytics, error logs, public URLs, session replay, or autocapture. The current raw-audio-transient rule remains in force; raw audio/video retention is an unresolved explicit approval gate covering numeric retention, deletion/export, processor/region, and access controls. Keep the feature disabled until that retention/audit tradeoff is approved.
+- Before any release, evaluate validity and disparate impact across lighting/hardware, skin tones/demographics, disabilities/assistive devices, speech/accent variation, neurodivergence, eye conditions, and cultural eye-contact norms. Require clinician, legal, and privacy review, documented acceptable calibration/drift and bias thresholds, and an approved remediation/kill-switch plan.
+- Run unit, integration, browser/device, timing, interruption/recovery, security, privacy, and scoring-calibration tests in isolated/local environments with synthetic media only. Do not run credential-gated media tests against shared or production infrastructure.
+
 ## Remaining P0 blockers before showing cofounders
 
 - [x] Disable **Allow new users to sign up** in Supabase Auth and verify `disable_signup=true`; email sign-in remains available to existing named users.
@@ -187,6 +215,7 @@ Most verification evidence above is local. The import-idempotency database capab
 - [x] Migration `20260825004000` was separately approved and applied on 26 August 2026; its recorded Management API preflight/apply/postflight evidence confirms the required ACL, function, trigger, row-count, and unchanged-default-ACL postconditions.
 - [x] Migration `20260825005000` was separately approved and applied on 26 August 2026; its recorded Management API preflight/apply/postflight evidence confirms provenance, ledger, RPC, ACL, unchanged-row, and unchanged-default-ACL postconditions. Both workbook batches are complete as separately approved; any next content operation remains its own exact approval-gated, forward-only operation.
 - [x] The separately approved part-1 and part-2 workbook batches were imported on 26 August 2026 through one authenticated-admin RPC transaction each, then separately published by activating all 785 imported rows and deactivating—not deleting—the two legacy rows. The final recorded postflight confirms candidate-visible active total 785, two unchanged ledgers, historical legacy answer/score references, closed direct ACLs, and all expected source IDs. This does not deploy the Vercel import client or establish overall hosted readiness.
+- [ ] Build and independently verify the planned 11-minute standard-station/media experience above: forward-only regrouping of the 775 standard rows, the 60-second brief plus five 120-second voice-only response windows, server-trusted timing/future-prompt denial, automated-media contract/persistence, consent/recovery/accommodation controls, and synthetic-media validation. The 10 panel questions remain out of scope pending their own product decision.
 - [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` containing the `sb_publishable_...` value
@@ -194,6 +223,18 @@ Most verification evidence above is local. The import-idempotency database capab
 - [ ] Create/invite only named cofounders and grant admin/content access through exact approved profile operations.
 - [ ] Execute one bounded hosted smoke with named accounts only after the database/functions/configuration are approved and deployed.
 - [ ] Obtain qualified legal review of the operator identity, contact, legal bases, transfers, retention, and final Terms/Privacy wording before anyone outside the founding team joins.
+
+## Priority order before cofounder viewing — largest to smallest
+
+1. Complete the 11-minute standard-station system and forward-only workbook regrouping: 155 complete stations × five ordered prompts, with the 10 panel questions left outside the flow pending their own decision.
+2. Implement automated transcription/media scoring backend and versioned persistence/contract, keeping transcript/rubric, verbal-delivery, and nonverbal behavior evidence separate.
+3. Close consent, privacy, retention, accessibility/accommodation, bias/validity, clinician, legal, and calibration gates; media remains disabled until the explicit retention/audit approval is obtained.
+4. Deploy reviewed client/functions/configuration to the stable Vercel/Supabase surfaces under exact approvals. The documented stable Vercel alias is from `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; current branch work is not thereby deployed.
+5. Run a named-account end-to-end hosted smoke covering scoring, media, timing, permission/device/upload failure recovery, and safe unavailable outcomes.
+6. Create/invite named cofounder accounts and apply exact approved roles.
+7. Complete browser/device/accessibility/go-no-go/rollback verification with dated evidence.
+
+CI/CD and privacy-safe analytics remain pre-closed-round deployment work, not blockers for this internal cofounder viewing unless product scope changes.
 
 ## Approval-gated Supabase sequence
 
@@ -233,8 +274,10 @@ Never mark a migration applied until its complete reviewed effect is present. Ne
 - [ ] Public API signup is rejected; `/signup` shows the invitation-only notice.
 - [ ] Same-tab refresh restores auth; explicit sign-out returns to login; a new browser session starts signed out.
 - [ ] Every visible Back action and protected deep link reaches a safe destination.
-- [ ] Ethics and Motivation are available; the four empty categories are visibly unavailable.
+- [ ] Published question availability matches the aggregate-only RFC-4180 artifact check: Ethics 457, Motivation 9, NHS 152, Scenarios 17, and Teamwork 150 are available (785 total); Resilience 0 is visibly unavailable.
 - [ ] Practice start, refresh restoration, validation, scoring, failure recovery, feedback, and progress work once each.
+- [ ] The planned standard station runs exactly 660 seconds: a 60-second read-only scenario brief followed by five ordered 120-second voice-only response windows; future prompts stay hidden and server timing controls stop/submit.
+- [ ] Camera/microphone consent, calibration, permission denial, device loss, upload interruption, low-confidence media, accommodation routing, and the kill switch each produce the approved safe outcome; no media is scored during the reading phase and no missing/low-confidence media becomes a low score.
 - [ ] A retry does not create a duplicate logical submission or paid provider call.
 - [ ] An ordinary tester cannot invoke admin, question-write, feedback-read, AI-key, or cross-user operations.
 - [ ] An authorized founder creates a draft single question and previews a CSV without ambiguous column mapping.
@@ -247,4 +290,4 @@ Never mark a migration applied until its complete reviewed effect is present. Ne
 
 ## Release decision
 
-Do not show the hosted preview to cofounders while any P0 item is unresolved. Local tests prove the proposed code; they do not repair the current hosted policy/function drift.
+Do not show the hosted preview to cofounders while any P0 item is unresolved. Local tests do not deploy or authorize the remaining media, client, or configuration work; hosted-state claims rely only on the recorded exact approvals and read-only postflight evidence.
