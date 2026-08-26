@@ -219,6 +219,19 @@ describe('callConfiguredProvider', () => {
     });
   });
 
+  it('rejects a provider-authored overall percentage that disagrees with the five dimensions', () => {
+    expect(() => parseLegacyScoreResponse(JSON.stringify({
+      structure: 4,
+      ethics: 3,
+      communication: 4,
+      reflection: 3,
+      nhs_awareness: 2,
+      overall_pct: 99,
+      ai_feedback: 'Your answer is clear.',
+      improvement_tip: 'Use SPAR.',
+    }))).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+  });
+
   it.each([
     { ai_feedback: '   ', improvement_tip: 'Use SPAR.' },
     { ai_feedback: 'Feedback', improvement_tip: '  Use SPAR.' },

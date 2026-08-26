@@ -76,5 +76,5 @@ export function TimerRing({ durationSeconds, onExpire, running = true, size = 10
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
-  time: { fontFamily: 'DMSerifDisplay_400Regular', lineHeight: 32 },
+  time: { fontFamily: 'BarlowCondensed_700Bold', lineHeight: 32 },
 });

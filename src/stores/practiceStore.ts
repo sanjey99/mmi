@@ -1,9 +1,13 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { scoreAnswer } from '../lib/ai';
+import { getQuestionById } from '../lib/questions';
+import { restorePracticeSession } from '../features/practice/restoration';
 import type { Answer, MockSession, Question, ScoreResult } from '../types';
 
 interface PracticeState {
+  accountEpoch: number;
+
   // Active session
   session: MockSession | null;
   currentQuestion: Question | null;
@@ -20,8 +24,8 @@ interface PracticeState {
   setCurrentQuestion: (q: Question) => void;
   setAnswerText: (text: string) => void;
   startSession: (userId: string, question: Question) => Promise<string>; // returns sessionId
+  restoreSession: (sessionId: string, questionId: string) => Promise<void>;
   submitAnswer: (sessionId: string, questionId: string) => Promise<void>;
-  endSession: (sessionId: string) => Promise<void>;
   clearFeedback: () => void;
 
   // Progress data
@@ -31,25 +35,57 @@ interface PracticeState {
   fetchStreakData: (userId: string) => Promise<void>;
   dimensionAverages: Record<string, number>;
   fetchDimensionAverages: (userId: string) => Promise<void>;
+  reset: () => void;
+}
+
+class StalePracticeRequestError extends Error {
+  constructor() {
+    super('This practice request is no longer active because the account changed.');
+    this.name = 'StalePracticeRequestError';
+  }
+}
+
+function assertCurrentAccountEpoch(currentEpoch: number, requestEpoch: number) {
+  if (currentEpoch !== requestEpoch) throw new StalePracticeRequestError();
+}
+
+function emptyPracticeData() {
+  return {
+    session: null,
+    currentQuestion: null,
+    answerText: '',
+    scoreResult: null,
+    scoring: false,
+    scoringError: null,
+    sessionAnswers: [],
+    recentSessions: [],
+    streakData: [],
+    dimensionAverages: {},
+  } satisfies Pick<
+    PracticeState,
+    | 'session'
+    | 'currentQuestion'
+    | 'answerText'
+    | 'scoreResult'
+    | 'scoring'
+    | 'scoringError'
+    | 'sessionAnswers'
+    | 'recentSessions'
+    | 'streakData'
+    | 'dimensionAverages'
+  >;
 }
 
 export const usePracticeStore = create<PracticeState>((set, get) => ({
-  session: null,
-  currentQuestion: null,
-  answerText: '',
-  scoreResult: null,
-  scoring: false,
-  scoringError: null,
-  sessionAnswers: [],
-  recentSessions: [],
-  streakData: [],
-  dimensionAverages: {},
+  ...emptyPracticeData(),
+  accountEpoch: 0,
 
   setCurrentQuestion: (q) => set({ currentQuestion: q, answerText: '', scoreResult: null, scoringError: null }),
   setAnswerText: (text) => set({ answerText: text }),
   clearFeedback: () => set({ scoreResult: null, scoringError: null }),
 
   startSession: async (userId, question) => {
+    const requestEpoch = get().accountEpoch;
     const { data, error } = await supabase
       .from('mock_sessions')
       .insert({
@@ -60,74 +96,76 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       })
       .select()
       .single();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
     if (error) throw error;
     set({ session: data as MockSession, currentQuestion: question, answerText: '' });
     return data.id;
   },
 
+  restoreSession: async (sessionId, questionId) => {
+    const requestEpoch = get().accountEpoch;
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
+    if (userError) throw userError;
+    if (!user) throw new Error('Authentication is required to restore this session.');
+
+    const restored = await restorePracticeSession({
+      getOwnedSession: async (userId, ownedSessionId) => {
+        const { data, error } = await supabase
+          .from('mock_sessions')
+          .select('*')
+          .eq('id', ownedSessionId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (error) throw error;
+        return data as MockSession | null;
+      },
+      getActiveQuestion: getQuestionById,
+    }, { userId: user.id, sessionId, questionId });
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
+
+    set({
+      session: restored.session,
+      currentQuestion: restored.question,
+      answerText: '',
+      scoreResult: null,
+      scoringError: null,
+    });
+  },
+
   submitAnswer: async (sessionId, questionId) => {
+    const requestEpoch = get().accountEpoch;
     const { answerText, currentQuestion } = get();
     if (!answerText.trim()) throw new Error('Please write an answer before submitting.');
+    if (!currentQuestion || currentQuestion.id !== questionId) {
+      throw new Error('The current question is unavailable.');
+    }
 
-    // 1. Save answer to DB
-    const { data: answerData, error: answerError } = await supabase
-      .from('answers')
-      .insert({
-        session_id: sessionId,
-        question_id: questionId,
-        user_id: (await supabase.auth.getUser()).data.user?.id,
-        text: answerText,
-      })
-      .select()
-      .single();
-    if (answerError) throw answerError;
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
+    if (userError) throw userError;
+    if (!user) throw new Error('Authentication is required to submit an answer.');
 
-    // 2. Score with AI
     set({ scoring: true, scoringError: null });
     try {
-      const result = await scoreAnswer(currentQuestion!.text, answerText);
-      set({ scoreResult: result, scoring: false });
-
-      // 3. Save score to DB
-      const { error: scoreError } = await supabase.from('scores').insert({
-        answer_id: answerData.id,
-        structure: result.structure,
-        ethics: result.ethics,
-        communication: result.communication,
-        reflection: result.reflection,
-        nhs_awareness: result.nhs_awareness,
-        overall_pct: result.overall_pct,
-        ai_feedback: result.ai_feedback,
-        improvement_tip: result.improvement_tip,
+      const result = await scoreAnswer({
+        sessionId,
+        questionId,
+        answerText,
       });
-      if (scoreError) throw scoreError;
+      assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
 
-      const { error: sessionError } = await supabase
-        .from('mock_sessions')
-        .update({ total_score_pct: result.overall_pct })
-        .eq('id', sessionId);
-      if (sessionError) throw sessionError;
-
-      // 4. Update streak via DB function
-      const userId = (await supabase.auth.getUser()).data.user?.id;
-      if (userId) {
-        await supabase.rpc('update_streak', { p_user_id: userId });
-      }
-    } catch (e: any) {
-      set({ scoring: false, scoringError: e.message });
-      throw e;
+      set({ scoreResult: result, scoring: false });
+    } catch (error) {
+      assertCurrentAccountEpoch(get().accountEpoch, requestEpoch);
+      const message = error instanceof Error ? error.message : 'submission_failed';
+      set({ scoring: false, scoringError: message });
+      throw error;
     }
   },
 
-  endSession: async (sessionId) => {
-    await supabase
-      .from('mock_sessions')
-      .update({ ended_at: new Date().toISOString(), completed: true })
-      .eq('id', sessionId);
-    set({ session: null });
-  },
-
   fetchRecentSessions: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     const { data } = await supabase
       .from('mock_sessions')
       .select('*')
@@ -135,10 +173,12 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       .eq('completed', true)
       .order('started_at', { ascending: false })
       .limit(10);
+    if (get().accountEpoch !== requestEpoch) return;
     set({ recentSessions: (data ?? []) as MockSession[] });
   },
 
   fetchStreakData: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     // Get last 30 days of session dates
     const since = new Date();
     since.setDate(since.getDate() - 29);
@@ -147,6 +187,7 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       .select('started_at')
       .eq('user_id', userId)
       .gte('started_at', since.toISOString());
+    if (get().accountEpoch !== requestEpoch) return;
 
     const practicedDates = new Set(
       (data ?? []).map(s => s.started_at.split('T')[0])
@@ -162,13 +203,18 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   },
 
   fetchDimensionAverages: async (userId) => {
+    const requestEpoch = get().accountEpoch;
     const { data } = await supabase
       .from('scores')
       .select('structure, ethics, communication, reflection, nhs_awareness, answers!inner(user_id)')
       .eq('answers.user_id', userId)
       .limit(50);
+    if (get().accountEpoch !== requestEpoch) return;
 
-    if (!data?.length) return;
+    if (!data?.length) {
+      set({ dimensionAverages: {} });
+      return;
+    }
     const avg = (key: string) =>
       Math.round((data.reduce((s: number, r: any) => s + (r[key] ?? 0), 0) / data.length) * 10) / 10;
 
@@ -182,4 +228,9 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
       },
     });
   },
+
+  reset: () => set(state => ({
+    ...emptyPracticeData(),
+    accountEpoch: state.accountEpoch + 1,
+  })),
 }));

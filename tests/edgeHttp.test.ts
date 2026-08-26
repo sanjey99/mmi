@@ -14,7 +14,10 @@ describe('prepareEdgeHttpRequest', () => {
       },
     });
     const request = new Request('https://functions.example.test/attempt', {
-      method: 'POST', body, duplex: 'half' as never,
+      method: 'POST',
+      body,
+      headers: { 'Content-Type': 'application/json' },
+      duplex: 'half' as never,
     } as RequestInit & { duplex: string });
     await expect(readBoundedJson(request, 32)).rejects.toMatchObject({ status: 413 } as EdgeRequestError);
   });
@@ -26,6 +29,15 @@ describe('prepareEdgeHttpRequest', () => {
     await expect(readBoundedJson(new Request('https://functions.example.test/attempt', {
       method: 'POST', body: '{', headers: { 'Content-Type': 'application/json' },
     }), 64)).rejects.toMatchObject({ status: 400 } as EdgeRequestError);
+  });
+
+  it('rejects missing and non-JSON content types before parsing the body', async () => {
+    await expect(readBoundedJson(new Request('https://functions.example.test/attempt', {
+      method: 'POST', body: '{"attemptId":"abc"}',
+    }), 64)).rejects.toMatchObject({ status: 415 } as EdgeRequestError);
+    await expect(readBoundedJson(new Request('https://functions.example.test/attempt', {
+      method: 'POST', body: '{"attemptId":"abc"}', headers: { 'Content-Type': 'text/plain' },
+    }), 64)).rejects.toMatchObject({ status: 415 } as EdgeRequestError);
   });
   it('reflects an exactly allowlisted browser origin and applies shared headers to JSON responses', () => {
     const context = prepareEdgeHttpRequest(

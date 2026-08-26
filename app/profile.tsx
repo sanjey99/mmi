@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, TextInput,
+  TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/stores/authStore';
 import { Card } from '../src/components/ui/Card';
 import { Button } from '../src/components/ui/Button';
+import { ConfirmAction } from '../src/components/feedback/ConfirmAction';
+import { InlineNotice } from '../src/components/feedback/InlineNotice';
+import { LegalFooter } from '../src/components/legal/LegalFooter';
+import { navigateBackOr } from '../src/lib/navigation';
 import { colors, text, layout } from '../src/theme';
 
 const UK_UNIVERSITIES = [
@@ -22,29 +26,44 @@ export default function ProfileScreen() {
   const [name, setName] = useState(profile?.full_name ?? '');
   const [university, setUniversity] = useState(profile?.university_target ?? '');
   const [saving, setSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string; tone: 'success' | 'error' } | null>(null);
 
   const handleSave = async () => {
+    setNotice(null);
     setSaving(true);
     try {
       await updateProfile({ full_name: name.trim(), university_target: university });
       setEditing(false);
-    } catch (e: any) {
-      Alert.alert('Save failed', e.message);
+      setNotice({ title: 'Profile saved', message: 'Your preview profile is up to date.', tone: 'success' });
+    } catch {
+      setNotice({ title: 'Profile not saved', message: 'Check your connection and try again.', tone: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
   const handleSignOut = () => {
-    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign out', style: 'destructive', onPress: async () => {
-          await signOut();
-          router.replace('/(auth)/login');
-        },
-      },
-    ]);
+    setNotice(null);
+    setConfirmingSignOut(true);
+  };
+
+  const confirmSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      router.replace('/(auth)/login');
+    } catch {
+      setConfirmingSignOut(false);
+      setNotice({
+        title: 'Still signed in',
+        message: 'The sign-out request did not reach the server. Check your connection and try again.',
+        tone: 'error',
+      });
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   if (!profile) return null;
@@ -57,8 +76,8 @@ export default function ProfileScreen() {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backText}>‹ Back</Text>
+        <TouchableOpacity onPress={() => navigateBackOr(router, '/(tabs)')} accessibilityRole="button">
+          <Text style={styles.backText}>Back to circuit</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>PROFILE</Text>
         <TouchableOpacity onPress={() => setEditing(!editing)}>
@@ -67,6 +86,8 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {notice ? <InlineNotice {...notice} /> : null}
 
         {/* Avatar */}
         <View style={styles.avatarSection}>
@@ -147,8 +168,8 @@ export default function ProfileScreen() {
             <Text style={styles.sectionLabel}>ADMIN</Text>
             <TouchableOpacity onPress={() => router.push('/admin')} activeOpacity={0.8}>
               <Card style={styles.adminRow} elevated>
-                <Text style={styles.adminIcon}>🔧</Text>
-                <Text style={styles.adminLabel}>Admin Panel</Text>
+                <Text style={styles.adminIcon}>QD</Text>
+                <Text style={styles.adminLabel}>Question Desk</Text>
                 <Text style={styles.chevron}>›</Text>
               </Card>
             </TouchableOpacity>
@@ -156,14 +177,27 @@ export default function ProfileScreen() {
         )}
 
         {/* Sign out */}
-        <Button
-          label="Sign Out"
-          onPress={handleSignOut}
-          variant="danger"
-          style={{ marginTop: 32 }}
-        />
+        {confirmingSignOut ? (
+          <ConfirmAction
+            title="Leave this browser session?"
+            message="You will need the invited account credentials to enter again."
+            confirmLabel="Sign out"
+            destructive
+            busy={signingOut}
+            onConfirm={confirmSignOut}
+            onCancel={() => setConfirmingSignOut(false)}
+          />
+        ) : (
+          <Button
+            label="Sign out"
+            onPress={handleSignOut}
+            variant="danger"
+            style={{ marginTop: 32 }}
+          />
+        )}
 
-        <Text style={styles.version}>Interview Station · v0.1.0 · Phase 3</Text>
+        <LegalFooter />
+        <Text style={styles.version}>Interview Station · v1.0.0 · Closed preview</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -176,20 +210,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPaddingH, paddingVertical: 12,
     borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary,
   },
-  backText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60 },
+  backText: { ...text.labelMd, color: colors.primary[800], minWidth: 96, textTransform: 'uppercase' },
   headerTitle: { ...text.labelMd, color: colors.primary[800] },
-  editText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60, textAlign: 'right' },
+  editText: { ...text.labelMd, color: colors.primary[800], width: 60, textAlign: 'right', textTransform: 'uppercase' },
   content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 24, paddingBottom: 48 },
 
   avatarSection: { alignItems: 'center', marginBottom: 24 },
   avatar: {
-    width: 80, height: 80, borderRadius: 40,
+    width: 80, height: 80, borderRadius: 2,
     backgroundColor: colors.primary[800],
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 12,
   },
-  avatarText: { fontFamily: 'DMSans_700Bold', fontSize: 28, color: '#fff' },
-  profileName: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 24, color: colors.primary[800] },
+  avatarText: { ...text.displayLg, color: colors.bg.white },
+  profileName: { ...text.headingLg, color: colors.primary[800] },
   profileEmail: { ...text.bodySm, color: colors.neutral[500], marginTop: 4 },
   nameInput: {
     ...text.headingMd,
@@ -201,11 +235,11 @@ const styles = StyleSheet.create({
 
   statsRow: {
     flexDirection: 'row', backgroundColor: colors.bg.white,
-    borderRadius: 16, padding: 16, marginBottom: 24,
+    borderRadius: 2, padding: 16, marginBottom: 24,
     borderWidth: 1, borderColor: colors.bg.tertiary,
   },
   statBox: { flex: 1, alignItems: 'center' },
-  statVal: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 28, color: colors.primary[800] },
+  statVal: { ...text.displayLg, color: colors.primary[800], fontVariant: ['tabular-nums'] },
   statLabel: { ...text.caption, color: colors.neutral[500], marginTop: 2 },
   statDivider: { width: 1, backgroundColor: colors.bg.tertiary, marginHorizontal: 8 },
 
@@ -216,16 +250,16 @@ const styles = StyleSheet.create({
   uniScroll: { marginBottom: 8 },
   uniChips: { flexDirection: 'row', gap: 8, paddingVertical: 4, paddingRight: 16 },
   uniChip: {
-    paddingVertical: 8, paddingHorizontal: 14, borderRadius: 99,
+    paddingVertical: 8, paddingHorizontal: 14, borderRadius: 2,
     borderWidth: 1.5, borderColor: colors.bg.tertiary,
     backgroundColor: colors.bg.white,
   },
   uniChipActive: { backgroundColor: colors.teal[400], borderColor: colors.teal[400] },
   uniChipText: { ...text.bodySm, color: colors.neutral[700] },
-  uniChipTextActive: { color: '#fff', fontFamily: 'DMSans_500Medium' },
+  uniChipTextActive: { color: colors.primary[900], fontFamily: 'SourceSans3_600SemiBold' },
 
   adminRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8 },
-  adminIcon: { fontSize: 22 },
+  adminIcon: { ...text.labelMd, color: colors.primary[900], backgroundColor: colors.teal[400], padding: 8 },
   adminLabel: { ...text.headingSm, color: colors.primary[800], flex: 1 },
   chevron: { ...text.headingMd, color: colors.neutral[300], fontSize: 22 },
 

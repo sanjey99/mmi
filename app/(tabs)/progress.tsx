@@ -1,19 +1,33 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Card } from '../../src/components/ui/Card';
-import { SectionHeader } from '../../src/components/ui/SectionHeader';
 import { ScoreDimensionBar, SCORE_COLORS } from '../../src/components/ui/ScoreDimensionBar';
 import { RadarChart } from '../../src/components/ui/RadarChart';
 import { Button } from '../../src/components/ui/Button';
-import { router } from 'expo-router';
 import { colors, text } from '../../src/theme';
 
+const DIMENSIONS: { key: keyof typeof SCORE_COLORS; label: string }[] = [
+  { key: 'structure', label: 'Structure' },
+  { key: 'ethics', label: 'Ethics' },
+  { key: 'communication', label: 'Communication' },
+  { key: 'reflection', label: 'Reflection' },
+  { key: 'nhs_awareness', label: 'NHS awareness' },
+];
+
 export default function ProgressScreen() {
-  const profile = useAuthStore(s => s.profile);
-  const { recentSessions, streakData, dimensionAverages, fetchRecentSessions, fetchStreakData, fetchDimensionAverages } = usePracticeStore();
+  const profile = useAuthStore(state => state.profile);
+  const {
+    recentSessions,
+    streakData,
+    dimensionAverages,
+    fetchRecentSessions,
+    fetchStreakData,
+    fetchDimensionAverages,
+  } = usePracticeStore();
 
   useEffect(() => {
     if (profile) {
@@ -23,143 +37,196 @@ export default function ProgressScreen() {
     }
   }, [profile?.id]);
 
-  const hasDimData = Object.keys(dimensionAverages).length > 0;
-  const dummyScores = { structure: 3, ethics: 3, communication: 3, reflection: 3, nhs_awareness: 3 };
-  const scores = hasDimData ? (dimensionAverages as any) : dummyScores;
-
-  const DIMENSIONS: { key: keyof typeof SCORE_COLORS; label: string }[] = [
-    { key: 'structure', label: 'Structure' },
-    { key: 'ethics', label: 'Ethics' },
-    { key: 'communication', label: 'Communication' },
-    { key: 'reflection', label: 'Reflection' },
-    { key: 'nhs_awareness', label: 'NHS Awareness' },
-  ];
-
-  const weakArea = hasDimData
-    ? DIMENSIONS.reduce((a, b) => (scores[a.key] < scores[b.key] ? a : b))
+  const hasDimensionData = DIMENSIONS.every(({ key }) => (
+    typeof dimensionAverages[key] === 'number'
+  ));
+  const scores = dimensionAverages as Record<keyof typeof SCORE_COLORS, number>;
+  const focusArea = hasDimensionData
+    ? DIMENSIONS.reduce((lowest, candidate) => (
+      scores[lowest.key] <= scores[candidate.key] ? lowest : candidate
+    ))
     : null;
 
   return (
     <ScreenWrapper>
-      <Text style={styles.title}>Progress</Text>
-
-      {/* Streak */}
-      <Card style={styles.streakCard}>
-        <View style={styles.streakRow}>
-          <Text style={styles.streakEmoji}>🔥</Text>
-          <View>
-            <Text style={styles.streakVal}>{profile?.streak_current ?? 0} day streak</Text>
-            <Text style={styles.streakSub}>Longest: {profile?.streak_longest ?? 0} days</Text>
-          </View>
+      <View style={styles.headingRow}>
+        <View style={styles.stationPlate}>
+          <Text style={styles.stationNumber}>03</Text>
         </View>
-      </Card>
+        <View style={styles.headingCopy}>
+          <Text style={styles.eyebrow}>REVIEW ROOM</Text>
+          <Text style={styles.title}>Progress record</Text>
+          <Text style={styles.subtitle}>Only saved activity from this account appears here.</Text>
+        </View>
+      </View>
 
-      {/* Streak calendar */}
-      <SectionHeader title="Last 30 Days" />
-      <Card>
-        <View style={styles.calGrid}>
-          {streakData.map((d, i) => {
-            const dayNum = new Date(d.date).getDate();
-            const isToday = d.date === new Date().toISOString().split('T')[0];
+      <View style={styles.streakBoard}>
+        <View>
+          <Text style={styles.streakLabel}>CURRENT RUN</Text>
+          <Text style={styles.streakValue}>{profile?.streak_current ?? 0}</Text>
+          <Text style={styles.streakUnit}>consecutive days</Text>
+        </View>
+        <View style={styles.bestBlock}>
+          <Text style={styles.bestLabel}>PERSONAL BEST</Text>
+          <Text style={styles.bestValue}>{profile?.streak_longest ?? 0} days</Text>
+        </View>
+      </View>
+
+      <Text style={styles.sectionLabel}>LAST 30 DAYS</Text>
+      <Card style={styles.calendarCard}>
+        <View style={styles.calendarLegend}>
+          <Text style={styles.legendText}>FILLED = PRACTISED</Text>
+          <Text style={styles.legendText}>OUTLINE = TODAY</Text>
+        </View>
+        <View style={styles.calendarGrid}>
+          {streakData.map(day => {
+            const dayNumber = new Date(`${day.date}T00:00:00`).getDate();
+            const isToday = day.date === new Date().toISOString().split('T')[0];
             return (
-              <View key={i} style={[
-                styles.calDot,
-                d.practiced && styles.calDotDone,
-                isToday && styles.calDotToday,
-              ]}>
-                <Text style={[styles.calDayNum, (d.practiced || isToday) && styles.calDayNumLight]}>{dayNum}</Text>
+              <View
+                key={day.date}
+                style={[
+                  styles.calendarDay,
+                  day.practiced && styles.calendarDayDone,
+                  isToday && styles.calendarDayToday,
+                ]}
+              >
+                <Text style={[styles.calendarDayText, day.practiced && styles.calendarDayTextDone]}>
+                  {dayNumber}
+                </Text>
               </View>
             );
           })}
         </View>
       </Card>
 
-      {/* Radar chart */}
-      <SectionHeader title="Dimension Averages" />
-      <Card style={{ alignItems: 'center' }}>
-        {hasDimData ? (
-          <>
-            <RadarChart scores={scores} size={200} />
-            <Text style={styles.radarHint}>Based on your last sessions</Text>
-          </>
-        ) : (
-          <Text style={styles.emptyText}>Complete practice sessions to see your dimension averages here.</Text>
-        )}
-      </Card>
-
-      {/* Dimension bars */}
-      {hasDimData && (
+      <Text style={styles.sectionLabel}>ASSESSMENT DIMENSIONS</Text>
+      {hasDimensionData ? (
         <>
-          <SectionHeader title="Score Breakdown" />
-          <Card>
-            {DIMENSIONS.map((d, i) => (
+          <Card style={styles.radarCard}>
+            <RadarChart scores={scores} size={210} />
+            <Text style={styles.dataNote}>AVERAGE OF YOUR SAVED SCORED RESPONSES</Text>
+          </Card>
+          <Card style={styles.scoreCard}>
+            {DIMENSIONS.map((dimension, index) => (
               <ScoreDimensionBar
-                key={d.key}
-                label={d.label}
-                score={Math.round(scores[d.key] ?? 3)}
-                color={SCORE_COLORS[d.key]}
-                delay={i * 100}
+                key={dimension.key}
+                label={dimension.label}
+                score={Math.round(scores[dimension.key])}
+                color={SCORE_COLORS[dimension.key]}
+                delay={index * 100}
               />
             ))}
           </Card>
         </>
-      )}
-
-      {/* Weak area */}
-      {weakArea && (
-        <>
-          <SectionHeader title="Suggested Focus" />
-          <Card variant="teal" style={{ marginBottom: 8 }}>
-            <Text style={styles.weakTitle}>⚠️ {weakArea.label} — avg {scores[weakArea.key]?.toFixed(1)}/5</Text>
-            <Text style={styles.weakText}>This is your lowest scoring dimension. Practise more questions in this area.</Text>
-            <Button label="Practice Now" onPress={() => router.push('/(tabs)/practice')} style={{ height: 40, marginTop: 12 }} />
-          </Card>
-        </>
-      )}
-
-      {/* Recent sessions */}
-      <SectionHeader title="Recent Sessions" />
-      {recentSessions.length === 0 ? (
-        <Text style={styles.emptyText}>No sessions yet. Start your first practice above.</Text>
       ) : (
-        recentSessions.slice(0, 5).map(s => (
-          <View key={s.id} style={styles.sessionRow}>
-            <Text style={styles.sessionDate}>
-              {new Date(s.started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-            </Text>
-            <Text style={styles.sessionCat}>{s.category_filter ?? 'Mixed'}</Text>
-            {s.total_score_pct != null && (
-              <Text style={styles.sessionScore}>{Math.round(s.total_score_pct)}%</Text>
-            )}
-          </View>
-        ))
+        <Card style={styles.emptyCard}>
+          <Text style={styles.emptyCode}>NO SCORED RESPONSES</Text>
+          <Text style={styles.emptyText}>Complete a practice station to open your dimension record.</Text>
+          <Button label="Go to practice" onPress={() => router.push('/(tabs)/practice')} style={styles.emptyAction} />
+        </Card>
       )}
+
+      {focusArea ? (
+        <Card variant="teal" style={styles.focusCard}>
+          <Text style={styles.focusLabel}>NEXT PRACTICE FOCUS</Text>
+          <Text style={styles.focusTitle}>{focusArea.label}</Text>
+          <Text style={styles.focusText}>
+            Current average {scores[focusArea.key].toFixed(1)} of 5. Use this as a prompt for deliberate practice, not a clinical judgement.
+          </Text>
+        </Card>
+      ) : null}
+
+      <Text style={styles.sectionLabel}>RECENT SESSION LOG</Text>
+      <View style={styles.sessionTable}>
+        {recentSessions.length === 0 ? (
+          <Text style={styles.sessionEmpty}>No saved sessions yet.</Text>
+        ) : recentSessions.slice(0, 5).map(session => (
+          <View key={session.id} style={styles.sessionRow}>
+            <Text style={styles.sessionDate}>
+              {new Date(session.started_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+            </Text>
+            <Text style={styles.sessionCategory}>{session.category_filter ?? 'Mixed'}</Text>
+            <Text style={styles.sessionScore}>
+              {session.total_score_pct == null ? 'PENDING' : `${Math.round(session.total_score_pct)}%`}
+            </Text>
+          </View>
+        ))}
+      </View>
     </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 28, color: colors.primary[800], marginBottom: 16 },
-  streakCard: { flexDirection: 'row' },
-  streakRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  streakEmoji: { fontSize: 32 },
-  streakVal: { ...text.headingMd, color: colors.primary[800] },
-  streakSub: { ...text.caption, color: colors.neutral[500], marginTop: 2 },
-  calGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  calDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.neutral[100], alignItems: 'center', justifyContent: 'center' },
-  calDotDone: { backgroundColor: colors.teal[400] },
-  calDotToday: { backgroundColor: colors.primary[800] },
-  calDayNum: { fontSize: 11, color: colors.neutral[500], fontFamily: 'DMSans_500Medium' },
-  calDayNumLight: { color: '#fff' },
-  radarHint: { ...text.caption, color: colors.neutral[500], marginTop: 8 },
-  emptyText: { ...text.bodyMd, color: colors.neutral[500], textAlign: 'center', paddingVertical: 20 },
-  weakTitle: { ...text.headingSm, color: colors.teal[600], marginBottom: 6 },
-  weakText: { ...text.bodyMd, color: colors.primary[800] },
-  sessionRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary, gap: 12,
+  headingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginBottom: 24 },
+  stationPlate: {
+    width: 62,
+    height: 62,
+    backgroundColor: colors.primary[800],
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  sessionDate: { ...text.bodyMd, color: colors.neutral[500], width: 60 },
-  sessionCat: { ...text.bodyMd, color: colors.primary[800], flex: 1, textTransform: 'capitalize' },
-  sessionScore: { ...text.headingSm, color: colors.teal[500] },
+  stationNumber: { ...text.headingLg, color: colors.bg.white },
+  headingCopy: { flex: 1 },
+  eyebrow: { ...text.labelMd, color: colors.neutral[500] },
+  title: { ...text.displayLg, color: colors.primary[800], marginTop: 1 },
+  subtitle: { ...text.bodySm, color: colors.neutral[500], marginTop: 3 },
+  streakBoard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    backgroundColor: colors.primary[800],
+    borderTopWidth: 8,
+    borderTopColor: colors.teal[400],
+    padding: 20,
+    marginBottom: 28,
+  },
+  streakLabel: { ...text.labelMd, color: colors.neutral[300] },
+  streakValue: { ...text.displayXl, color: colors.bg.white, lineHeight: 68 },
+  streakUnit: { ...text.bodySm, color: colors.neutral[300] },
+  bestBlock: { alignItems: 'flex-end', paddingBottom: 4 },
+  bestLabel: { ...text.labelMd, color: colors.neutral[300] },
+  bestValue: { ...text.headingMd, color: colors.teal[300], marginTop: 3 },
+  sectionLabel: { ...text.labelMd, color: colors.neutral[500], marginBottom: 9, marginTop: 2 },
+  calendarCard: { marginBottom: 26 },
+  calendarLegend: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, gap: 10 },
+  legendText: { ...text.labelMd, color: colors.neutral[400] },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  calendarDay: {
+    width: 32,
+    height: 32,
+    borderWidth: 1,
+    borderColor: colors.neutral[300],
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.bg.white,
+  },
+  calendarDayDone: { backgroundColor: colors.teal[400], borderColor: colors.primary[800] },
+  calendarDayToday: { borderWidth: 3, borderColor: colors.primary[800] },
+  calendarDayText: { ...text.labelMd, color: colors.neutral[500] },
+  calendarDayTextDone: { color: colors.primary[800] },
+  radarCard: { alignItems: 'center', marginBottom: 10 },
+  dataNote: { ...text.labelMd, color: colors.neutral[400], marginTop: 4, textAlign: 'center' },
+  scoreCard: { marginBottom: 16 },
+  emptyCard: { alignItems: 'flex-start', marginBottom: 24 },
+  emptyCode: { ...text.labelMd, color: colors.neutral[500], marginBottom: 6 },
+  emptyText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 22 },
+  emptyAction: { marginTop: 16, alignSelf: 'stretch' },
+  focusCard: { marginBottom: 26 },
+  focusLabel: { ...text.labelMd, color: colors.teal[600], marginBottom: 5 },
+  focusTitle: { ...text.headingLg, color: colors.primary[800] },
+  focusText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 22, marginTop: 4 },
+  sessionTable: { borderTopWidth: 1, borderTopColor: colors.primary[800], marginBottom: 20 },
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary[800],
+  },
+  sessionDate: { ...text.labelMd, color: colors.neutral[500], width: 68 },
+  sessionCategory: { ...text.bodyMd, color: colors.primary[800], flex: 1, textTransform: 'capitalize' },
+  sessionScore: { ...text.labelMd, color: colors.primary[800] },
+  sessionEmpty: { ...text.bodyMd, color: colors.neutral[500], paddingVertical: 18 },
 });

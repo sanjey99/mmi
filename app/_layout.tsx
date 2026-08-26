@@ -2,12 +2,9 @@ import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { useFonts, DMSerifDisplay_400Regular } from '@expo-google-fonts/dm-serif-display';
-import {
-  DMSans_400Regular,
-  DMSans_500Medium,
-  DMSans_700Bold,
-} from '@expo-google-fonts/dm-sans';
+import { useFonts } from 'expo-font';
+import { BarlowCondensed_600SemiBold, BarlowCondensed_700Bold } from '@expo-google-fonts/barlow-condensed';
+import { SourceSans3_400Regular, SourceSans3_600SemiBold } from '@expo-google-fonts/source-sans-3';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/stores/authStore';
@@ -18,10 +15,10 @@ export default function RootLayout() {
   const init = useAuthStore(s => s.init);
 
   const [fontsLoaded, fontError] = useFonts({
-    DMSerifDisplay_400Regular,
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
+    BarlowCondensed_600SemiBold,
+    BarlowCondensed_700Bold,
+    SourceSans3_400Regular,
+    SourceSans3_600SemiBold,
   });
 
   useEffect(() => {
@@ -37,7 +34,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar style="dark" backgroundColor="#F7F3EE" />
+        <StatusBar style="dark" backgroundColor="#F7F8F6" />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />

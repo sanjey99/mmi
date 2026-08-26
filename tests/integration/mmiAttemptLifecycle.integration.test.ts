@@ -4,9 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
-import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode, isDisposableLocalUrl } from './mmiPersistenceFixtures.ts';
+import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode } from './mmiPersistenceFixtures.ts';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { teardownMmiAttemptLifecycleFixtures } from './mmiAttemptLifecycleFixtures.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { canRunLocalMutationTests } from './mutationTestSafety.ts';
 
 const root = process.cwd();
 const migrationPath = `${root}/supabase/migrations/20260817002500_mmi_attempt_rpcs.sql`;
@@ -206,15 +208,7 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
-const required = process.env.MMI_ATTEMPT_LIFECYCLE_INTEGRATION_REQUIRED === '1';
-if ((url || anonKey || serviceRoleKey) && !isDisposableLocalUrl(url)) {
-  throw new Error('MMI attempt lifecycle tests only run against a disposable local Supabase URL');
-}
-if (required && !(url && anonKey && serviceRoleKey)) {
-  throw new Error('Required local MMI attempt lifecycle integration credentials are missing');
-}
-
-const run = required && url && anonKey && serviceRoleKey ? describe : describe.skip;
+const run = canRunLocalMutationTests(process.env) ? describe : describe.skip;
 const fixturePrefix = `mmi-lifecycle-${randomUUID().slice(0, 8)}`;
 const password = `Local-only-${randomUUID()}!`;
 

@@ -1,155 +1,191 @@
 import React, { useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Animated,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { useAuthStore } from '../../src/stores/authStore';
+import { ownsCachedPracticeSession } from '../../src/features/practice/restoration';
 import { RadarChart } from '../../src/components/ui/RadarChart';
 import { ScoreDimensionBar, SCORE_COLORS } from '../../src/components/ui/ScoreDimensionBar';
 import { Button } from '../../src/components/ui/Button';
 import { Card } from '../../src/components/ui/Card';
-import { colors, text, layout, shadows } from '../../src/theme';
+import { colors, text, layout } from '../../src/theme';
 
 const DIMENSIONS: { key: keyof typeof SCORE_COLORS; label: string }[] = [
   { key: 'structure', label: 'Structure' },
   { key: 'ethics', label: 'Ethics' },
   { key: 'communication', label: 'Communication' },
   { key: 'reflection', label: 'Reflection' },
-  { key: 'nhs_awareness', label: 'NHS Awareness' },
+  { key: 'nhs_awareness', label: 'NHS awareness' },
 ];
 
-function ScoreBadge({ pct }: { pct: number }) {
-  const color = pct >= 80 ? colors.score.ethics : pct >= 60 ? colors.teal[400] : pct >= 40 ? colors.score.communication : colors.error;
-  const label = pct >= 80 ? 'Excellent' : pct >= 60 ? 'Good' : pct >= 40 ? 'Developing' : 'Needs Work';
+function ScoreBadge({ percentage }: { percentage: number }) {
+  const color = percentage >= 80
+    ? colors.score.ethics
+    : percentage >= 60
+      ? colors.teal[400]
+      : percentage >= 40
+        ? colors.score.communication
+        : colors.error;
+  const label = percentage >= 80
+    ? 'STRONG'
+    : percentage >= 60
+      ? 'GOOD'
+      : percentage >= 40
+        ? 'DEVELOPING'
+        : 'REVIEW';
+
   return (
-    <View style={[styles.badge, { backgroundColor: `${color}18`, borderColor: `${color}40` }]}>
-      <Text style={[styles.badgePct, { color }]}>{Math.round(pct)}%</Text>
+    <View style={[styles.badge, { borderColor: color }]}>
+      <Text style={[styles.badgePercentage, { color }]}>{Math.round(percentage)}%</Text>
       <Text style={[styles.badgeLabel, { color }]}>{label}</Text>
     </View>
   );
 }
 
 export default function FeedbackScreen() {
+  const { session: cachedSession, scoreResult, currentQuestion, answerText, clearFeedback } = usePracticeStore();
+  const authenticatedUserId = useAuthStore(state => state.session?.user.id);
+  const authLoading = useAuthStore(state => state.loading);
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
-  const { scoreResult, currentQuestion, answerText, clearFeedback, endSession } = usePracticeStore();
-  const profile = useAuthStore(s => s.profile);
-
-  // Slide-up animation for content sections
-  const slideAnim = useRef(new Animated.Value(40)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const routeSessionId = typeof sessionId === 'string' ? sessionId : '';
+  const hasOwnedCachedSession = ownsCachedPracticeSession({
+    authenticatedUserId,
+    routeSessionId,
+    cachedSession,
+  });
+  const slideAnimation = useRef(new Animated.Value(24)).current;
+  const fadeAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (authLoading || !hasOwnedCachedSession || !scoreResult || !currentQuestion) return;
+
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
+      Animated.timing(fadeAnimation, { toValue: 1, duration: 350, useNativeDriver: true }),
+      Animated.spring(slideAnimation, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
     ]).start();
 
-    // End session in background
-    if (sessionId) endSession(sessionId).catch(() => {});
-  }, []);
+  }, [authLoading, hasOwnedCachedSession, scoreResult, currentQuestion]);
 
   const handleTryAgain = () => {
     clearFeedback();
-    router.replace('/(tabs)/practice');
+    router.replace('/practice');
   };
 
   const handleNextQuestion = () => {
     clearFeedback();
-    router.replace('/(tabs)/practice');
+    router.replace('/practice');
   };
 
-  // Guard: if no score yet (e.g. navigated here directly), go back
-  if (!scoreResult || !currentQuestion) {
-    router.replace('/(tabs)/practice');
-    return null;
+  if (authLoading) return null;
+  if (!hasOwnedCachedSession || !scoreResult || !currentQuestion) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.unavailableContent}>
+          <Text style={styles.unavailableEyebrow}>REVIEW ROOM · CLOSED PREVIEW</Text>
+          <Text style={styles.unavailableTitle}>Feedback unavailable</Text>
+          <Text style={styles.unavailableBody}>
+            This review cannot be opened from the current account or browser session.
+          </Text>
+          <Button
+            label="Choose a station"
+            onPress={() => router.replace('/practice')}
+            style={styles.unavailableAction}
+          />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleTryAgain}>
-          <Text style={styles.backText}>‹ Practice</Text>
+        <TouchableOpacity onPress={handleTryAgain} accessibilityRole="button">
+          <Text style={styles.backText}>Back to practice</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>AI FEEDBACK</Text>
-        <View style={{ width: 60 }} />
+        <Text style={styles.headerTitle}>REVIEW ROOM</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-
-          {/* Overall score hero */}
-          <View style={styles.scoreHero}>
-            <ScoreBadge pct={scoreResult.overall_pct} />
-            <Text style={styles.categoryLabel}>{currentQuestion.category.toUpperCase()}</Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ opacity: fadeAnimation, transform: [{ translateY: slideAnimation }] }}>
+          <View style={styles.resultHeader}>
+            <View style={styles.stationPlate}>
+              <Text style={styles.stationCode}>03</Text>
+              <Text style={styles.stationLabel}>RESULT</Text>
+            </View>
+            <View style={styles.resultCopy}>
+              <Text style={styles.eyebrow}>{currentQuestion.category.toUpperCase()} · SAVED RESPONSE</Text>
+              <Text style={styles.title}>Station feedback</Text>
+            </View>
           </View>
 
-          {/* Radar chart */}
+          <View style={styles.scorePanel}>
+            <ScoreBadge percentage={scoreResult.overall_pct} />
+            <View style={styles.scoreExplanation}>
+              <Text style={styles.scoreLabel}>OVERALL SCORE</Text>
+              <Text style={styles.scoreText}>Use this as practice guidance, not as a clinical or admissions judgement.</Text>
+            </View>
+          </View>
+
           <Card style={styles.radarCard}>
-            <Text style={styles.sectionLabel}>DIMENSION BREAKDOWN</Text>
-            <View style={{ alignItems: 'center', marginVertical: 8 }}>
+            <Text style={styles.sectionLabel}>DIMENSION MAP</Text>
+            <View style={styles.radarWrap}>
               <RadarChart scores={scoreResult} size={220} />
             </View>
           </Card>
 
-          {/* Score bars */}
           <Card style={styles.barsCard}>
-            {DIMENSIONS.map((d, i) => (
+            <Text style={styles.sectionLabel}>ASSESSOR BREAKDOWN</Text>
+            {DIMENSIONS.map((dimension, index) => (
               <ScoreDimensionBar
-                key={d.key}
-                label={d.label}
-                score={scoreResult[d.key]}
-                color={SCORE_COLORS[d.key]}
-                delay={i * 100}
+                key={dimension.key}
+                label={dimension.label}
+                score={scoreResult[dimension.key]}
+                color={SCORE_COLORS[dimension.key]}
+                delay={index * 100}
               />
             ))}
           </Card>
 
-          {/* AI Feedback */}
           <Card style={styles.feedbackCard}>
             <Text style={styles.sectionLabel}>FEEDBACK</Text>
-            <Text style={styles.feedbackText}>{scoreResult.ai_feedback}</Text>
+            <Text style={styles.readingText}>{scoreResult.ai_feedback}</Text>
           </Card>
 
-          {/* Improvement tip */}
           <Card variant="teal" style={styles.tipCard}>
-            <Text style={styles.tipLabel}>💡 IMPROVEMENT TIP</Text>
-            <Text style={styles.tipText}>{scoreResult.improvement_tip}</Text>
+            <Text style={styles.tipLabel}>NEXT IMPROVEMENT</Text>
+            <Text style={styles.readingText}>{scoreResult.improvement_tip}</Text>
           </Card>
 
-          {/* Your answer (collapsible preview) */}
           <Card style={styles.answerCard}>
             <Text style={styles.sectionLabel}>YOUR ANSWER</Text>
-            <Text style={styles.answerPreview} numberOfLines={4}>{answerText}</Text>
+            <Text style={styles.answerText}>{answerText}</Text>
           </Card>
 
-          {/* Question recap */}
           <Card style={styles.questionCard}>
-            <Text style={styles.sectionLabel}>QUESTION</Text>
+            <Text style={styles.sectionLabel}>STATION PROMPT</Text>
             <Text style={styles.questionText}>{currentQuestion.text}</Text>
           </Card>
 
-          {/* Action buttons */}
           <View style={styles.actions}>
+            <Button label="Another station" onPress={handleNextQuestion} style={styles.actionButton} />
             <Button
-              label="Practice Again →"
-              onPress={handleNextQuestion}
-              style={{ flex: 1 }}
-            />
-            <Button
-              label="Progress"
+              label="Open progress"
               onPress={() => router.replace('/(tabs)/progress')}
               variant="secondary"
-              style={{ flex: 1 }}
+              style={styles.actionButton}
             />
           </View>
 
-          <Text style={styles.hint}>Results are not stored on this device</Text>
+          <Text style={styles.persistenceNote}>SCORE SAVED TO YOUR CLOSED-PREVIEW ACCOUNT</Text>
         </Animated.View>
       </ScrollView>
     </SafeAreaView>
@@ -158,62 +194,81 @@ export default function FeedbackScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg.primary },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: layout.screenPaddingH, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary,
+  unavailableContent: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingVertical: 40,
   },
-  backText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60 },
-  headerTitle: { ...text.labelMd, color: colors.primary[800] },
-
-  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 20, paddingBottom: 48 },
-
-  scoreHero: {
+  unavailableEyebrow: { ...text.labelMd, color: colors.teal[600], marginBottom: 8 },
+  unavailableTitle: { ...text.displayLg, color: colors.primary[900] },
+  unavailableBody: { ...text.bodyLg, color: colors.neutral[600], lineHeight: 26, marginTop: 10 },
+  unavailableAction: { alignSelf: 'flex-start', minWidth: 210, marginTop: 24 },
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
-    gap: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary[800],
+  },
+  backText: { ...text.labelMd, color: colors.primary[800], minWidth: 116, textTransform: 'uppercase' },
+  headerTitle: { ...text.labelMd, color: colors.primary[800] },
+  headerSpacer: { width: 116 },
+  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 24, paddingBottom: 48 },
+  resultHeader: { flexDirection: 'row', gap: 14, alignItems: 'center', marginBottom: 20 },
+  stationPlate: {
+    width: 62,
+    height: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary[800],
+  },
+  stationCode: { ...text.headingLg, color: colors.bg.white, lineHeight: 27 },
+  stationLabel: { ...text.labelMd, color: colors.teal[300] },
+  resultCopy: { flex: 1 },
+  eyebrow: { ...text.labelMd, color: colors.neutral[500] },
+  title: { ...text.displayLg, color: colors.primary[800], marginTop: 1 },
+  scorePanel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    borderTopWidth: 8,
+    borderTopColor: colors.teal[400],
+    backgroundColor: colors.primary[800],
+    padding: 18,
+    marginBottom: 12,
   },
   badge: {
+    width: 118,
+    minHeight: 96,
     alignItems: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 16,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    gap: 2,
+    justifyContent: 'center',
+    borderWidth: 2,
+    backgroundColor: colors.bg.white,
   },
-  badgePct: {
-    fontFamily: 'DMSerifDisplay_400Regular',
-    fontSize: 48,
-    lineHeight: 52,
-  },
-  badgeLabel: {
-    ...text.labelMd,
-    letterSpacing: 1.5,
-  },
-  categoryLabel: { ...text.caption, color: colors.neutral[400], letterSpacing: 1.5 },
-
-  sectionLabel: { ...text.labelMd, color: colors.neutral[400], marginBottom: 12 },
-
+  badgePercentage: { ...text.displayLg, lineHeight: 42 },
+  badgeLabel: { ...text.labelMd, marginTop: 2 },
+  scoreExplanation: { flex: 1 },
+  scoreLabel: { ...text.labelMd, color: colors.teal[300], marginBottom: 5 },
+  scoreText: { ...text.bodySm, color: colors.neutral[300], lineHeight: 20 },
+  sectionLabel: { ...text.labelMd, color: colors.neutral[500], marginBottom: 12 },
   radarCard: { marginBottom: 12 },
+  radarWrap: { alignItems: 'center', marginVertical: 4 },
   barsCard: { marginBottom: 12 },
   feedbackCard: { marginBottom: 12 },
   tipCard: { marginBottom: 12 },
   answerCard: { marginBottom: 12 },
   questionCard: { marginBottom: 20 },
-
-  feedbackText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 24 },
-
   tipLabel: { ...text.labelMd, color: colors.teal[600], marginBottom: 8 },
-  tipText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 24 },
-
-  answerPreview: { ...text.bodyMd, color: colors.neutral[600], lineHeight: 22, fontStyle: 'italic' },
-
-  questionText: {
-    fontFamily: 'DMSerifDisplay_400Regular',
-    fontSize: 18, lineHeight: 26,
-    color: colors.primary[800],
-  },
-
+  readingText: { ...text.bodyMd, color: colors.primary[800], lineHeight: 24 },
+  answerText: { ...text.bodyMd, color: colors.neutral[600], lineHeight: 23 },
+  questionText: { ...text.headingSm, color: colors.primary[800], lineHeight: 25 },
   actions: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  hint: { ...text.caption, color: colors.neutral[300], textAlign: 'center' },
+  actionButton: { flex: 1 },
+  persistenceNote: { ...text.labelMd, color: colors.neutral[400], textAlign: 'center' },
 });

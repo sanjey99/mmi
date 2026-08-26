@@ -39,6 +39,8 @@ export class EdgeRequestError extends Error {
 
 /** Reads JSON with a streaming byte cap so Content-Length cannot be bypassed. */
 export async function readBoundedJson(request: Request, maxBytes = 4_096): Promise<unknown> {
+  const mediaType = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
+  if (mediaType !== 'application/json') throw new EdgeRequestError(415);
   const declared = request.headers.get('Content-Length');
   if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new EdgeRequestError(413);
   if (!request.body) throw new EdgeRequestError(400);

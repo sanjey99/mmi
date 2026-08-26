@@ -22,7 +22,7 @@ export function ScreenWrapper({ children, scroll = true, style, contentStyle, on
           keyboardShouldPersistTaps="handled"
           refreshControl={
             onRefresh
-              ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.teal[400]} />
+              ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.primary[800]} />
               : undefined
           }
         >
@@ -43,5 +43,12 @@ export function ScreenWrapper({ children, scroll = true, style, contentStyle, on
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg.primary },
-  content: { paddingHorizontal: layout.screenPaddingH, paddingTop: layout.screenPaddingTop, paddingBottom: 32 },
+  content: {
+    width: '100%',
+    maxWidth: 1180,
+    alignSelf: 'center',
+    paddingHorizontal: layout.screenPaddingH,
+    paddingTop: layout.screenPaddingTop,
+    paddingBottom: 40,
+  },
 });

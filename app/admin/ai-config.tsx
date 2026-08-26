@@ -13,7 +13,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, ActivityIndicator,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,6 +21,9 @@ import { supabase } from '../../src/lib/supabase';
 import { FloatingInput as Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Card } from '../../src/components/ui/Card';
+import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
+import { InlineNotice } from '../../src/components/feedback/InlineNotice';
+import { navigateBackOr } from '../../src/lib/navigation';
 import { colors, text, layout } from '../../src/theme';
 import type { AIProvider } from '../../src/types';
 
@@ -44,6 +47,12 @@ export default function AIConfigScreen() {
   const [isConfigured, setIsConfigured] = useState(false);
   const [model, setModel] = useState(DEFAULT_MODELS.anthropic);
   const [baseUrl, setBaseUrl] = useState('');
+  const [confirmingSave, setConfirmingSave] = useState(false);
+  const [notice, setNotice] = useState<{
+    title: string;
+    message: string;
+    tone: 'info' | 'success' | 'warning' | 'error';
+  } | null>(null);
 
   useEffect(() => {
     loadConfig();
@@ -70,8 +79,8 @@ export default function AIConfigScreen() {
       );
       if (keyStatusError) throw keyStatusError;
       setIsConfigured(Boolean(keyStatus?.configured));
-    } catch (e: any) {
-      Alert.alert('Load failed', e.message);
+    } catch {
+      setNotice({ title: 'Configuration not loaded', message: 'Check admin access, deployed functions, and your connection.', tone: 'error' });
     } finally {
       setLoading(false);
     }
@@ -85,18 +94,23 @@ export default function AIConfigScreen() {
 
   const handleSave = async () => {
     if (!apiKey.trim() && !isConfigured) {
-      Alert.alert('API Key required', 'Please enter an API key before saving the initial configuration.');
+      setNotice({ title: 'API key required', message: 'Enter a key before saving the initial scoring configuration.', tone: 'error' });
       return;
     }
     if (!model.trim()) {
-      Alert.alert('Model required', 'Please enter a model name.');
+      setNotice({ title: 'Model required', message: 'Enter the exact provider model name.', tone: 'error' });
       return;
     }
     if (provider === 'openai_compatible' && !baseUrl.trim()) {
-      Alert.alert('Base URL required', 'OpenAI-compatible providers need a base URL (e.g. https://api.groq.com/openai/v1).');
+      setNotice({ title: 'Base URL required', message: 'OpenAI-compatible providers need an approved HTTPS base URL.', tone: 'error' });
       return;
     }
 
+    setNotice(null);
+    setConfirmingSave(true);
+  };
+
+  const confirmSave = async () => {
     setSaving(true);
     try {
       const upserts = [
@@ -121,9 +135,11 @@ export default function AIConfigScreen() {
         setApiKey('');
       }
 
-      Alert.alert('Saved', 'AI configuration updated. The new provider will be used immediately.');
-    } catch (e: any) {
-      Alert.alert('Save failed', e.message);
+      setConfirmingSave(false);
+      setNotice({ title: 'Configuration saved', message: 'The selected provider and model are now active.', tone: 'success' });
+    } catch {
+      setConfirmingSave(false);
+      setNotice({ title: 'Configuration not saved', message: 'No success was confirmed. Check the Edge function and admin access, then retry.', tone: 'error' });
     } finally {
       setSaving(false);
     }
@@ -131,13 +147,10 @@ export default function AIConfigScreen() {
 
   const handleTestConfig = async () => {
     if (!apiKey.trim() && !isConfigured) {
-      Alert.alert('Enter and save an API key first');
+      setNotice({ title: 'Configuration incomplete', message: 'Enter and save an API key before testing scoring.', tone: 'error' });
       return;
     }
-    Alert.alert(
-      'Test Configuration',
-      'Submit a practice answer to test the AI configuration in action. The config is live immediately after saving.',
-    );
+    setNotice({ title: 'Test through Practice', message: 'Open an available station and submit a synthetic response. Do not use real personal or patient data.', tone: 'info' });
   };
 
   if (loading) {
@@ -152,8 +165,8 @@ export default function AIConfigScreen() {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backText}>‹ Admin</Text>
+        <TouchableOpacity onPress={() => navigateBackOr(router, '/admin')} accessibilityRole="button">
+          <Text style={styles.backText}>Back to admin</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>AI CONFIG</Text>
         <View style={{ width: 60 }} />
@@ -163,6 +176,20 @@ export default function AIConfigScreen() {
 
         <Text style={styles.title}>AI Provider</Text>
         <Text style={styles.sub}>Configure which AI powers answer scoring.</Text>
+
+        {notice ? <InlineNotice {...notice} /> : null}
+        {confirmingSave ? (
+          <ConfirmAction
+            title="Apply this scoring configuration?"
+            message={apiKey.trim()
+              ? `This updates provider/model settings and replaces the stored ${provider} API key. The key will not be shown again.`
+              : `This updates provider/model settings and keeps the existing ${provider} API key.`}
+            confirmLabel="Apply configuration"
+            busy={saving}
+            onConfirm={confirmSave}
+            onCancel={() => setConfirmingSave(false)}
+          />
+        ) : null}
 
         {/* Provider selector */}
         <Text style={styles.fieldLabel}>PROVIDER</Text>
@@ -236,7 +263,7 @@ export default function AIConfigScreen() {
               !baseUrl.includes('localhost') &&
               !baseUrl.includes('127.0.0.1') && (
               <Text style={styles.httpsWarning}>
-                ⚠️ Non-HTTPS URLs are insecure in production. Use HTTPS for remote providers.
+                Non-HTTPS remote providers are blocked in production. Use an approved HTTPS endpoint.
               </Text>
             )}
           </>
@@ -274,18 +301,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPaddingH, paddingVertical: 12,
     borderBottomWidth: 1, borderBottomColor: colors.bg.tertiary,
   },
-  backText: { ...text.bodyMd, color: colors.teal[400], fontFamily: 'DMSans_500Medium', width: 60 },
+  backText: { ...text.labelMd, color: colors.primary[800], minWidth: 104, textTransform: 'uppercase' },
   headerTitle: { ...text.labelMd, color: colors.primary[800] },
   content: { paddingHorizontal: layout.screenPaddingH, paddingTop: 20, paddingBottom: 48 },
 
-  title: { fontFamily: 'DMSerifDisplay_400Regular', fontSize: 24, color: colors.primary[800], marginBottom: 4 },
+  title: { ...text.displayLg, color: colors.primary[800], marginBottom: 4 },
   sub: { ...text.bodyMd, color: colors.neutral[500], marginBottom: 24 },
   fieldLabel: { ...text.labelMd, color: colors.neutral[500], marginBottom: 8, marginTop: 16 },
 
   providerList: { gap: 10, marginBottom: 8 },
   providerOption: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, borderRadius: 12,
+    padding: 14, borderRadius: 2,
     borderWidth: 1.5, borderColor: colors.bg.tertiary,
     backgroundColor: colors.bg.white,
   },
@@ -309,7 +336,7 @@ const styles = StyleSheet.create({
   examplesCard: { marginTop: 20, marginBottom: 8 },
   examplesTitle: { ...text.headingSm, color: colors.teal[600], marginBottom: 12 },
   exampleRow: { marginBottom: 10 },
-  exampleName: { ...text.bodyMd, color: colors.primary[800], fontFamily: 'DMSans_500Medium' },
-  exampleUrl: { ...text.caption, color: colors.neutral[500], fontFamily: 'DMSans_400Regular' },
+  exampleName: { ...text.bodyMd, color: colors.primary[800], fontFamily: 'SourceSans3_600SemiBold' },
+  exampleUrl: { ...text.caption, color: colors.neutral[500] },
   exampleModels: { ...text.caption, color: colors.neutral[400] },
 });

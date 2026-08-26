@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { canRunLocalMutationTests } from './mutationTestSafety.ts';
 
 const url = process.env.SUPABASE_TEST_URL;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
-const enabled = Boolean(url && serviceRoleKey);
+const enabled = canRunLocalMutationTests(process.env);
 
 const run = enabled ? describe : describe.skip;
 const fixturePrefix = `mmi-schema-${randomUUID().slice(0, 8)}`;
