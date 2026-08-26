@@ -55,7 +55,10 @@ describe('cofounder preview hosted reconciliation policy', () => {
     expect(sql).toContain('has_any_column_privilege');
     expect(sql).toMatch(/has_table_privilege\('anon', 'public\.app_config', 'REFERENCES'\)/i);
     expect(sql).toMatch(/has_table_privilege\('anon', 'public\.app_config', 'TRIGGER'\)/i);
-    expect(sql).not.toMatch(/public\.is_admin\(\)/i);
+    expect(sql).toMatch(/REVOKE EXECUTE ON FUNCTION public\.is_admin\(\)\s+FROM PUBLIC, anon, authenticated, service_role/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.is_admin\(\) TO authenticated/i);
+    const appConfigPolicySection = sql.slice(sql.indexOf('ALTER TABLE public.app_config'), sql.indexOf('-- Remove table-level'));
+    expect(appConfigPolicySection).not.toMatch(/public\.is_admin\(\)/i);
     expect(sql).not.toMatch(/\bcreate\s+policy\b/i);
     expect(sql).not.toMatch(/\bdrop\s+(?:policy|table|function|trigger|schema|type|extension)\b/i);
   });

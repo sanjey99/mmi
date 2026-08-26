@@ -95,13 +95,15 @@ describe('cofounder preview privilege cutover policy', () => {
     expect(browserGrant).toBeGreaterThan(policyRepair);
   });
 
-  it('removes default streak execution before granting service-role-only execution', async () => {
+  it('removes default and service execution for legacy helpers after policy replacement', async () => {
     const sql = await readFile(migrationPath, 'utf8');
     const revoke = sql.search(/REVOKE EXECUTE ON FUNCTION public\.update_streak\(UUID\)\s+FROM PUBLIC, anon, authenticated, service_role/);
-    const grant = sql.indexOf('GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role');
 
     expect(revoke).toBeGreaterThanOrEqual(0);
-    expect(grant).toBeGreaterThan(revoke);
+    expect(sql).not.toContain('GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role');
+    expect(sql).toMatch(/REVOKE EXECUTE ON FUNCTION public\.is_admin\(\)\s+FROM PUBLIC, anon, authenticated, service_role/i);
+    expect(sql).toMatch(/ALTER POLICY "questions_write_admin"/i);
+    expect(sql).toMatch(/cutover helper execution postcondition failed/i);
   });
 
   it('requires feedback storage to remain RPC-only for every runtime role', async () => {

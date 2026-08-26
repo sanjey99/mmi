@@ -48,6 +48,25 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- Reconciliation must already have removed every effective runtime grant
+  -- from assessor content. Do not continue a cutover that could leave private
+  -- rubrics readable through service_role, including through PUBLIC or direct
+  -- column grants.
+  FOREACH v_table IN ARRAY ARRAY[
+    'mmi_stations',
+    'mmi_sub_questions',
+    'roleplay_stations',
+    'mmi_marking_criteria',
+    'roleplay_end_criteria',
+    'roleplay_mark_domains',
+    'roleplay_response_rules'
+  ]
+  LOOP
+    IF to_regclass('public.' || v_table) IS NULL THEN
+      RAISE EXCEPTION 'required assessor-content table public.% is missing', v_table;
+    END IF;
+  END LOOP;
+
   SELECT count(*)
   INTO v_policy_count
   FROM pg_policies
@@ -170,9 +189,42 @@ BEGIN
     OR to_regprocedure('public.submit_cofounder_feedback(text,text,text,text,text,boolean)') IS NULL
     OR to_regprocedure('public.list_cofounder_feedback(integer)') IS NULL
     OR to_regprocedure('public.update_streak(uuid)') IS NULL
+    OR to_regprocedure('public.handle_new_user()') IS NULL
+    OR to_regprocedure('public.is_admin()') IS NULL
   THEN
     RAISE EXCEPTION 'one or more required cutover functions are missing';
   END IF;
+
+  FOREACH v_table IN ARRAY ARRAY[
+    'mmi_stations',
+    'mmi_sub_questions',
+    'roleplay_stations',
+    'mmi_marking_criteria',
+    'roleplay_end_criteria',
+    'roleplay_mark_domains',
+    'roleplay_response_rules'
+  ]
+  LOOP
+    FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role']
+    LOOP
+      IF has_table_privilege(v_role, 'public.' || v_table, 'SELECT')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'INSERT')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'UPDATE')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'DELETE')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'TRUNCATE')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'REFERENCES')
+        OR has_table_privilege(v_role, 'public.' || v_table, 'TRIGGER')
+        OR has_any_column_privilege(v_role, 'public.' || v_table, 'SELECT')
+        OR has_any_column_privilege(v_role, 'public.' || v_table, 'INSERT')
+        OR has_any_column_privilege(v_role, 'public.' || v_table, 'UPDATE')
+        OR has_any_column_privilege(v_role, 'public.' || v_table, 'REFERENCES')
+      THEN
+        RAISE EXCEPTION 'assessor-content service-role ACL prerequisite failed for public.% role %',
+          v_table,
+          v_role;
+      END IF;
+    END LOOP;
+  END LOOP;
 
   FOR v_rpc IN
     SELECT *
@@ -404,6 +456,12 @@ BEGIN
 END;
 $$;
 
+-- Make search-path safety deterministic even on a pristine local migration
+-- chain where the hosted-only reconciliation was intentionally not applied.
+ALTER FUNCTION public.handle_new_user() SET search_path = pg_catalog, public;
+ALTER FUNCTION public.update_streak(uuid) SET search_path = pg_catalog, public;
+ALTER FUNCTION public.is_admin() SET search_path = pg_catalog, public;
+
 -- Hosted and pristine databases use two reviewed policy-name generations.
 -- Normalize the hosted generation without dropping an RLS object, then force
 -- the same canonical predicates in both environments.
@@ -587,6 +645,28 @@ ALTER POLICY "profiles_update_own"
   TO authenticated
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
+
+-- This legacy policy is the final remaining caller of is_admin(). Inline the
+-- same owner-bound check before removing public helper execution altogether.
+ALTER POLICY "questions_write_admin"
+  ON public.questions
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  );
 
 -- Remove both table-level and any inherited column-level browser grants.
 DO $$
@@ -785,7 +865,8 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.update_streak(UUID)
   FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.update_streak(UUID) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.is_admin()
+  FROM PUBLIC, anon, authenticated, service_role;
 
 DO $$
 DECLARE
@@ -862,9 +943,12 @@ BEGIN
     OR has_any_column_privilege('authenticated', 'public.profiles', 'REFERENCES')
     OR has_function_privilege('authenticated', 'public.update_streak(uuid)', 'EXECUTE')
     OR has_function_privilege('anon', 'public.update_streak(uuid)', 'EXECUTE')
-    OR NOT has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.is_admin()', 'EXECUTE')
   THEN
-    RAISE EXCEPTION 'privilege cutover postcondition failed';
+    RAISE EXCEPTION 'cutover helper execution postcondition failed';
   END IF;
 
   FOREACH v_allowed_column IN ARRAY ARRAY[
