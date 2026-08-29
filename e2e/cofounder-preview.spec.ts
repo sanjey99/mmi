@@ -4,6 +4,8 @@ const userId = '11111111-1111-4111-8111-111111111111';
 const questionId = '22222222-2222-4222-8222-222222222222';
 const sessionId = '33333333-3333-4333-8333-333333333333';
 const feedbackId = '44444444-4444-4444-8444-444444444444';
+const candidateStationSessionId = '66666666-6666-4666-8666-666666666666';
+const candidateStationId = 'MMI_001';
 const now = '2026-08-25T00:00:00.000Z';
 
 const user = {
@@ -73,6 +75,70 @@ const practiceSession = {
   completed: true,
 };
 
+type CandidateMmiProjection = Readonly<{
+  sessionId: string;
+  stationId: string;
+  serverNow: string;
+  phase: 'scenario' | 'response' | 'completed';
+  phaseStartedAt: string;
+  phaseEndsAt: string | null;
+  scenarioText?: string;
+  promptOrder?: 1 | 2 | 3 | 4 | 5;
+  promptText?: string;
+}>;
+
+const candidateScenarioProjection: CandidateMmiProjection = Object.freeze({
+  sessionId: candidateStationSessionId,
+  stationId: candidateStationId,
+  serverNow: '2026-08-26T00:00:59.500Z',
+  phase: 'scenario',
+  phaseStartedAt: '2026-08-26T00:00:00.000Z',
+  phaseEndsAt: '2026-08-26T00:01:00.000Z',
+  scenarioText: 'Synthetic candidate scenario.',
+});
+
+const candidateResponseProjections: Readonly<Record<1 | 2 | 3 | 4 | 5, CandidateMmiProjection>> = Object.freeze({
+  1: Object.freeze({
+    sessionId: candidateStationSessionId, stationId: candidateStationId,
+    serverNow: '2026-08-26T00:01:10.000Z', phase: 'response',
+    phaseStartedAt: '2026-08-26T00:01:00.000Z', phaseEndsAt: '2026-08-26T00:03:00.000Z',
+    promptOrder: 1, promptText: 'Synthetic prompt 1.',
+  }),
+  2: Object.freeze({
+    sessionId: candidateStationSessionId, stationId: candidateStationId,
+    serverNow: '2026-08-26T00:03:10.000Z', phase: 'response',
+    phaseStartedAt: '2026-08-26T00:03:00.000Z', phaseEndsAt: '2026-08-26T00:05:00.000Z',
+    promptOrder: 2, promptText: 'Synthetic prompt 2.',
+  }),
+  3: Object.freeze({
+    sessionId: candidateStationSessionId, stationId: candidateStationId,
+    serverNow: '2026-08-26T00:05:10.000Z', phase: 'response',
+    phaseStartedAt: '2026-08-26T00:05:00.000Z', phaseEndsAt: '2026-08-26T00:07:00.000Z',
+    promptOrder: 3, promptText: 'Synthetic prompt 3.',
+  }),
+  4: Object.freeze({
+    sessionId: candidateStationSessionId, stationId: candidateStationId,
+    serverNow: '2026-08-26T00:07:10.000Z', phase: 'response',
+    phaseStartedAt: '2026-08-26T00:07:00.000Z', phaseEndsAt: '2026-08-26T00:09:00.000Z',
+    promptOrder: 4, promptText: 'Synthetic prompt 4.',
+  }),
+  5: Object.freeze({
+    sessionId: candidateStationSessionId, stationId: candidateStationId,
+    serverNow: '2026-08-26T00:09:10.000Z', phase: 'response',
+    phaseStartedAt: '2026-08-26T00:09:00.000Z', phaseEndsAt: '2026-08-26T00:11:00.000Z',
+    promptOrder: 5, promptText: 'Synthetic prompt 5.',
+  }),
+});
+
+const candidateCompletedProjection: CandidateMmiProjection = Object.freeze({
+  sessionId: candidateStationSessionId,
+  stationId: candidateStationId,
+  serverNow: '2026-08-26T00:11:00.000Z',
+  phase: 'completed',
+  phaseStartedAt: '2026-08-26T00:11:00.000Z',
+  phaseEndsAt: null,
+});
+
 async function installSyntheticSession(page: Page) {
   await page.addInitScript(({ storedUser, expiry }) => {
     if (sessionStorage.getItem('sb-e2e-auth-token')) return;
@@ -124,6 +190,9 @@ async function installSupabaseMocks(page: Page) {
     if (url.pathname === '/rest/v1/profiles') {
       return json(activeUser.id === secondUser.id ? secondProfile : profile);
     }
+    if (url.pathname === '/rest/v1/app_config') {
+      return json({ key: 'normalized_mmi_station_enabled', value: 'false' });
+    }
 
     if (url.pathname === '/rest/v1/rpc/get_legacy_question_counts') {
       return json([
@@ -172,6 +241,44 @@ async function installSupabaseMocks(page: Page) {
   });
 }
 
+async function installCandidateMmiController(page: Page) {
+  let currentProjection: CandidateMmiProjection = candidateScenarioProjection;
+  let abandonCount = 0;
+  const rpcCalls: Array<'start' | 'get' | 'abandon'> = [];
+  const json = (body: unknown) => ({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  });
+
+  // Registered after the default route: Playwright's reverse matching gives
+  // this candidate-only controller precedence without widening the wildcard.
+  await page.route('https://e2e.supabase.co/rest/v1/app_config**', route => (
+    route.fulfill(json({ key: 'normalized_mmi_station_enabled', value: 'true' }))
+  ));
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/start_candidate_mmi_station_session', route => {
+    rpcCalls.push('start');
+    return route.fulfill(json(candidateScenarioProjection));
+  });
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_session', route => {
+    rpcCalls.push('get');
+    return route.fulfill(json(currentProjection));
+  });
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/abandon_candidate_mmi_station_session', route => {
+    rpcCalls.push('abandon');
+    abandonCount += 1;
+    return route.fulfill(json({}));
+  });
+
+  return Object.freeze({
+    selectScenario: () => { currentProjection = candidateScenarioProjection; },
+    selectResponse: (order: 1 | 2 | 3 | 4 | 5) => { currentProjection = candidateResponseProjections[order]; },
+    selectCompleted: () => { currentProjection = candidateCompletedProjection; },
+    abandonCount: () => abandonCount,
+    rpcCalls: () => [...rpcCalls],
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await installSyntheticSession(page);
   await installSupabaseMocks(page);
@@ -193,6 +300,84 @@ test('orientation keeps the next-station plate above its heading', async ({ page
   expect(stationPlateBox).not.toBeNull();
   expect(headingBox).not.toBeNull();
   expect(stationPlateBox!.y + stationPlateBox!.height).toBeLessThanOrEqual(headingBox!.y);
+});
+
+test('candidate-disabled fallback keeps the flat chooser and legacy session available', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('02 Practise').click();
+
+  await expect(page.getByText('Candidate station', { exact: true })).toHaveCount(0);
+  await page.getByText('Ethics', { exact: true }).click();
+  await page.getByText('Enter station', { exact: true }).click();
+  await expect(page).toHaveURL(/\/practice\/session/);
+  await expect(page.getByLabel('Your practice response')).toBeVisible();
+});
+
+test('candidate station follows only the current trusted prompt across timer expiry and re-entry', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  await page.goto('/');
+  await page.getByLabel('02 Practise').click();
+
+  await page.getByText('Candidate station', { exact: true }).click();
+  await page.getByText('Enter station', { exact: true }).click();
+  await expect(page).toHaveURL(/\/practice\/mmi-station\?sessionId=/);
+  await expect(page.getByText('60-second brief', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic candidate scenario.', { exact: true })).toBeVisible();
+  await expect(page.getByText(/CANDIDATE STATION · 0:0[01]/)).toBeVisible();
+
+  controller.selectResponse(1);
+  await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText('Response 1 · 120-second response', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+
+  controller.selectResponse(2);
+  await page.reload();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Response 2 · 120-second response', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('CANDIDATE STATION · 2:00', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/CANDIDATE STATION · 1:4[89]/)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible();
+  await expect(page.getByText('CANDIDATE STATION · 2:00', { exact: true })).toHaveCount(0);
+
+  controller.selectResponse(3);
+  await page.reload();
+  await expect(page.getByText('Synthetic prompt 3.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toHaveCount(0);
+
+  controller.selectResponse(4);
+  await page.reload();
+  await expect(page.getByText('Synthetic prompt 4.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 3.', { exact: true })).toHaveCount(0);
+
+  controller.selectResponse(5);
+  await page.reload();
+  await expect(page.getByText('Synthetic prompt 5.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 4.', { exact: true })).toHaveCount(0);
+
+  controller.selectCompleted();
+  await page.reload();
+  await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Synthetic prompt/)).toHaveCount(0);
+  expect(controller.rpcCalls()).toEqual(['start', 'get', 'get', 'get', 'get', 'get', 'get', 'get', 'get']);
+});
+
+test('candidate leave abandons exactly once from a current response and returns to practice', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectResponse(1);
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toBeVisible();
+  await page.getByText('Leave', { exact: true }).click();
+  await expect(page.getByText('Leave candidate station?', { exact: true })).toBeVisible();
+  await page.getByText('Leave station', { exact: true }).click();
+  await expect(page).toHaveURL(/\/practice$/);
+  expect(controller.abandonCount()).toBe(1);
+  expect(controller.rpcCalls()).toEqual(['get', 'abandon']);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
 });
 
 test('admin profile links directly to the Question Desk', async ({ page }) => {

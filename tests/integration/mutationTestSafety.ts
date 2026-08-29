@@ -27,3 +27,26 @@ export function requireLocalMutationTests(environment: MutationTestEnvironment):
     );
   }
 }
+
+export function canRunLocalProfileElevationTests(environment: MutationTestEnvironment): boolean {
+  if (!canRunLocalMutationTests(environment)) return false;
+  const dbUrl = environment.SUPABASE_TEST_DB_URL;
+  if (!dbUrl) return false;
+
+  try {
+    const parsed = new URL(dbUrl);
+    return (parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:')
+      && LOOPBACK_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function requireLocalProfileElevationTests(environment: MutationTestEnvironment): string {
+  if (!canRunLocalProfileElevationTests(environment) || !environment.SUPABASE_TEST_DB_URL) {
+    throw new Error(
+      'Local profile elevation prerequisites are missing or unsafe. Use the explicit mutation opt-in, loopback Supabase API credentials, and a loopback PostgreSQL URL.',
+    );
+  }
+  return environment.SUPABASE_TEST_DB_URL;
+}

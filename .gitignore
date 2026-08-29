@@ -25,6 +25,8 @@ node_modules
 # Private, local-only medical-interview prompt proof; converter and manifest remain trackable.
 /supabase/imports/20260825_med_interview_question_bank/questions-part-1.csv
 /supabase/imports/20260825_med_interview_question_bank/questions-part-2.csv
+/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-1.json
+/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-2.json
 
 # Environment variables — never commit real keys
 .env

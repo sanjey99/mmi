@@ -9,6 +9,8 @@ const importDirectory = path.resolve(
 const privateArtifactPaths = [
   '/supabase/imports/20260825_med_interview_question_bank/questions-part-1.csv',
   '/supabase/imports/20260825_med_interview_question_bank/questions-part-2.csv',
+  '/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-1.json',
+  '/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-2.json',
 ] as const;
 const expectedSourceHash = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 

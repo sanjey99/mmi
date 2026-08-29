@@ -1,0 +1,42 @@
+{
+  "artifact_version": 1,
+  "normalized_flow": {
+    "candidate_station_count": 155,
+    "candidate_sub_question_count": 775,
+    "missing_or_inconsistent_grouping": "reject",
+    "panel_question_count": 10,
+    "source_namespace": "med_interview_question_bank",
+    "stable_grouping_source": "workbook_station_id_and_sub_q_id",
+    "sub_question_orders": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "timing": {
+      "response_count": 5,
+      "response_seconds": 120,
+      "scenario_seconds": 60,
+      "total_seconds": 660
+    }
+  },
+  "private_artifacts": {
+    "normalized-stations-part-1.json": {
+      "canonical_jsonb_payload_sha256": "83164f9cbac54447edd13e023b5d83ace389d5bc0d82629e525ae3ad680c1f3a",
+      "sha256": "cf1ddfacf222b520f7237257e266009cff5f90db4e9c6fefb7bdc18e8f1f2c2e",
+      "station_count": 80,
+      "sub_question_count": 400
+    },
+    "normalized-stations-part-2.json": {
+      "canonical_jsonb_payload_sha256": "fd91a790ac99e6fb87facb1f121abd54d407abe7c7f6315c379cb966230e2cf0",
+      "sha256": "2ff3c3ca74131b4987c0b3efb09aafc521fb7c507daf94e3abd71ccc7e6c708e",
+      "station_count": 75,
+      "sub_question_count": 375
+    }
+  },
+  "source": {
+    "basename": "med_interview_question_bank.xlsx",
+    "sha256": "903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71"
+  }
+}

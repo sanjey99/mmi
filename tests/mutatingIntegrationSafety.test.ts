@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  canRunLocalProfileElevationTests,
   canRunLocalMutationTests,
+  requireLocalProfileElevationTests,
   requireLocalMutationTests,
 } from './integration/mutationTestSafety';
 
@@ -44,6 +46,30 @@ describe('credential-gated mutation test safety', () => {
     })).toThrow(/local mutation integration prerequisites/i);
   });
 
+  it('requires a loopback PostgreSQL URL before local profile elevation can run', () => {
+    const localApiEnvironment = {
+      SUPABASE_TEST_URL: 'http://127.0.0.1:54321',
+      SUPABASE_TEST_ANON_KEY: 'anon',
+      SUPABASE_TEST_SERVICE_ROLE_KEY: 'service',
+      SUPABASE_LOCAL_MUTATION_TESTS: 'I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA',
+    };
+
+    expect(canRunLocalProfileElevationTests(localApiEnvironment)).toBe(false);
+    expect(canRunLocalProfileElevationTests({
+      ...localApiEnvironment,
+      SUPABASE_TEST_DB_URL: 'postgresql://postgres:postgres@shared.example.test:5432/postgres',
+    })).toBe(false);
+    expect(canRunLocalProfileElevationTests({
+      ...localApiEnvironment,
+      SUPABASE_TEST_DB_URL: 'http://127.0.0.1:54322/postgres',
+    })).toBe(false);
+    expect(canRunLocalProfileElevationTests({
+      ...localApiEnvironment,
+      SUPABASE_TEST_DB_URL: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+    })).toBe(true);
+    expect(() => requireLocalProfileElevationTests(localApiEnvironment)).toThrow(/local profile elevation prerequisites/i);
+  });
+
   it('excludes every mutating integration path from default package scripts', async () => {
     const packageJson = JSON.parse(
       await readFile(join(process.cwd(), 'package.json'), 'utf8'),
@@ -53,5 +79,8 @@ describe('credential-gated mutation test safety', () => {
     expect(packageJson.scripts['test:coverage']).not.toContain('tests/integration');
     expect(packageJson.scripts['test:integration:mutating']).toContain('vitest.mutation.config.mts');
     expect(packageJson.scripts['test:integration:mutating']).toContain('tests/integration/mmi*.integration.test.ts');
+
+    const mutationConfig = await readFile(join(process.cwd(), 'vitest.mutation.config.mts'), 'utf8');
+    expect(mutationConfig).toContain("'tests/integration/candidateMmiStation.integration.test.ts'");
   });
 });

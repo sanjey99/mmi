@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { canRunLocalMutationTests } from './mutationTestSafety';
+import { elevateLocalProfileToAdmin } from './localDatabaseFixture';
+import { canRunLocalProfileElevationTests } from './mutationTestSafety';
 
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
-const enabled = canRunLocalMutationTests(process.env);
+const enabled = canRunLocalProfileElevationTests(process.env);
 
 type TestUser = { id: string; client: SupabaseClient; accessToken: string };
 
@@ -26,12 +27,7 @@ async function createUser(isAdmin: boolean): Promise<TestUser> {
   });
   if (error || !data.user) throw error ?? new Error('Unable to create test user');
 
-  const { error: profileError } = await service.from('profiles').upsert({
-    id: data.user.id,
-    full_name: 'Integration Test',
-    is_admin: isAdmin,
-  });
-  if (profileError) throw profileError;
+  if (isAdmin) await elevateLocalProfileToAdmin(data.user.id);
 
   const client = createClient(url!, anonKey!, { auth: { persistSession: false } });
   const { data: signIn, error: signInError } = await client.auth.signInWithPassword({ email, password });
