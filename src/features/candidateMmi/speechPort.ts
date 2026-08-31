@@ -56,6 +56,10 @@ function stopRecognition(recognition: CandidateMmiSpeechRecognitionInstance, abo
   if (abort && recognition.abort) recognition.abort(); else recognition.stop();
 }
 
+function cleanupRecognition(recognition: CandidateMmiSpeechRecognitionInstance, abort: boolean): void {
+  try { stopRecognition(recognition, abort); } catch { /* Native cleanup cannot reopen a settled lifecycle. */ }
+}
+
 export function createBrowserSpeechPort(constructors: SpeechConstructors): CandidateMmiSpeechPort {
   const selectedRecognition = constructors.SpeechRecognition
     ? { constructor: constructors.SpeechRecognition, implementation: 'speech_recognition' as const }
@@ -129,9 +133,10 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
     getCapability: (): CandidateMmiSpeechCapability => capability,
     start: async (input: SpeechStartInput) => {
       if (activeResponse) {
+        const previousRecognition = activeResponse.recognition;
         generation += 1;
-        stopRecognition(activeResponse.recognition, true);
         activeResponse = null;
+        cleanupRecognition(previousRecognition, true);
       }
       launch(input);
     },
@@ -140,7 +145,7 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
       const recognition = activeResponse.recognition;
       generation += 1;
       activeResponse = null;
-      stopRecognition(recognition, false);
+      cleanupRecognition(recognition, false);
     },
     preflight: async ({ onStatus }: Readonly<{ onStatus: (status: CandidateMmiSpeechStatus) => void }>) => {
       if (!Recognition) {
@@ -157,7 +162,7 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
           if (preflight?.generation !== current.generation) return;
           generation += 1;
           preflight = null;
-          try { stopRecognition(recognition, abort); } catch { /* Cleanup must not prevent settlement. */ }
+          cleanupRecognition(recognition, abort);
           try { onStatus(status); } catch { /* Consumer callback errors must not leave preflight pending. */ }
           resolve(status);
           },
@@ -175,7 +180,7 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
       generation += 1;
       activeResponse = null;
       pendingPreflight?.settle('idle', true);
-      if (responseRecognition) stopRecognition(responseRecognition, true);
+      if (responseRecognition) cleanupRecognition(responseRecognition, true);
     },
   });
 }

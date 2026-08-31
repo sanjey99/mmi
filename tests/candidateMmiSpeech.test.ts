@@ -310,6 +310,62 @@ describe('candidate MMI browser speech port', () => {
     expect(finals).toEqual([]);
   });
 
+  it('replaces a response after its native abort throws and ignores stale response callbacks', async () => {
+    const instances: FakeRecognition[] = [];
+    const firstFinals: string[] = [];
+    const secondFinals: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+
+    await port.start({ responseIdentity: responseOne, onFinalFragment: value => firstFinals.push(value), onInterimText: vi.fn(), onStatus: vi.fn() });
+    const first = instances[0]!;
+    first.abort.mockImplementation(() => { throw new Error('InvalidStateError'); });
+
+    await expect(port.start({ responseIdentity: responseTwo, onFinalFragment: value => secondFinals.push(value), onInterimText: vi.fn(), onStatus: vi.fn() })).resolves.toBeUndefined();
+    first.emitResult({ isFinal: true, transcript: 'stale first response' });
+    instances[1]!.emitResult({ isFinal: true, transcript: 'active second response' });
+
+    expect(first.abort).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(2);
+    expect(firstFinals).toEqual([]);
+    expect(secondFinals).toEqual(['active second response']);
+  });
+
+  it('invalidates callbacks and resolves an explicit stop when native stop throws', async () => {
+    const instances: FakeRecognition[] = [];
+    const finals: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+
+    await port.start({ responseIdentity: responseOne, onFinalFragment: value => finals.push(value), onInterimText: vi.fn(), onStatus: vi.fn() });
+    const recognition = instances[0]!;
+    recognition.stop.mockImplementation(() => { throw new Error('InvalidStateError'); });
+
+    await expect(port.stop({ responseIdentity: responseOne })).resolves.toBeUndefined();
+    recognition.emitResult({ isFinal: true, transcript: 'late after stop' });
+    recognition.onend?.();
+
+    expect(recognition.stop).toHaveBeenCalledOnce();
+    expect(finals).toEqual([]);
+    expect(instances).toHaveLength(1);
+  });
+
+  it('invalidates callbacks and resolves abort when native abort throws', async () => {
+    const instances: FakeRecognition[] = [];
+    const finals: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+
+    await port.start({ responseIdentity: responseOne, onFinalFragment: value => finals.push(value), onInterimText: vi.fn(), onStatus: vi.fn() });
+    const recognition = instances[0]!;
+    recognition.abort.mockImplementation(() => { throw new Error('InvalidStateError'); });
+
+    await expect(port.abort()).resolves.toBeUndefined();
+    recognition.emitResult({ isFinal: true, transcript: 'late after abort' });
+    recognition.onend?.();
+
+    expect(recognition.abort).toHaveBeenCalledOnce();
+    expect(finals).toEqual([]);
+    expect(instances).toHaveLength(1);
+  });
+
   it('maps fatal recognition errors to manual-fallback statuses and treats no-speech as restartable', async () => {
     const instances: FakeRecognition[] = [];
     const statuses: string[] = [];
