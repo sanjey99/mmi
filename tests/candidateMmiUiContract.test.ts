@@ -61,13 +61,69 @@ describe('candidate MMI chooser and station route contract', () => {
     expect(routeSource).not.toMatch(/futurePrompts|promptText[s]?\s*\.map|subQuestions|questionText[s]?\s*\.map/i);
   });
 
-  it('contains no typed-answer, capture, scoring, or storage surface and supports terminal leave behavior', () => {
+  it('offers a no-timer microphone preflight before a new station starts', () => {
+    const routeSource = readCandidateStationRoute();
+
+    expect(routeSource).toMatch(/Test microphone/);
+    expect(routeSource).toMatch(/Start station/);
+    expect(routeSource).toMatch(/Browser speech service/);
+    expect(routeSource).toMatch(/does not record or store\s+audio/i);
+    expect(routeSource).toMatch(/transcript is saved/i);
+    expect(routeSource).toMatch(/startStation/);
+    expect(routeSource).toMatch(/speechPort\(\)\.preflight/);
+  });
+
+  it('composes editable browser speech with checkpointing and deadline freeze', () => {
+    const routeSource = readCandidateStationRoute();
+
+    expect(routeSource).toMatch(/TextInput/);
+    expect(routeSource).toMatch(/accessibilityLabel="Your response transcript"/);
+    expect(routeSource).toMatch(/CANDIDATE_MMI_TRANSCRIPT_MAX_CODE_POINTS/);
+    expect(routeSource).toMatch(/createBrowserSpeechPort/);
+    expect(routeSource).toMatch(/createTranscriptState/);
+    expect(routeSource).toMatch(/reduceTranscript/);
+    expect(routeSource).toMatch(/Resume microphone/);
+    expect(routeSource).toMatch(/Manual typing remains available/);
+    expect(routeSource).toMatch(/runner\(\)[\s\S]*?\.checkpoint/);
+    expect(routeSource).toMatch(/2_000/);
+    expect(routeSource).toMatch(/visibilitychange/);
+    expect(routeSource).toMatch(/pagehide/);
+    expect(routeSource).toMatch(/type: 'freeze'/);
+    expect(routeSource).toMatch(/(?:speechPort\(\)|currentSpeechPort)\.stop/);
+  });
+
+  it('uses retry-stable finalization identities and transcript-free finalization calls', () => {
+    const routeSource = readCandidateStationRoute();
+
+    expect(routeSource).toMatch(/sessionStorage/);
+    expect(routeSource).toMatch(/candidate-mmi-finalization:/);
+    expect(routeSource).toMatch(/crypto/);
+    expect(routeSource).toMatch(/randomUUID/);
+    expect(routeSource).toMatch(/expireCurrentPhase\(finalizationKey/);
+    expect(routeSource).not.toMatch(/expireCurrentPhase\([^)]*transcript/);
+  });
+
+  it('scores asynchronously and renders ordered transcript-only feedback after completion', () => {
+    const routeSource = readCandidateStationRoute();
+
+    expect(routeSource).toMatch(/createCandidateMmiScoringApi/);
+    expect(routeSource).toMatch(/scoreCandidateResponse/);
+    expect(routeSource).toMatch(/\.feedback\(/);
+    expect(routeSource).toMatch(/3_000/);
+    expect(routeSource).toMatch(/60_000/);
+    expect(routeSource).toMatch(/Overall score/);
+    expect(routeSource).toMatch(/Improvement tip/);
+    expect(routeSource).toMatch(/Transcript-only feedback/);
+    expect(routeSource).not.toMatch(/accent evaluation|speaking pace|eye contact|body language/i);
+  });
+
+  it('contains no browser media capture or audio persistence surface and supports terminal leave behavior', () => {
     const routeSource = readCandidateStationRoute();
 
     expect(routeSource).toMatch(/completed/);
     expect(routeSource).toMatch(/abandoned/);
     expect(routeSource).toMatch(/runner\(\)\.leave\(\)/);
-    expect(routeSource).not.toMatch(/TextInput|typed answer|MediaRecorder|camera|storage|upload|score|scoring|rubric|model answer/i);
+    expect(routeSource).not.toMatch(/MediaRecorder|camera|video|Blob|audioUrl|storage\.from|upload\(/i);
   });
 
   it('keeps browser-speech transcript persistence private, RPC-only, and free of media storage', () => {

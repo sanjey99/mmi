@@ -85,6 +85,9 @@ type CandidateMmiProjection = Readonly<{
   scenarioText?: string;
   promptOrder?: 1 | 2 | 3 | 4 | 5;
   promptText?: string;
+  draftTranscript?: string;
+  draftRevision?: number;
+  responseStatus?: 'open';
 }>;
 
 const candidateScenarioProjection: CandidateMmiProjection = Object.freeze({
@@ -103,30 +106,35 @@ const candidateResponseProjections: Readonly<Record<1 | 2 | 3 | 4 | 5, Candidate
     serverNow: '2026-08-26T00:01:10.000Z', phase: 'response',
     phaseStartedAt: '2026-08-26T00:01:00.000Z', phaseEndsAt: '2026-08-26T00:03:00.000Z',
     promptOrder: 1, promptText: 'Synthetic prompt 1.',
+    draftTranscript: '', draftRevision: 0, responseStatus: 'open',
   }),
   2: Object.freeze({
     sessionId: candidateStationSessionId, stationId: candidateStationId,
     serverNow: '2026-08-26T00:03:10.000Z', phase: 'response',
     phaseStartedAt: '2026-08-26T00:03:00.000Z', phaseEndsAt: '2026-08-26T00:05:00.000Z',
     promptOrder: 2, promptText: 'Synthetic prompt 2.',
+    draftTranscript: '', draftRevision: 0, responseStatus: 'open',
   }),
   3: Object.freeze({
     sessionId: candidateStationSessionId, stationId: candidateStationId,
     serverNow: '2026-08-26T00:05:10.000Z', phase: 'response',
     phaseStartedAt: '2026-08-26T00:05:00.000Z', phaseEndsAt: '2026-08-26T00:07:00.000Z',
     promptOrder: 3, promptText: 'Synthetic prompt 3.',
+    draftTranscript: '', draftRevision: 0, responseStatus: 'open',
   }),
   4: Object.freeze({
     sessionId: candidateStationSessionId, stationId: candidateStationId,
     serverNow: '2026-08-26T00:07:10.000Z', phase: 'response',
     phaseStartedAt: '2026-08-26T00:07:00.000Z', phaseEndsAt: '2026-08-26T00:09:00.000Z',
     promptOrder: 4, promptText: 'Synthetic prompt 4.',
+    draftTranscript: '', draftRevision: 0, responseStatus: 'open',
   }),
   5: Object.freeze({
     sessionId: candidateStationSessionId, stationId: candidateStationId,
     serverNow: '2026-08-26T00:09:10.000Z', phase: 'response',
     phaseStartedAt: '2026-08-26T00:09:00.000Z', phaseEndsAt: '2026-08-26T00:11:00.000Z',
     promptOrder: 5, promptText: 'Synthetic prompt 5.',
+    draftTranscript: '', draftRevision: 0, responseStatus: 'open',
   }),
 });
 
@@ -151,6 +159,68 @@ async function installSyntheticSession(page: Page) {
       user: storedUser,
     }));
   }, { storedUser: user, expiry: Math.floor(Date.now() / 1000) + 3600 });
+}
+
+async function installSyntheticSpeechRecognition(page: Page) {
+  await page.addInitScript(() => {
+    type ResultHandler = (event: {
+      resultIndex: number;
+      results: Array<{ isFinal: boolean; 0: { transcript: string } }>;
+    }) => void;
+    type ErrorHandler = (event: { error: string }) => void;
+    let active: SyntheticSpeechRecognition | null = null;
+    let startCount = 0;
+    let stopCount = 0;
+
+    class SyntheticSpeechRecognition {
+      lang = '';
+      continuous = false;
+      interimResults = false;
+      onstart: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: ErrorHandler | null = null;
+      onresult: ResultHandler | null = null;
+
+      start() {
+        active = this;
+        startCount += 1;
+        queueMicrotask(() => this.onstart?.());
+      }
+
+      stop() {
+        if (active === this) active = null;
+        stopCount += 1;
+        queueMicrotask(() => this.onend?.());
+      }
+
+      abort() {
+        this.stop();
+      }
+    }
+
+    const emit = (text: string, isFinal: boolean) => {
+      active?.onresult?.({
+        resultIndex: 0,
+        results: [{ isFinal, 0: { transcript: text } }],
+      });
+    };
+    const harness = Object.freeze({
+      emitFinal: (text: string) => emit(text, true),
+      emitInterim: (text: string) => emit(text, false),
+      deny: () => active?.onerror?.({ error: 'not-allowed' }),
+      end: () => {
+        const ending = active;
+        active = null;
+        ending?.onend?.();
+      },
+      counts: () => ({ startCount, stopCount }),
+    });
+    Object.assign(window, {
+      SpeechRecognition: SyntheticSpeechRecognition,
+      webkitSpeechRecognition: undefined,
+      __candidateMmiSpeech: harness,
+    });
+  });
 }
 
 async function installSupabaseMocks(page: Page) {
@@ -243,13 +313,45 @@ async function installSupabaseMocks(page: Page) {
 
 async function installCandidateMmiController(page: Page) {
   let currentProjection: CandidateMmiProjection = candidateScenarioProjection;
+  let nextAfterFinalization: CandidateMmiProjection = candidateResponseProjections[2];
   let abandonCount = 0;
-  const rpcCalls: Array<'start' | 'get' | 'abandon'> = [];
+  const rpcCalls: string[] = [];
+  const checkpoints: Array<Record<string, unknown>> = [];
+  const finalizations: Array<Record<string, unknown>> = [];
+  const scoringRequests: Array<Record<string, unknown>> = [];
   const json = (body: unknown) => ({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify(body),
   });
+  const dimension = Object.freeze({
+    score: 4,
+    applicable: true,
+    evidence: 'The response identified the immediate priority.',
+    improvement: 'Make the escalation threshold more explicit.',
+  });
+  const assessment = Object.freeze({
+    dimensions: Object.freeze({
+      structure: dimension,
+      ethics: dimension,
+      communication: dimension,
+      reflection: dimension,
+      nhs_awareness: dimension,
+    }),
+    overallPct: 80,
+    strengths: ['Clear prioritisation and a safe first action.'],
+    improvements: ['State when senior support is required.'],
+    improvementTip: 'Name the escalation trigger before closing your response.',
+    rubricVersion: 1,
+  });
+  const feedback = Object.freeze([
+    Object.freeze({ promptOrder: 1, status: 'scored', assessment }),
+    ...([2, 3, 4, 5] as const).map(promptOrder => Object.freeze({
+      promptOrder,
+      status: 'no_response',
+      assessment: null,
+    })),
+  ]);
 
   // Registered after the default route: Playwright's reverse matching gives
   // this candidate-only controller precedence without widening the wildcard.
@@ -264,23 +366,87 @@ async function installCandidateMmiController(page: Page) {
     rpcCalls.push('get');
     return route.fulfill(json(currentProjection));
   });
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/checkpoint_candidate_mmi_station_response', route => {
+    rpcCalls.push('checkpoint');
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    checkpoints.push(body);
+    if (currentProjection.phase === 'response') {
+      currentProjection = Object.freeze({
+        ...currentProjection,
+        draftTranscript: body.p_transcript as string,
+        draftRevision: body.p_client_revision as number,
+      });
+    }
+    return route.fulfill(json({
+      sessionId: body.p_session_id,
+      promptOrder: body.p_prompt_order,
+      draftRevision: body.p_client_revision,
+      acceptedAt: '2026-08-26T00:01:30.000Z',
+    }));
+  });
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/finalize_candidate_mmi_station_response', route => {
+    rpcCalls.push('finalize');
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    finalizations.push(body);
+    const responseState = currentProjection.draftTranscript?.trim() ? 'response' : 'no_response';
+    const result = {
+      sessionId: body.p_session_id,
+      promptOrder: body.p_prompt_order,
+      responseState,
+      finalizedAt: '2026-08-26T00:03:00.000Z',
+      scoringStatus: responseState === 'response' ? 'pending' : 'no_response',
+    };
+    currentProjection = nextAfterFinalization;
+    return route.fulfill(json(result));
+  });
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_feedback', route => {
+    rpcCalls.push('feedback');
+    return route.fulfill(json(feedback));
+  });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/abandon_candidate_mmi_station_session', route => {
     rpcCalls.push('abandon');
     abandonCount += 1;
     return route.fulfill(json({}));
   });
+  await page.route('https://e2e.supabase.co/functions/v1/score-candidate-mmi-response', route => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    scoringRequests.push(body);
+    return route.fulfill(json({ status: 'scored', assessment }));
+  });
 
   return Object.freeze({
     selectScenario: () => { currentProjection = candidateScenarioProjection; },
-    selectResponse: (order: 1 | 2 | 3 | 4 | 5) => { currentProjection = candidateResponseProjections[order]; },
+    selectResponse: (order: 1 | 2 | 3 | 4 | 5, draftTranscript = '', draftRevision = 0) => {
+      currentProjection = Object.freeze({
+        ...candidateResponseProjections[order],
+        draftTranscript,
+        draftRevision,
+      });
+    },
+    selectExpiringResponse: (order: 1 | 2 | 3 | 4 | 5, draftTranscript: string) => {
+      const projection = candidateResponseProjections[order];
+      currentProjection = Object.freeze({
+        ...projection,
+        serverNow: new Date(Date.parse(projection.phaseEndsAt!) - 3_500).toISOString(),
+        draftTranscript,
+        draftRevision: draftTranscript ? 1 : 0,
+      });
+    },
+    advanceTo: (nextProjection: CandidateMmiProjection) => {
+      nextAfterFinalization = nextProjection;
+    },
     selectCompleted: () => { currentProjection = candidateCompletedProjection; },
     abandonCount: () => abandonCount,
     rpcCalls: () => [...rpcCalls],
+    checkpoints: () => [...checkpoints],
+    finalizations: () => [...finalizations],
+    scoringRequests: () => [...scoringRequests],
   });
 }
 
 test.beforeEach(async ({ page }) => {
   await installSyntheticSession(page);
+  await installSyntheticSpeechRecognition(page);
   await installSupabaseMocks(page);
 });
 
@@ -320,28 +486,37 @@ test('candidate station follows only the current trusted prompt across timer exp
 
   await page.getByText('Candidate station', { exact: true }).click();
   await page.getByText('Enter station', { exact: true }).click();
+  await expect(page).toHaveURL(/\/practice\/mmi-station$/);
+  await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
+  await expect(page.getByLabel(/seconds remaining/)).toHaveCount(0);
+  expect(controller.rpcCalls()).toEqual([]);
+
+  await page.getByText('Test microphone', { exact: true }).click();
+  await expect(page.getByText(/Microphone ready/)).toBeVisible();
+  expect(controller.rpcCalls()).toEqual([]);
+  await page.getByText('Start station', { exact: true }).click();
   await expect(page).toHaveURL(/\/practice\/mmi-station\?sessionId=/);
   await expect(page.getByText('60-second brief', { exact: true })).toBeVisible();
   await expect(page.getByText('Synthetic candidate scenario.', { exact: true })).toBeVisible();
-  await expect(page.getByText(/CANDIDATE STATION · 0:0[01]/)).toBeVisible();
+  await expect(page.getByText(/0:0[01]/)).toBeVisible();
 
   controller.selectResponse(1);
   await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByText('Response 1 · 120-second response', { exact: true })).toBeVisible();
   await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Your response transcript' })).toBeVisible();
 
   controller.selectResponse(2);
   await page.reload();
   await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible();
   await expect(page.getByText('Response 2 · 120-second response', { exact: true })).toBeVisible();
   await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('CANDIDATE STATION · 2:00', { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/CANDIDATE STATION · 1:4[89]/)).toBeVisible();
+  await expect(page.getByText('2:00', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/1:4[89]/)).toBeVisible();
 
   await page.reload();
   await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible();
-  await expect(page.getByText('CANDIDATE STATION · 2:00', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('2:00', { exact: true })).toHaveCount(0);
 
   controller.selectResponse(3);
   await page.reload();
@@ -362,7 +537,128 @@ test('candidate station follows only the current trusted prompt across timer exp
   await page.reload();
   await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
   await expect(page.getByText(/Synthetic prompt/)).toHaveCount(0);
-  expect(controller.rpcCalls()).toEqual(['start', 'get', 'get', 'get', 'get', 'get', 'get', 'get', 'get']);
+  expect(controller.rpcCalls().filter(call => call === 'start' || call === 'get'))
+    .toEqual(['start', 'get', 'get', 'get', 'get', 'get', 'get', 'get', 'get']);
+});
+
+test('candidate speech stays editable, checkpoints text, restarts safely, and restores paused', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectResponse(1, 'Restored opening', 2);
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  const transcript = page.getByRole('textbox', { name: 'Your response transcript' });
+  await expect(transcript).toHaveValue('Restored opening');
+  await expect(page.getByText(/Microphone paused/)).toBeVisible();
+  await page.getByText('Resume microphone', { exact: true }).click();
+  await expect(page.getByText(/Listening/)).toBeVisible();
+
+  await page.evaluate(() => {
+    (window as unknown as {
+      __candidateMmiSpeech: { emitInterim: (text: string) => void };
+    }).__candidateMmiSpeech.emitInterim('working thought');
+  });
+  await expect(page.getByText('Hearing: working thought', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as {
+      __candidateMmiSpeech: { emitFinal: (text: string) => void };
+    }).__candidateMmiSpeech.emitFinal('spoken conclusion');
+  });
+  await expect(transcript).toHaveValue('Restored opening spoken conclusion');
+
+  const startsBeforeEnd = await page.evaluate(() => (
+    (window as unknown as {
+      __candidateMmiSpeech: { counts: () => { startCount: number } };
+    }).__candidateMmiSpeech.counts().startCount
+  ));
+  await page.evaluate(() => {
+    (window as unknown as {
+      __candidateMmiSpeech: { end: () => void };
+    }).__candidateMmiSpeech.end();
+  });
+  await expect.poll(async () => page.evaluate(() => (
+    (window as unknown as {
+      __candidateMmiSpeech: { counts: () => { startCount: number } };
+    }).__candidateMmiSpeech.counts().startCount
+  ))).toBe(startsBeforeEnd + 1);
+
+  await transcript.fill('Manually corrected response');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(() => controller.checkpoints().length).toBe(1);
+  expect(controller.checkpoints()[0]).toMatchObject({
+    p_session_id: candidateStationSessionId,
+    p_prompt_order: 1,
+    p_transcript: 'Manually corrected response',
+    p_client_revision: 3,
+  });
+
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Your response transcript' }))
+    .toHaveValue('Manually corrected response');
+  await expect(page.getByText(/Microphone paused/)).toBeVisible();
+  await page.getByText('Resume microphone', { exact: true }).click();
+  await page.evaluate(() => {
+    (window as unknown as {
+      __candidateMmiSpeech: { deny: () => void };
+    }).__candidateMmiSpeech.deny();
+  });
+  await expect(page.getByText(/permission was denied/)).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Your response transcript' })).toBeEditable();
+});
+
+test('candidate deadline stops speech and finalizes without transcript or media', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectExpiringResponse(1, '');
+  controller.advanceTo(candidateResponseProjections[2]);
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  await page.getByRole('textbox', { name: 'Your response transcript' })
+    .fill('Last-seconds response');
+  await page.getByText('Resume microphone', { exact: true }).click();
+  await expect(page.getByText(/Listening/)).toBeVisible();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect.poll(() => controller.checkpoints().length).toBe(1);
+  expect(controller.checkpoints()[0]).toMatchObject({
+    p_transcript: 'Last-seconds response',
+  });
+  await expect.poll(() => controller.finalizations().length).toBe(1);
+  expect(Object.keys(controller.finalizations()[0]).sort()).toEqual([
+    'p_finalization_key',
+    'p_prompt_order',
+    'p_session_id',
+  ]);
+  expect(controller.finalizations()[0]).toMatchObject({
+    p_session_id: candidateStationSessionId,
+    p_prompt_order: 1,
+  });
+  await expect.poll(() => controller.scoringRequests().length).toBe(1);
+  expect(controller.scoringRequests()[0]).toEqual({
+    sessionId: candidateStationSessionId,
+    promptOrder: 1,
+  });
+  const nativeStops = await page.evaluate(() => (
+    (window as unknown as {
+      __candidateMmiSpeech: { counts: () => { stopCount: number } };
+    }).__candidateMmiSpeech.counts().stopCount
+  ));
+  expect(nativeStops).toBeGreaterThanOrEqual(1);
+});
+
+test('candidate completion renders five ordered transcript-only feedback results', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectCompleted();
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
+  await expect(page.getByText('Overall score · 80%', { exact: true })).toBeVisible();
+  await expect(page.getByText('Improvement tip', { exact: true })).toBeVisible();
+  const responseCards = page.getByText(/^Response [1-5]$/);
+  await expect(responseCards).toHaveCount(5);
+  const firstBox = await responseCards.nth(0).boundingBox();
+  const lastBox = await responseCards.nth(4).boundingBox();
+  expect(firstBox).not.toBeNull();
+  expect(lastBox).not.toBeNull();
+  expect(firstBox!.y).toBeLessThan(lastBox!.y);
+  expect(controller.rpcCalls()).toContain('feedback');
 });
 
 test('candidate leave abandons exactly once from a current response and returns to practice', async ({ page }) => {
