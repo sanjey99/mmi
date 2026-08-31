@@ -172,7 +172,7 @@ No tracked CI workflow or analytics integration exists at this checkpoint. Neith
 
 ## Phase 4 MMI roadmap
 
-The planned automated voice/webcam cofounder experience is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). It is not implemented, deployed, or authorized here; this roadmap retains the current transcript-only contract and does not restore a standard typed-answer box.
+The candidate browser-speech station is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). Its transcript-only implementation is present on `feat/cofounder-ui-reliability`, but it is not hosted, feature-enabled, or authorized for cofounder viewing. Browser speech is optional and the editable typed/dictation path is the required baseline. Webcam capture and webcam-derived assessment are a separate next workstream and are not part of this release contract.
 
 ### Completed locally and merged
 
@@ -188,11 +188,11 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 ### Remaining before Phase 4 can be exposed
 
 7. Idempotent rubric-driven scoring and atomic progression.
-8. Provider-isolated transcription and ephemeral recording validation for the retained transcript-only contract; automated-media work follows the separately gated pre-cofounder specification.
+8. Browser/platform speech-processing disclosure and raw-audio non-retention validation for the optional speech-to-text path; webcam or other automated-media work follows a separate future specification.
 9. Typed station-library data layer and filters.
 10. Dedicated MMI client state engine.
 11. Student station library replacing the hidden Questions placeholder.
-12. Retained transcript-review flow and accessibility accommodations; the planned voice/webcam station experience follows the separately gated pre-cofounder specification.
+12. Retained editable-transcript review with typing/dictation fallback and accessibility accommodations; webcam work follows its own future approval gates.
 13. Immediate feedback, explicit sole forward progression, deterministic summary, and single-turn role-play.
 14. Separate completed MMI history in Progress without changing legacy aggregates.
 15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
