@@ -15,7 +15,7 @@
 
 ## Current checkpoint — 25–26 August 2026
 
-- The import-idempotency database capability and all 785 active candidate-visible workbook rows are hosted, while its client workflow remains local on `feat/cofounder-ui-reliability` and is not deployed to Vercel. During this current phase, the separately approved `040`, `050`, exact part-1/part-2 workbook RPC imports, and exact publication transaction were applied as recorded below; every next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain separately approval-gated and forward-only. This is not overall hosted deployment/readiness completion.
+- The import-idempotency database capability and all 785 active candidate-visible workbook rows are hosted. Its client workflow is present only in protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`, not the stable alias. During this current phase, the separately approved `040`, `050`, exact part-1/part-2 workbook RPC imports, and exact publication transaction were applied as recorded below; every next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain separately approval-gated and forward-only. This is not overall hosted deployment/readiness completion.
 - Earlier separately approved operations applied the hosted-only reconciliation, additive migrations `20260825000000`, `20260825001000`, and `20260825002000`, final cutover `20260825004000`, import-capability migration `20260825005000`, and both workbook imports on 26 August 2026; `score-answer` is v4 ACTIVE and `manage-ai-key` remains v3. The stable Vercel production alias is live at `https://mmi-hazel.vercel.app` from commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; it does not include the client import workflow.
 - Latest local preview verification passes: 35 Node tests; 213 Vitest tests; Node coverage 98.52% lines, 84.63% branches, 98.82% functions; Vitest coverage 95.95% lines, 87.24% branches, 97.27% functions; TypeScript including the Edge handler; Expo web export; and 4/4 fully intercepted local Playwright tests, including station-overlap geometry and Profile → `/admin/questions` direct routing.
 - Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
@@ -172,7 +172,7 @@ No tracked CI workflow or analytics integration exists at this checkpoint. Neith
 
 ## Phase 4 MMI roadmap
 
-The candidate browser-speech station is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). Its transcript-only implementation is present on `feat/cofounder-ui-reliability`, but it is not hosted, feature-enabled, or authorized for cofounder viewing. Browser speech is optional and the editable typed/dictation path is the required baseline. Webcam capture and webcam-derived assessment are a separate next workstream and are not part of this release contract.
+The candidate browser-speech station is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). Its transcript-only client implementation is hosted only as the protected exact-SHA Vercel Preview recorded below; its candidate Supabase backend is not deployed, it is not feature-enabled, and it is not authorized for cofounder viewing. Browser speech is optional and the editable typed/dictation path is the required baseline. Webcam capture and webcam-derived assessment are a separate next workstream and are not part of this release contract.
 
 ### Completed locally and merged
 
@@ -197,9 +197,9 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 14. Separate completed MMI history in Progress without changing legacy aggregates.
 15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
 
-### Candidate browser-speech station release gate — local evidence only
+### Candidate browser-speech station release gate — local backend evidence; protected client preview
 
-The 11-minute candidate station is implemented locally on `feat/cofounder-ui-reliability`; it is not hosted, deployed, or feature-enabled by this work. Browser speech recognition is an optional enhancement only when the runtime capability probe succeeds. Manual typing, including operating-system/browser dictation through the editable field, is the required compatibility baseline everywhere.
+The 11-minute candidate station at exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` is deployed only as protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. Its candidate Supabase migrations, scoring function, hosted configuration, and feature flag are not deployed or enabled. Browser speech recognition is an optional enhancement only when the runtime capability probe succeeds. Manual typing, including operating-system/browser dictation through the editable field, is the required compatibility baseline everywhere.
 
 | Browser/runtime | Speech enhancement gate | Required baseline |
 | --- | --- | --- |
@@ -242,7 +242,8 @@ Approval-gated deployment status:
 - [ ] Verify the hosted normalized import/finalization contains exactly 155 candidate stations and 775 ordered prompts, then publish exactly one approved fixed-days privacy notice and active clinician-reviewed rubrics for every candidate prompt. Keep the flag off if any prerequisite is absent.
 - [ ] Verify exactly one active `candidate-mmi-purge-expired-free-text` Cron job runs at minute 23 hourly on that target. The database operator owns the non-runtime wrapper; monitor for a successful `cron.job_run_details` entry within two hours, alert on two consecutive failures, disable on failure, repair forward, run approved operator maintenance, and verify only aggregate purge/run evidence before re-enabling.
 - [ ] Configure and deploy the JWT-verified candidate scoring function and its server-only provider settings.
-- [ ] Link an exact approved client preview target, deploy the reviewed artifact, run bounded real-environment smoke tests while disabled, and deliberately enable the server feature flag only after acceptance. No Vercel project is currently linked in this worktree.
+- [x] GitHub's Vercel integration deployed exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` as protected Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. An authenticated HTTP smoke returned `200` for the `Interview Station` app shell and its JavaScript bundle. The worktree itself remains unlinked from a Vercel project, and no interactive/device or candidate-backend smoke is claimed.
+- [ ] After the exact approved hosted Supabase preview exists and the migration/function/content/configuration gates pass, run the bounded named-account end-to-end smoke while disabled and deliberately enable the server feature flag only after acceptance.
 
 ### Preserved Phase 4 contracts
 
@@ -281,7 +282,7 @@ Approval-gated deployment status:
 2. The hosted-only reconciliation was earlier applied under an exact approval, outside `db push`. Re-audit before any additional hosted operation.
 3. Additive migrations `20260825000000`, `20260825001000`, and `20260825002000` and final cutover `20260825004000` were applied under exact approvals. Retain the recorded `040` Management API postflight evidence and re-prove changed release commits locally.
 4. Verify the created tables/RPCs, security-definer ownership/search paths, service-only storage, RLS, and exact function grants.
-5. `score-answer` is v4 ACTIVE, `manage-ai-key` remains v3, and the stable Vercel production alias is live at commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; the client import workflow is not deployed. Complete a bounded hosted smoke before any further promotion.
+5. `score-answer` is v4 ACTIVE, `manage-ai-key` remains v3, and the stable Vercel production alias is live at commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; the client import workflow is not deployed to that stable alias and exists only in the protected exact-SHA Preview. Complete a bounded hosted smoke before any further promotion.
 6. Final cutover `20260825004000` is complete; it rewrote exact ownership policies, removed table/column grant drift, disabled direct score/streak/question access, and restored only the minimum safe browser grants. Retain the recorded preflight/apply/postflight evidence.
 7. Import-capability migration `20260825005000_cofounder_question_import_idempotency.sql` is complete after `040`. It added nullable source identity, a private RLS ledger, and a fixed-path authenticated-admin RPC, and performed no workbook import at migration time. Retain its recorded unique-index, ledger ACL/RLS, owner/security-definer/search-path, and direct-table-denial postflight evidence.
 8. Workbook staging and publication are complete as separately approved and recorded above: part 1 (500) and part 2 (285) are active candidate-visible content, while the two legacy rows are deactivated without deletion. Present any next content operation as its own exact, forward-only approval with the appropriate source-manifest SHA, batch ID, row count, and expected result. Separately verify the operator artifacts: `manifest.json` SHA and the corresponding part CSV SHA-256. Do not alter or rename an ambiguous retry, and never delete imported rows: use a separately approved correction or deactivation batch.
