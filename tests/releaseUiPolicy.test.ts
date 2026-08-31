@@ -84,4 +84,14 @@ describe('final release UI policy', () => {
     );
     expect(feedback).toContain('if (authLoading) return null;');
   });
+
+  it('declares the configured Expo Babel preset as a direct build dependency', () => {
+    const babelConfig = read('babel.config.js');
+    const packageJson = JSON.parse(read('package.json')) as {
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(babelConfig).toContain("'babel-preset-expo'");
+    expect(packageJson.devDependencies?.['babel-preset-expo']).toBe('~55.0.24');
+  });
 });

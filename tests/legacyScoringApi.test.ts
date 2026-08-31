@@ -53,6 +53,8 @@ describe('legacy scoring client boundary', () => {
     ['rate_limited', 'You have reached the scoring limit.'],
     ['in_progress', 'This response is already being scored.'],
     ['answer_conflict', 'This station already has a different submitted response.'],
+    ['provider_failed', 'The scoring provider is temporarily unavailable.'],
+    ['invalid_provider_response', 'The scorer returned an invalid response. Please retry.'],
   ])('maps allowlisted server code %s to safe copy', async (code, message) => {
     const response = new Response(JSON.stringify({ code }), { status: 409 });
     const api = createLegacyScoringApi(async () => ({ data: null, error: { context: response } }));

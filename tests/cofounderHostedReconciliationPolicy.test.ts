@@ -55,10 +55,7 @@ describe('cofounder preview hosted reconciliation policy', () => {
     expect(sql).toContain('has_any_column_privilege');
     expect(sql).toMatch(/has_table_privilege\('anon', 'public\.app_config', 'REFERENCES'\)/i);
     expect(sql).toMatch(/has_table_privilege\('anon', 'public\.app_config', 'TRIGGER'\)/i);
-    expect(sql).toMatch(/REVOKE EXECUTE ON FUNCTION public\.is_admin\(\)\s+FROM PUBLIC, anon, authenticated, service_role/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.is_admin\(\) TO authenticated/i);
-    const appConfigPolicySection = sql.slice(sql.indexOf('ALTER TABLE public.app_config'), sql.indexOf('-- Remove table-level'));
-    expect(appConfigPolicySection).not.toMatch(/public\.is_admin\(\)/i);
+    expect(sql).not.toMatch(/(?:USING|WITH CHECK)\s*\(\s*public\.is_admin/i);
     expect(sql).not.toMatch(/\bcreate\s+policy\b/i);
     expect(sql).not.toMatch(/\bdrop\s+(?:policy|table|function|trigger|schema|type|extension)\b/i);
   });
@@ -88,7 +85,7 @@ describe('cofounder preview hosted reconciliation policy', () => {
     expect(migrationNames.some((name) => name.includes('security_reconciliation'))).toBe(false);
   });
 
-  it('revokes direct browser access to every assessor-bearing table without row DML', async () => {
+  it('revokes direct browser and service access to every assessor-bearing table without row DML', async () => {
     const sql = await readFile(migrationPath, 'utf8');
     const assessorTables = [
       'mmi_stations',
@@ -105,13 +102,48 @@ describe('cofounder preview hosted reconciliation policy', () => {
         `revoke\\s+all(?:\\s+privileges)?\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+public,\\s*anon,\\s*authenticated`,
         'i',
       ));
+      expect(sql).toMatch(new RegExp(
+        `revoke\\s+all(?:\\s+privileges)?\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+service_role`,
+        'i',
+      ));
     }
     expect(sql).toContain('has_table_privilege');
     expect(sql).toContain('has_any_column_privilege');
     expect(sql).toMatch(/assessor table ACL postcondition failed/i);
+    expect(sql).toContain("FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role']");
     expect(sql).not.toMatch(
       /(?:^|\n)\s*(?:insert\s+into|update\s+public\.|delete\s+from|truncate\s+(?:table\s+)?public\.)/i,
     );
     expect(sql).not.toMatch(/\b(?:cron\.|migration repair|supabase_migrations)\b/i);
+  });
+
+  it('keeps the policy-dependent admin helper callable until the final cutover', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const normalizedSql = sql.replace(/\s+/g, ' ');
+
+    for (const signature of ['handle_new_user()', 'is_admin()', 'update_streak(UUID)']) {
+      expect(normalizedSql).toContain(
+        `ALTER FUNCTION public.${signature} SET search_path = pg_catalog, public, pg_temp`,
+      );
+    }
+    for (const signature of ['handle_new_user()', 'update_streak(UUID)']) {
+      expect(normalizedSql).toContain(
+        `REVOKE EXECUTE ON FUNCTION public.${signature} FROM PUBLIC, anon, authenticated, service_role`,
+      );
+    }
+    expect(normalizedSql).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.is_admin() FROM PUBLIC, anon, authenticated, service_role',
+    );
+    expect(normalizedSql).toContain(
+      'GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated',
+    );
+    expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.update_streak\(UUID\) TO service_role/i);
+    expect(sql).toMatch(/legacy security-definer hardening postcondition failed/i);
+    for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
+      expect(sql).toContain(
+        `has_function_privilege('${role}', 'public.update_streak(uuid)', 'EXECUTE')`,
+      );
+    }
+    expect(sql).toContain("has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')");
   });
 });

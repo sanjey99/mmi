@@ -10,6 +10,8 @@ import {
   callConfiguredProvider,
   formatScoringUserContent,
   parseLegacyScoreResponse,
+  ProviderRequestError,
+  providerFailureDiagnostic,
   type AiConfig,
 } from '../_shared/aiProvider.ts';
 import {
@@ -149,6 +151,13 @@ Deno.serve(async (request) => {
     const errorCode = error instanceof Error && error.message === 'AI_PROVIDER_RESPONSE_INVALID'
       ? 'invalid_provider_response'
       : 'provider_failed';
+    if (error instanceof ProviderRequestError) {
+      console.error(providerFailureDiagnostic(
+        request.headers.get('x-request-id'),
+        providerConfig.provider,
+        error,
+      ));
+    }
     await serviceClient.rpc('fail_legacy_scoring', {
       p_user_id: user.id,
       p_claim_id: claim.claim_id,

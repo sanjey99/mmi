@@ -1,11 +1,12 @@
 /**
  * Question service — handles fetching from Supabase + CSV parsing for admin import.
  *
- * CSV format (admin upload):
- * category,subcategory,text,difficulty,university_tags,is_mmi_suitable,guidance_notes
+ * Workbook CSV format (admin upload):
+ * category,text,difficulty,subcategory,university_tags,is_mmi_suitable,guidance_notes,
+ * source_namespace,source_id,source_manifest_sha256,source_batch_id
  *
  * Example row:
- * ethics,clinical_scenarios,"A patient refuses treatment...",intermediate,"oxford,ucl",true,"Consider autonomy..."
+ * ethics,"A patient refuses treatment...",intermediate,autonomy,"oxford,ucl",true,"Consider autonomy...",med_interview_question_bank,MMI_001/MMI_001_Q1,903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71,questions-part-1
  */
 
 import { supabase } from './supabase';
@@ -22,6 +23,7 @@ import {
   fetchQuestionCatalog,
   fetchQuestionCounts,
   type QuestionRpcClient,
+  importQuestionRows,
 } from '../features/questions/api';
 
 const questionRpcClient = supabase as unknown as QuestionRpcClient;
@@ -57,6 +59,9 @@ export async function getRandomQuestion(
 
 export interface CSVImportResult {
   inserted: number;
+  updated: number;
+  unchanged: number;
+  retried: boolean;
   errors: { row: number; message: string }[];
 }
 
@@ -71,9 +76,14 @@ export async function createQuestionDraft(question: QuestionDraft): Promise<stri
  */
 export async function importQuestionsFromCSV(csvText: string): Promise<CSVImportResult> {
   const parsed = parseQuestionCsv(csvText);
-  if (!parsed.rows.length) return { inserted: 0, errors: parsed.errors };
+  if (!parsed.rows.length) {
+    return { inserted: 0, updated: 0, unchanged: 0, retried: false, errors: parsed.errors };
+  }
 
-  await createQuestionRows(questionRpcClient, parsed.rows.map(row => row.value));
+  const result = await importQuestionRows(
+    questionRpcClient,
+    parsed.rows.map(row => row.value),
+  );
 
-  return { inserted: parsed.rows.length, errors: parsed.errors };
+  return { ...result, errors: parsed.errors };
 }

@@ -166,7 +166,7 @@ export default function ProfileScreen() {
         {profile.is_admin && (
           <>
             <Text style={styles.sectionLabel}>ADMIN</Text>
-            <TouchableOpacity onPress={() => router.push('/admin')} activeOpacity={0.8}>
+            <TouchableOpacity onPress={() => router.push('/admin/questions')} activeOpacity={0.8}>
               <Card style={styles.adminRow} elevated>
                 <Text style={styles.adminIcon}>QD</Text>
                 <Text style={styles.adminLabel}>Question Desk</Text>

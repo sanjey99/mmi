@@ -113,7 +113,7 @@ export default function AdminQuestionsScreen() {
           }
         : {
             title: 'CSV ready for review',
-            message: `${parsed.rows.length} valid row${parsed.rows.length === 1 ? '' : 's'} will be added as drafts.`,
+            message: `${parsed.rows.length} valid source row${parsed.rows.length === 1 ? '' : 's'} form one retry-safe inactive draft batch.`,
             tone: 'info',
           });
     } catch {
@@ -137,8 +137,10 @@ export default function AdminQuestionsScreen() {
       } else if (confirmation === 'csv' && csvContent) {
         const result = await importQuestionsFromCSV(csvContent);
         setNotice({
-          title: 'Draft import complete',
-          message: `${result.inserted} question draft${result.inserted === 1 ? '' : 's'} added.`,
+          title: result.retried ? 'Draft import already completed' : 'Draft import complete',
+          message: result.retried
+            ? 'This exact source batch was already committed. Its existing question IDs were returned without creating duplicates.'
+            : `${result.inserted} added, ${result.updated} updated, and ${result.unchanged} unchanged source record${result.inserted + result.updated + result.unchanged === 1 ? '' : 's'}. Existing publication state and attempt history were preserved.`,
           tone: 'success',
         });
         setFileName(null);
@@ -213,7 +215,7 @@ export default function AdminQuestionsScreen() {
         {confirmation === 'csv' && csvPreview ? (
           <ConfirmAction
             title="Import these drafts?"
-            message={`This inserts ${csvPreview.rows.length} inactive question draft${csvPreview.rows.length === 1 ? '' : 's'}. It does not update or publish existing questions.`}
+            message={`This imports ${csvPreview.rows.length} inactive source draft${csvPreview.rows.length === 1 ? '' : 's'} as one retry-safe batch. A later source batch may update its source-controlled content, but never publish it or reset its attempt history.`}
             confirmLabel="Import drafts"
             busy={saving}
             onConfirm={confirmMutation}
@@ -299,9 +301,9 @@ export default function AdminQuestionsScreen() {
         ) : (
           <View style={styles.sheet}>
             <Text style={styles.sectionTitle}>Bulk draft import</Text>
-            <Text style={styles.helpText}>Required columns: category, text, difficulty</Text>
+            <Text style={styles.helpText}>Required columns: category, text, difficulty, source_namespace, source_id, source_manifest_sha256, source_batch_id</Text>
             <Text style={styles.helpText}>Optional: subcategory, university_tags, is_mmi_suitable, guidance_notes</Text>
-            <Text style={styles.helpText}>Maximum: 1 MB and 500 data rows. Every imported row is inactive.</Text>
+            <Text style={styles.helpText}>Maximum: 1 MB and 500 data rows. One file must contain one source batch; newly inserted rows stay inactive, while re-imports never change publication state.</Text>
 
             <Button
               label={fileName ? 'Choose another CSV' : 'Choose CSV file'}

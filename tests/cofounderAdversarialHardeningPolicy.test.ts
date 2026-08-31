@@ -114,7 +114,8 @@ describe('cofounder adversarial Supabase hardening contract', () => {
     ), 'utf8');
     expect(cutoverVerifier).toContain("is_admin[[:space:]]*\\(");
     expect(cutoverVerifier).toContain("position('p.is_admin'");
-    expect(sql).toMatch(/assessor-content service-role ACL prerequisite failed/i);
-    expect(sql).toContain("FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role']");
+    expect(sql).toMatch(/assessor table service-role ACL prerequisite failed/i);
+    expect(sql).toContain("FOREACH v_privilege IN ARRAY ARRAY[");
+    expect(sql).toContain("has_table_privilege('service_role', 'public.' || v_table, v_privilege)");
   });
 });

@@ -334,7 +334,17 @@ DECLARE
   v_table text;
   v_columns text;
 BEGIN
-  FOREACH v_table IN ARRAY ARRAY['profiles', 'app_config']
+  FOREACH v_table IN ARRAY ARRAY[
+    'profiles',
+    'app_config',
+    'mmi_stations',
+    'mmi_sub_questions',
+    'roleplay_stations',
+    'mmi_marking_criteria',
+    'roleplay_end_criteria',
+    'roleplay_mark_domains',
+    'roleplay_response_rules'
+  ]
   LOOP
     SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
     INTO v_columns
@@ -368,6 +378,30 @@ REVOKE ALL ON TABLE public.mmi_marking_criteria FROM PUBLIC, anon, authenticated
 REVOKE ALL ON TABLE public.roleplay_end_criteria FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.roleplay_mark_domains FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.roleplay_response_rules FROM PUBLIC, anon, authenticated, service_role;
+
+REVOKE ALL ON TABLE public.mmi_stations FROM service_role;
+REVOKE ALL ON TABLE public.mmi_sub_questions FROM service_role;
+REVOKE ALL ON TABLE public.roleplay_stations FROM service_role;
+REVOKE ALL ON TABLE public.mmi_marking_criteria FROM service_role;
+REVOKE ALL ON TABLE public.roleplay_end_criteria FROM service_role;
+REVOKE ALL ON TABLE public.roleplay_mark_domains FROM service_role;
+REVOKE ALL ON TABLE public.roleplay_response_rules FROM service_role;
+
+-- These legacy helpers predate the preview's fixed-path convention. The auth
+-- trigger and unused streak helper have no direct runtime call surface.
+-- Keep is_admin executable through the compatibility window because existing
+-- hosted question-admin policies still invoke it until final cutover.
+ALTER FUNCTION public.handle_new_user()
+  SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION public.is_admin()
+  SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION public.update_streak(UUID)
+  SET search_path = pg_catalog, public, pg_temp;
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_user()
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.update_streak(UUID)
+  FROM PUBLIC, anon, authenticated, service_role;
 
 -- Check effective Edge privileges only after every browser table grant has
 -- reached its final state in this transaction.
@@ -487,6 +521,31 @@ BEGIN
       END IF;
     END LOOP;
   END LOOP;
+
+  IF has_function_privilege('public', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.handle_new_user()', 'EXECUTE')
+    OR has_function_privilege('public', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('authenticated', 'public.update_streak(uuid)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.update_streak(uuid)', 'EXECUTE')
+    OR EXISTS (
+      SELECT 1
+      FROM (VALUES
+        ('public.handle_new_user()'),
+        ('public.is_admin()'),
+        ('public.update_streak(uuid)')
+      ) AS required(signature)
+      JOIN pg_proc AS p ON p.oid = to_regprocedure(required.signature)
+      WHERE NOT (
+        COALESCE(p.proconfig, ARRAY[]::text[])
+        @> ARRAY['search_path=pg_catalog, public, pg_temp']
+      )
+    )
+  THEN
+    RAISE EXCEPTION 'legacy security-definer hardening postcondition failed';
+  END IF;
 END;
 $$;
 

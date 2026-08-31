@@ -39,6 +39,16 @@ describe('server-owned legacy scoring edge contract', () => {
     expect(edgeSource).toContain("rpc('fail_legacy_scoring'");
   });
 
+  it('emits only the allowlisted provider-failure diagnostic while retaining public error classifications', () => {
+    expect(edgeSource).toContain('ProviderRequestError');
+    expect(edgeSource).toContain('providerFailureDiagnostic');
+    expect(edgeSource).toContain("request.headers.get('x-request-id')");
+    expect(edgeSource).toContain("'invalid_provider_response'");
+    expect(edgeSource).toContain("'provider_failed'");
+    expect(edgeSource).toMatch(/console\.error\(providerFailureDiagnostic\(/);
+    expect(edgeSource).not.toMatch(/console\.error\([^)]*error/);
+  });
+
   it('removes direct answer, score, session-finalisation, and streak writes from the client store', () => {
     expect(storeSource).not.toMatch(/from\('answers'\)[\s\S]{0,180}\.insert\(/);
     expect(storeSource).not.toMatch(/from\('scores'\)[\s\S]{0,180}\.insert\(/);
