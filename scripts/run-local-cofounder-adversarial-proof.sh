@@ -9,12 +9,26 @@ if [[ "${SUPABASE_LOCAL_MUTATION_TESTS:-}" != "$ack" ]]; then
 fi
 
 database_url="${SUPABASE_LOCAL_DB_URL:-}"
-if ! node -e "
+if ! validated_database="$(node -e "
   const value = new URL(process.argv[1]);
   const allowedHosts = ['127.0.0.1', 'localhost', '[::1]'];
-  if (!['postgres:', 'postgresql:'].includes(value.protocol) || !allowedHosts.includes(value.hostname)) process.exit(1);
-" "$database_url"; then
-  echo 'Refusing to mutate: SUPABASE_LOCAL_DB_URL must be a postgres URL with exact localhost, 127.0.0.1, or ::1 hostname.' >&2
+  const databaseName = decodeURIComponent(value.pathname.slice(1));
+  if (
+    !['postgres:', 'postgresql:'].includes(value.protocol)
+    || !allowedHosts.includes(value.hostname)
+    || value.search !== ''
+    || value.hash !== ''
+    || !/^mmi_[a-z0-9_]*proof[a-z0-9_]*$/.test(databaseName)
+  ) process.exit(1);
+  value.pathname = '/' + databaseName;
+  console.log(value.toString() + '\t' + databaseName);
+" "$database_url")"; then
+  echo 'Refusing to mutate: SUPABASE_LOCAL_DB_URL must be a query/fragment-free postgres loopback URL for an mmi_*proof* database.' >&2
+  exit 64
+fi
+IFS=$'\t' read -r canonical_database_url database_name <<< "$validated_database"
+if [[ -z "$canonical_database_url" || ! "$database_name" =~ ^mmi_[a-z0-9_]*proof[a-z0-9_]*$ ]]; then
+  echo 'Refusing to mutate: SUPABASE_LOCAL_DB_URL did not produce a canonical disposable database identity.' >&2
   exit 64
 fi
 
@@ -22,7 +36,47 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # -q suppresses command-status lines such as SET, so captured preflight and
 # rollback scalars contain only the SELECT result. ON_ERROR_STOP still prints
 # errors to stderr and makes every failed psql invocation non-zero.
-psql_args=("$database_url" -q -v ON_ERROR_STOP=1 -c "SET app.local_mmi_adversarial_proof = '$ack'")
+psql_args=("$canonical_database_url" -X -q -v ON_ERROR_STOP=1)
+
+# This check runs before setting the session acknowledgement or loading any
+# fixture. The URL identifies a loopback endpoint, while the database marker
+# makes the mutable target explicit. Docker's bridge/NAT addresses are local
+# private ranges, so accept those alongside IPv4/IPv6 loopback on both ends.
+local_identity="$(psql "${psql_args[@]}" -Atc "
+  SELECT CASE WHEN
+    current_database() = '$database_name'
+    AND inet_client_addr() IS NOT NULL
+    AND inet_server_addr() IS NOT NULL
+    AND (
+      inet_client_addr() <<= '127.0.0.0/8'::inet
+      OR inet_client_addr() <<= '::1/128'::inet
+      OR inet_client_addr() <<= '10.0.0.0/8'::inet
+      OR inet_client_addr() <<= '172.16.0.0/12'::inet
+      OR inet_client_addr() <<= '192.168.0.0/16'::inet
+    )
+    AND (
+      inet_server_addr() <<= '127.0.0.0/8'::inet
+      OR inet_server_addr() <<= '::1/128'::inet
+      OR inet_server_addr() <<= '10.0.0.0/8'::inet
+      OR inet_server_addr() <<= '172.16.0.0/12'::inet
+      OR inet_server_addr() <<= '192.168.0.0/16'::inet
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM pg_db_role_setting AS setting
+      JOIN pg_database AS database ON database.oid = setting.setdatabase
+      WHERE database.datname = '$database_name'
+        AND setting.setrole = 0
+        AND setting.setconfig @> ARRAY['app.mmi_adversarial_disposable=I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA']
+    )
+  THEN 'approved' ELSE 'refused' END;
+")"
+if [[ "$local_identity" != 'approved' ]]; then
+  echo 'Refusing to mutate: database identity, local connection address, or disposable database marker is missing.' >&2
+  exit 64
+fi
+
+psql_args+=( -c "SET app.local_mmi_adversarial_proof = '$ack'" )
 
 # Pre-040 catalog preparation: begin from a disposable database restored to
 # the observed hosted catalog generation, with 040 absent from migration

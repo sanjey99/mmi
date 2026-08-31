@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -34,7 +36,7 @@ const assessorTables = [
 ];
 
 describe('cofounder adversarial Supabase hardening contract', () => {
-  it('provides a disposable-only hostile ACL fixture that poisons every runtime role', async () => {
+  it('provides a disposable-only hostile fixture and rejects unsafe runner targets before psql', async () => {
     const fixture = await readFile(hostileFixturePath, 'utf8');
 
     expect(fixture).toContain('LOCAL-ONLY');
@@ -68,6 +70,48 @@ describe('cofounder adversarial Supabase hardening contract', () => {
     }
     expect(fixture).toContain("CASE WHEN v_role = 'PUBLIC' THEN 'PUBLIC' ELSE quote_ident(v_role) END");
     expect(fixture).not.toContain("TO %I', v_table, v_role");
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'mmi-proof-runner-'));
+    const psqlPath = join(temporaryDirectory, 'psql');
+    const psqlLogPath = join(temporaryDirectory, 'psql-invoked');
+
+    try {
+      await writeFile(psqlPath, '#!/usr/bin/env sh\nprintf invoked > "$TEST_PSQL_LOG"\nexit 99\n');
+      await chmod(psqlPath, 0o700);
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const child = spawn('bash', [localRunnerPath], {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            PATH: `${temporaryDirectory}:${process.env.PATH}`,
+            SUPABASE_LOCAL_MUTATION_TESTS: 'I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA',
+            SUPABASE_LOCAL_DB_URL: 'postgresql://127.0.0.1/mmi_runner_proof?host=%2Fdefinitely-not-a-postgres-socket',
+            TEST_PSQL_LOG: psqlLogPath,
+          },
+        });
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+
+      expect(exitCode).toBe(64);
+      await expect(readFile(psqlLogPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+    expect(runner).toContain("value.search !== ''");
+    expect(runner).toContain("value.hash !== ''");
+    expect(runner).toContain('canonical_database_url');
+    expect(runner).toContain('psql_args=("$canonical_database_url" -X');
+    expect(runner).toContain('current_database()');
+    expect(runner).toContain('inet_server_addr()');
+    expect(runner).toContain('pg_db_role_setting');
+    expect(runner).toContain('app.mmi_adversarial_disposable');
+    expect(runner).toContain('I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA');
+    expect(runner).toContain("current_database() = '$database_name'");
+    expect(runner).toContain("database.datname = '$database_name'");
+    expect(runner).not.toContain('-v expected_database=');
+    expect(runner.indexOf('^mmi_[a-z0-9_]*proof[a-z0-9_]*$')).toBeLessThan(
+      runner.indexOf("current_database() = '$database_name'"),
+    );
   });
 
   it('removes inherited and direct table and column ACLs from every runtime role', async () => {
