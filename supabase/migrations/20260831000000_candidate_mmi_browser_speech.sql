@@ -168,10 +168,7 @@ BEGIN
   RETURN v_existing;
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.catch_up_candidate_mmi_station_responses(
-  p_session_id uuid,
-  p_now timestamptz
-)
+CREATE OR REPLACE FUNCTION public.catch_up_candidate_mmi_station_responses(p_session_id uuid, p_now timestamptz)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_started_at timestamptz;
@@ -356,12 +353,7 @@ BEGIN
   );
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.checkpoint_candidate_mmi_station_response(
-  p_session_id uuid,
-  p_prompt_order smallint,
-  p_transcript text,
-  p_client_revision bigint
-)
+CREATE OR REPLACE FUNCTION public.checkpoint_candidate_mmi_station_response(p_session_id uuid, p_prompt_order smallint, p_transcript text, p_client_revision bigint)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
@@ -417,11 +409,7 @@ BEGIN
   );
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.finalize_candidate_mmi_station_response(
-  p_session_id uuid,
-  p_prompt_order smallint,
-  p_finalization_key uuid
-)
+CREATE OR REPLACE FUNCTION public.finalize_candidate_mmi_station_response(p_session_id uuid, p_prompt_order smallint, p_finalization_key uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
@@ -525,18 +513,14 @@ BEGIN
   WHERE id = p_session_id;
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.claim_candidate_mmi_response_scoring(
-  p_user_id uuid,
-  p_session_id uuid,
-  p_prompt_order smallint,
-  p_lease_token uuid
-)
+CREATE OR REPLACE FUNCTION public.claim_candidate_mmi_response_scoring(p_user_id uuid, p_session_id uuid, p_prompt_order smallint, p_lease_token uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
   v_response public.candidate_mmi_station_responses;
   v_snapshot public.candidate_mmi_station_prompt_snapshots;
   v_claim public.candidate_mmi_response_scoring_claims;
+  v_has_claim boolean;
 BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
@@ -554,8 +538,28 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'candidate_response_not_found';
   END IF;
-  IF v_response.response_state = 'no_response' OR v_response.finalized_transcript IS NULL THEN
-    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'candidate_response_not_scoreable';
+  IF v_response.response_state = 'no_response' THEN
+    RETURN jsonb_build_object('status', 'no_response');
+  END IF;
+  IF v_response.scoring_status = 'scored' THEN
+    RETURN jsonb_build_object('status', 'scored', 'assessment', v_response.public_assessment);
+  END IF;
+  IF v_response.scoring_status = 'feedback_unavailable' THEN
+    RETURN jsonb_build_object('status', 'feedback_unavailable');
+  END IF;
+  SELECT * INTO v_claim FROM public.candidate_mmi_response_scoring_claims
+  WHERE response_id = v_response.id
+  FOR UPDATE;
+  v_has_claim := FOUND;
+  IF v_response.finalized_transcript IS NULL THEN
+    IF v_response.scoring_status IN ('pending', 'failed') THEN
+      UPDATE public.candidate_mmi_station_responses
+      SET scoring_status = 'feedback_unavailable'
+      WHERE id = v_response.id;
+    ELSIF v_response.scoring_status = 'in_progress' AND v_has_claim AND v_claim.lease_expires_at > v_now THEN
+      RETURN jsonb_build_object('status', 'in_progress');
+    END IF;
+    RETURN jsonb_build_object('status', 'feedback_unavailable');
   END IF;
   SELECT * INTO v_snapshot FROM public.candidate_mmi_station_prompt_snapshots
   WHERE session_id = p_session_id AND prompt_order = p_prompt_order;
@@ -565,13 +569,7 @@ BEGIN
     WHERE id = v_response.id AND scoring_status IN ('pending', 'failed');
     RETURN jsonb_build_object('status', 'feedback_unavailable');
   END IF;
-  IF v_response.scoring_status = 'scored' THEN
-    RETURN jsonb_build_object('status', 'scored', 'assessment', v_response.public_assessment);
-  END IF;
-  SELECT * INTO v_claim FROM public.candidate_mmi_response_scoring_claims
-  WHERE response_id = v_response.id
-  FOR UPDATE;
-  IF FOUND AND v_claim.lease_expires_at > v_now THEN
+  IF v_has_claim AND v_claim.lease_expires_at > v_now THEN
     RETURN jsonb_build_object('status', 'in_progress');
   END IF;
   INSERT INTO public.candidate_mmi_response_scoring_claims (
@@ -594,15 +592,12 @@ BEGIN
   );
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.complete_candidate_mmi_response_scoring(
-  p_response_id uuid,
-  p_session_id uuid,
-  p_lease_token uuid,
-  p_public_assessment jsonb
-)
+CREATE OR REPLACE FUNCTION public.complete_candidate_mmi_response_scoring(p_response_id uuid, p_session_id uuid, p_lease_token uuid, p_public_assessment jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
+  v_response public.candidate_mmi_station_responses;
+  v_claim public.candidate_mmi_response_scoring_claims;
 BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
@@ -611,14 +606,21 @@ BEGIN
     OR NOT public.is_valid_candidate_mmi_public_assessment(p_public_assessment) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid_candidate_mmi_scoring_completion';
   END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM public.candidate_mmi_response_scoring_claims AS claim
-    JOIN public.candidate_mmi_station_responses AS response ON response.id = claim.response_id
-    WHERE claim.response_id = p_response_id AND response.session_id = p_session_id
-      AND claim.lease_token = p_lease_token AND claim.lease_expires_at > v_now
-      AND response.scoring_status = 'in_progress'
-    FOR UPDATE OF claim, response
-  ) THEN
+  SELECT response.* INTO v_response
+  FROM public.candidate_mmi_response_scoring_claims AS claim
+  JOIN public.candidate_mmi_station_responses AS response ON response.id = claim.response_id
+  WHERE claim.response_id = p_response_id AND response.session_id = p_session_id
+  FOR UPDATE OF claim, response;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_candidate_mmi_scoring_lease';
+  END IF;
+  SELECT * INTO v_claim FROM public.candidate_mmi_response_scoring_claims
+  WHERE response_id = p_response_id;
+  IF v_response.scoring_status = 'scored' AND v_claim.lease_token = p_lease_token THEN
+    RETURN jsonb_build_object('status', 'scored');
+  END IF;
+  IF v_claim.lease_token IS DISTINCT FROM p_lease_token OR v_claim.lease_expires_at <= v_now
+    OR v_response.scoring_status <> 'in_progress' THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'stale_candidate_mmi_scoring_lease';
   END IF;
   UPDATE public.candidate_mmi_station_responses
@@ -627,12 +629,7 @@ BEGIN
   RETURN jsonb_build_object('status', 'scored');
 END;
 $function$;
-CREATE OR REPLACE FUNCTION public.fail_candidate_mmi_response_scoring(
-  p_response_id uuid,
-  p_session_id uuid,
-  p_lease_token uuid,
-  p_error_code text
-)
+CREATE OR REPLACE FUNCTION public.fail_candidate_mmi_response_scoring(p_response_id uuid, p_session_id uuid, p_lease_token uuid, p_error_code text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();

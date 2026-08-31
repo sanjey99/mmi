@@ -710,6 +710,26 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     });
     assert.equal(completedClaimError, null, completedClaimError?.message);
     assert.equal((completedClaim as { status: string }).status, 'scored');
+    const { error: expireCompletedLeaseError } = await service
+      .from('candidate_mmi_response_scoring_claims')
+      .update({ lease_expires_at: new Date(Date.now() - 1_000).toISOString() })
+      .eq('response_id', responseId);
+    assert.equal(expireCompletedLeaseError, null, expireCompletedLeaseError?.message);
+    const { data: duplicateCompletion, error: duplicateCompletionError } = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: responseId,
+      p_session_id: sessionId,
+      p_lease_token: reclaimedLeaseToken,
+      p_public_assessment: { ...assessment, overallPct: 1 },
+    });
+    assert.equal(duplicateCompletionError, null, duplicateCompletionError?.message);
+    assert.deepEqual(duplicateCompletion, { status: 'scored' });
+    const { data: completedResponse, error: completedResponseError } = await service
+      .from('candidate_mmi_station_responses')
+      .select('public_assessment')
+      .eq('id', responseId)
+      .single();
+    assert.equal(completedResponseError, null, completedResponseError?.message);
+    assert.deepEqual(completedResponse?.public_assessment, assessment);
 
     const { error: whitespaceDraftError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
       p_session_id: sessionId,
@@ -757,8 +777,8 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       p_prompt_order: 2,
       p_lease_token: randomUUID(),
     });
-    assert.equal(noResponseClaim, null);
-    assert.ok(noResponseClaimError, 'expected no-response claim rejection');
+    assert.equal(noResponseClaimError, null, noResponseClaimError?.message);
+    assert.deepEqual(noResponseClaim, { status: 'no_response' });
 
     const { data: purgeResult, error: purgeError } = await service.rpc('purge_expired_candidate_mmi_free_text', {
       p_now: new Date(Date.now() + 2 * 24 * 60 * 60 * 1_000).toISOString(),
@@ -774,6 +794,14 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     assert.equal(purgedResponse?.finalized_transcript, null);
     assert.deepEqual(purgedResponse?.public_assessment, assessment);
     assert.ok(purgedResponse?.transcript_purged_at);
+    const { data: scoredAfterPurge, error: scoredAfterPurgeError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: authUserIds[1],
+      p_session_id: sessionId,
+      p_prompt_order: 1,
+      p_lease_token: randomUUID(),
+    });
+    assert.equal(scoredAfterPurgeError, null, scoredAfterPurgeError?.message);
+    assert.deepEqual(scoredAfterPurge, { status: 'scored', assessment });
 
     const { data: abandonStarted, error: abandonStartError } = await owner.rpc('start_candidate_mmi_station_session');
     assert.equal(abandonStartError, null, abandonStartError?.message);
