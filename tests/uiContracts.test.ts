@@ -78,4 +78,11 @@ describe('released surface visual contract', () => {
     expect(source).not.toContain('pct:');
     expect(source).not.toContain('dummyScores');
   });
+
+  it('takes a configured administrator to the existing practice station when testing scoring', () => {
+    const source = readFileSync(resolve(process.cwd(), 'app/admin/ai-config.tsx'), 'utf8');
+
+    expect(source).toMatch(/const handleTestConfig = async \(\) => \{\s*if \(!isConfigured\) \{[\s\S]*router\.push\('\/\(tabs\)\/practice'\)/);
+    expect(source).toContain('label="Open practice to test"');
+  });
 });

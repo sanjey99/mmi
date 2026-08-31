@@ -4,6 +4,8 @@ import { router } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
 import { usePracticeStore } from '../../src/stores/practiceStore';
 import { getActiveQuestionCounts, getRandomQuestion } from '../../src/lib/questions';
+import { supabase } from '../../src/lib/supabase';
+import { isNormalizedMmiStationEnabled } from '../../src/features/candidateMmi/featureFlag';
 import { Button } from '../../src/components/ui/Button';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
@@ -15,6 +17,9 @@ const MODES = [
   { id: 'practice', station: 'P', title: 'Free practice', desc: 'No timer; take time to structure your response.', timed: false },
   { id: 'timed', station: '08', title: 'Timed practice', desc: 'Eight minutes from entry to submission.', timed: true },
 ];
+const CANDIDATE_MMI_MODE = {
+  id: 'candidate', station: '11', title: 'Candidate station', desc: '11-minute timed MMI station.', timed: false,
+};
 
 const CATEGORIES: { key: QuestionCategory; station: string; name: string }[] = [
   { key: 'ethics', station: 'E', name: 'Ethics' },
@@ -30,6 +35,8 @@ export default function PracticeScreen() {
   const [selectedCategory, setSelectedCategory] = useState<QuestionCategory | null>(null);
   const [loading, setLoading] = useState(false);
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
+  const [candidateEnabled, setCandidateEnabled] = useState(false);
+  const [candidateFlagLoading, setCandidateFlagLoading] = useState(true);
   const [counts, setCounts] = useState<QuestionCounts | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const profile = useAuthStore(s => s.profile);
@@ -51,12 +58,31 @@ export default function PracticeScreen() {
     loadAvailability();
   }, [loadAvailability]);
 
+  useEffect(() => {
+    let active = true;
+    const readConfig = async (key: string): Promise<unknown> => {
+      const { data, error } = await supabase.from('app_config').select('value').eq('key', key).maybeSingle();
+      if (error) throw error;
+      return data?.value;
+    };
+    void isNormalizedMmiStationEnabled(readConfig).then(enabled => {
+      if (!active) return;
+      setCandidateEnabled(enabled);
+      setCandidateFlagLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+
   const totalAvailable = useMemo(
     () => counts ? Object.values(counts).reduce((sum, count) => sum + count, 0) : 0,
     [counts],
   );
 
   const handleStart = async () => {
+    if (selectedMode === 'candidate') {
+      router.push('/practice/mmi-station' as never);
+      return;
+    }
     if (!profile) return;
     if (selectedCategory && (counts?.[selectedCategory] ?? 0) === 0) {
       setErrorMessage('That station has no active questions yet. Choose an available station.');
@@ -95,7 +121,7 @@ export default function PracticeScreen() {
       ) : null}
 
       <Text style={styles.sectionTitle}>Timing</Text>
-      {MODES.map(mode => (
+      {(candidateEnabled ? [...MODES, CANDIDATE_MMI_MODE] : MODES).map(mode => (
         <TouchableOpacity
           key={mode.id}
           style={[styles.modeCard, selectedMode === mode.id && styles.modeCardActive]}
@@ -152,7 +178,9 @@ export default function PracticeScreen() {
         label="Enter station"
         onPress={handleStart}
         loading={loading}
-        disabled={availabilityLoading || totalAvailable === 0}
+        disabled={loading || (selectedMode === 'candidate'
+          ? candidateFlagLoading
+          : availabilityLoading || totalAvailable === 0)}
         style={{ marginTop: 32 }}
       />
     </ScreenWrapper>

@@ -7,6 +7,8 @@ import {
   callConfiguredProvider,
   formatScoringUserContent,
   parseLegacyScoreResponse,
+  ProviderRequestError,
+  providerFailureDiagnostic,
 } from '../supabase/functions/_shared/aiProvider';
 import { assertSafeProviderUrl } from '../supabase/functions/_shared/providerUrl';
 
@@ -104,6 +106,82 @@ describe('assertSafeProviderUrl', () => {
 });
 
 describe('callConfiguredProvider', () => {
+  it('fails closed before DNS or fetch for an unrecognized provider without serializing sensitive configuration', async () => {
+    const fetchSpy = vi.fn();
+    const resolveDns = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { resolveDns, env: { get: () => undefined } });
+
+    const configProviderSentinel = 'openai-typo-provider-sentinel';
+    const apiKeySentinel = ['api', 'key', 'sentinel'].join('-');
+    const systemPromptSentinel = 'system-prompt-sentinel';
+    const answerPromptSentinel = 'answer-prompt-sentinel';
+    const error = await callConfiguredProvider(
+      {
+        provider: configProviderSentinel,
+        apiKey: apiKeySentinel,
+        model: 'model-sentinel',
+        baseUrl: 'https://provider.example.test/v1',
+      },
+      { systemPrompt: systemPromptSentinel, userContent: answerPromptSentinel, maxTokens: 32 },
+    ).then(() => undefined, (caught) => caught);
+
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    if (!(error instanceof ProviderRequestError)) throw new Error('Expected a ProviderRequestError');
+    expect(error).toMatchObject({ stage: 'configuration' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(resolveDns).not.toHaveBeenCalled();
+
+    const serialized = JSON.stringify({
+      error,
+      diagnostic: providerFailureDiagnostic('fn_req-123', configProviderSentinel, error),
+    });
+    expect(providerFailureDiagnostic('fn_req-123', configProviderSentinel, error)).toEqual({
+      functionRequestId: 'fn_req-123',
+      provider: 'unknown',
+      stage: 'configuration',
+    });
+    for (const sentinel of [configProviderSentinel, apiKeySentinel, systemPromptSentinel, answerPromptSentinel]) {
+      expect(serialized).not.toContain(sentinel);
+    }
+  });
+
+  it('uses the pinned OpenAI endpoint without DNS when the direct provider is selected', async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: 'provider response' } }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await expect(callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: 'https://ignored.example.test' },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toBe('provider response');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.openai.com/v1/chat/completions',
+      expect.objectContaining({ redirect: 'error', signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('uses the pinned Anthropic endpoint without DNS when the direct provider is selected', async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      content: [{ text: 'provider response' }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await expect(callConfiguredProvider(
+      { provider: 'anthropic', apiKey: 'test-key', model: 'claude-test', baseUrl: 'https://ignored.example.test' },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toBe('provider response');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.anthropic.com/v1/messages',
+      expect.objectContaining({ redirect: 'error', signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('uses a redirect-rejecting 60-second request and keeps credentials and prompts out of thrown errors', async () => {
     const fetchSpy = vi.fn(async () => new Response('provider body containing credentials', { status: 502 }));
     vi.stubGlobal('fetch', fetchSpy);
@@ -168,14 +246,99 @@ describe('callConfiguredProvider', () => {
       .mockResolvedValueOnce(['2606:4700::6812:c7b']);
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    vi.stubGlobal('Deno', { resolveDns, env: { get: () => undefined } });
+    vi.stubGlobal('Deno', {
+      resolveDns,
+      env: { get: (name: string) => name === 'AI_PROVIDER_ALLOWED_HOSTS' ? 'provider.example.test' : undefined },
+    });
 
     await expect(callConfiguredProvider(
-      { provider: 'anthropic', apiKey: ['test', 'key'].join('-'), model: 'claude-test', baseUrl: null },
+      {
+        provider: 'openai_compatible',
+        apiKey: ['test', 'key'].join('-'),
+        model: 'custom-model',
+        baseUrl: 'https://provider.example.test/v1',
+      },
       { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
     )).rejects.toThrow('AI_PROVIDER_REQUEST_FAILED');
     expect(resolveDns).toHaveBeenCalledTimes(4);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails closed at DNS preflight without fetching for a custom provider when DNS is unavailable', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', {
+      env: { get: (name: string) => name === 'AI_PROVIDER_ALLOWED_HOSTS' ? 'provider.example.test' : undefined },
+    });
+
+    const error = await callConfiguredProvider(
+      { provider: 'openai_compatible', apiKey: 'test-key', model: 'custom-model', baseUrl: 'https://provider.example.test/v1' },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    ).then(() => undefined, (caught) => caught);
+
+    expect(error).toMatchObject({ name: 'ProviderRequestError', stage: 'dns_preflight' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'network failures',
+      response: undefined,
+      expected: { stage: 'network' },
+    },
+    {
+      name: 'HTTP failures with a valid provider request id',
+      response: new Response('provider-body-sentinel', { status: 401, headers: { 'x-request-id': 'req_ABC-123' } }),
+      expected: { stage: 'http', status: 401, providerRequestId: 'req_ABC-123' },
+    },
+    {
+      name: 'successful envelopes missing provider content',
+      response: new Response(JSON.stringify({ unexpected: 'provider-body-sentinel' }), {
+        status: 200,
+        headers: { 'x-request-id': 'req_shape-123' },
+      }),
+      expected: { stage: 'response_shape', providerRequestId: 'req_shape-123' },
+    },
+  ])('returns only a sanitized diagnostic for $name', async ({ response, expected }) => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (response) return response;
+      throw new Error('network-sentinel');
+    }));
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    const error = await callConfiguredProvider(
+      { provider: 'openai', apiKey: ['api', 'key', 'sentinel'].join('-'), model: 'gpt-4o-mini', baseUrl: null },
+      { systemPrompt: 'system-prompt-sentinel', userContent: 'answer-prompt-sentinel', maxTokens: 32 },
+    ).then(() => undefined, (caught) => caught);
+
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    expect(error).toMatchObject(expected);
+    const serialized = JSON.stringify(providerFailureDiagnostic('fn_req-123', 'openai', error as ProviderRequestError));
+    for (const sentinel of ['api-key-sentinel', 'system-prompt-sentinel', 'answer-prompt-sentinel', 'network-sentinel', 'provider-body-sentinel']) {
+      expect(serialized).not.toContain(sentinel);
+    }
+  });
+
+  it('rejects malformed or oversized request identifiers from provider and function headers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('body', {
+      status: 401,
+      headers: { 'x-request-id': 'x'.repeat(200) },
+    })));
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    const error = await callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    ).then(() => undefined, (caught) => caught as ProviderRequestError);
+
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    if (!(error instanceof ProviderRequestError)) throw new Error('Expected a ProviderRequestError');
+    expect(error).toMatchObject({ stage: 'http', status: 401, providerRequestId: undefined });
+    expect(providerFailureDiagnostic(`bad\n${'x'.repeat(200)}`, 'openai', error)).toEqual({
+      provider: 'openai',
+      stage: 'http',
+      status: 401,
+    });
   });
 
   it('keeps the provider timeout comfortably below the scoring-claim lease', () => {

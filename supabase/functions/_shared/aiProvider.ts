@@ -6,6 +6,8 @@ export const MMI_SCORING_CLAIM_LEASE_MS = 180_000;
 export const MAX_AI_FEEDBACK_LENGTH = 2_000;
 export const MAX_IMPROVEMENT_TIP_LENGTH = 1_000;
 const BUILT_IN_PROVIDER_HOSTS = Object.freeze(['api.anthropic.com', 'api.openai.com']);
+const MAX_DIAGNOSTIC_REQUEST_ID_LENGTH = 128;
+const DIAGNOSTIC_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 export interface AiConfig {
   provider: string;
@@ -31,11 +33,75 @@ export interface LegacyScoreResponse {
   improvement_tip: string;
 }
 
-class ProviderRequestError extends Error {
-  constructor() {
+export type ProviderRequestStage = 'configuration' | 'dns_preflight' | 'network' | 'http' | 'response_shape';
+type DiagnosticProvider = 'anthropic' | 'openai' | 'openai_compatible' | 'unknown';
+
+interface ProviderRequestErrorOptions {
+  status?: number;
+  providerRequestId?: string | null;
+}
+
+export class ProviderRequestError extends Error {
+  readonly stage: ProviderRequestStage;
+  readonly status?: number;
+  readonly providerRequestId?: string;
+
+  constructor(stage: ProviderRequestStage, options: ProviderRequestErrorOptions = {}) {
     super('AI_PROVIDER_REQUEST_FAILED');
     this.name = 'ProviderRequestError';
+    this.stage = stage;
+    if (typeof options.status === 'number' && Number.isInteger(options.status) && options.status >= 100 && options.status <= 599) {
+      this.status = options.status;
+    }
+    this.providerRequestId = sanitizeDiagnosticRequestId(options.providerRequestId);
   }
+}
+
+/** Accept only bounded, token-safe identifiers before emitting operational diagnostics. */
+export function sanitizeDiagnosticRequestId(value: string | null | undefined): string | undefined {
+  if (
+    typeof value !== 'string'
+    || !value
+    || value.length > MAX_DIAGNOSTIC_REQUEST_ID_LENGTH
+    || !DIAGNOSTIC_REQUEST_ID_PATTERN.test(value)
+  ) return undefined;
+  return value;
+}
+
+function diagnosticProvider(provider: string): DiagnosticProvider {
+  if (provider === 'anthropic') return 'anthropic';
+  if (provider === 'openai') return 'openai';
+  if (provider === 'openai_compatible') return 'openai_compatible';
+  return 'unknown';
+}
+
+/** Produces the sole allowlisted shape permitted in provider-failure logs. */
+export function providerFailureDiagnostic(
+  functionRequestId: string | null | undefined,
+  provider: string,
+  error: ProviderRequestError,
+): {
+  functionRequestId?: string;
+  provider: DiagnosticProvider;
+  stage: ProviderRequestStage;
+  status?: number;
+  providerRequestId?: string;
+} {
+  const diagnostic: {
+    functionRequestId?: string;
+    provider: DiagnosticProvider;
+    stage: ProviderRequestStage;
+    status?: number;
+    providerRequestId?: string;
+  } = {
+    provider: diagnosticProvider(provider),
+    stage: error.stage,
+  };
+  const safeFunctionRequestId = sanitizeDiagnosticRequestId(functionRequestId);
+  if (safeFunctionRequestId) diagnostic.functionRequestId = safeFunctionRequestId;
+  if (error.status !== undefined) diagnostic.status = error.status;
+  if (error.providerRequestId) diagnostic.providerRequestId = error.providerRequestId;
+  return diagnostic;
 }
 
 function readEdgeSecret(name: string): string | undefined {
@@ -57,7 +123,7 @@ const resolveDenoDns: ResolveDns = async (hostname, recordType) => {
   const deno = globalThis as typeof globalThis & {
     Deno?: { resolveDns?: ResolveDns };
   };
-  if (!deno.Deno?.resolveDns) throw new ProviderRequestError();
+  if (!deno.Deno?.resolveDns) throw new ProviderRequestError('dns_preflight');
   return deno.Deno.resolveDns(hostname, recordType);
 };
 
@@ -67,8 +133,8 @@ function openAiEndpoint(baseUrl: URL): string {
   return endpoint.toString();
 }
 
-function providerResponseContent(provider: string, payload: unknown): string {
-  if (!payload || typeof payload !== 'object') throw new ProviderRequestError();
+function providerResponseContent(provider: string, payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
   const response = payload as {
     content?: Array<{ text?: unknown }>;
     choices?: Array<{ message?: { content?: unknown } }>;
@@ -76,8 +142,7 @@ function providerResponseContent(provider: string, payload: unknown): string {
   const content = provider === 'anthropic'
     ? response.content?.[0]?.text
     : response.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') throw new ProviderRequestError();
-  return content;
+  return typeof content === 'string' ? content : undefined;
 }
 
 /** Keeps untrusted content in a data-only, independently delimited prompt section. */
@@ -137,23 +202,37 @@ export async function callConfiguredProvider(
   config: AiConfig,
   request: AiProviderRequest,
 ): Promise<unknown> {
-  const provider = config.provider === 'anthropic' ? 'anthropic' : 'openai';
-  const configuredBaseUrl = provider === 'anthropic'
-    ? 'https://api.anthropic.com'
-    : config.baseUrl ?? 'https://api.openai.com';
-
-  let baseUrl: URL;
-  try {
-    baseUrl = await assertSafeProviderUrl(configuredBaseUrl, providerAllowedHosts(), resolveDenoDns);
-    // `fetch` resolves hostnames independently, so revalidate immediately before it.
-    await assertSafeProviderUrl(configuredBaseUrl, providerAllowedHosts(), resolveDenoDns);
-  } catch {
-    throw new ProviderRequestError();
+  let provider: 'anthropic' | 'openai';
+  let customOpenAiCompatible = false;
+  switch (config.provider) {
+    case 'anthropic':
+      provider = 'anthropic';
+      break;
+    case 'openai':
+      provider = 'openai';
+      break;
+    case 'openai_compatible':
+      provider = 'openai';
+      customOpenAiCompatible = true;
+      break;
+    default:
+      throw new ProviderRequestError('configuration');
   }
-
-  const url = provider === 'anthropic'
+  let url = provider === 'anthropic'
     ? 'https://api.anthropic.com/v1/messages'
-    : openAiEndpoint(baseUrl);
+    : 'https://api.openai.com/v1/chat/completions';
+
+  if (customOpenAiCompatible) {
+    let baseUrl: URL;
+    try {
+      baseUrl = await assertSafeProviderUrl(config.baseUrl ?? '', providerAllowedHosts(), resolveDenoDns);
+      // `fetch` resolves hostnames independently, so revalidate immediately before it.
+      await assertSafeProviderUrl(config.baseUrl ?? '', providerAllowedHosts(), resolveDenoDns);
+    } catch {
+      throw new ProviderRequestError('dns_preflight');
+    }
+    url = openAiEndpoint(baseUrl);
+  }
   const headers: Record<string, string> = provider === 'anthropic'
     ? {
       'Content-Type': 'application/json',
@@ -191,14 +270,18 @@ export async function callConfiguredProvider(
       signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
     });
   } catch {
-    throw new ProviderRequestError();
+    throw new ProviderRequestError('network');
   }
-  if (!response.ok) throw new ProviderRequestError();
+  const providerRequestId = response.headers.get('x-request-id');
+  if (!response.ok) {
+    throw new ProviderRequestError('http', { status: response.status, providerRequestId });
+  }
 
   try {
-    return providerResponseContent(provider, await response.json());
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    throw new ProviderRequestError();
+    const content = providerResponseContent(provider, await response.json());
+    if (content === undefined) throw new TypeError('Provider response is missing content');
+    return content;
+  } catch {
+    throw new ProviderRequestError('response_shape', { providerRequestId });
   }
 }
