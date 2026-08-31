@@ -8,6 +8,7 @@ const MAX_PUBLIC_TEXT_CODE_POINTS = 1_000;
 const MAX_PUBLIC_TEXT_ITEMS = 20;
 
 const SAFE_MESSAGES = Object.freeze({
+  feature_disabled: 'Candidate MMI scoring is disabled.',
   invalid_request: 'Candidate MMI scoring request is invalid.',
   in_progress: 'This response is already being scored.',
   feedback_unavailable: 'Feedback is unavailable for this response.',

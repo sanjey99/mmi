@@ -158,6 +158,43 @@ export async function setCandidateSessionStartedAt(
   });
 }
 
+export async function runCandidateMmiRetentionMaintenance(
+  environment: Record<string, string | undefined> = process.env,
+): Promise<{ purged: number }> {
+  const output = await executeLocalFixtureSql(
+    'SELECT public.purge_expired_candidate_mmi_free_text_internal();',
+    environment,
+  );
+  const result = JSON.parse(output) as { purged?: unknown };
+  if (!Number.isInteger(result.purged) || Number(result.purged) < 0) {
+    throw new Error('Local candidate retention maintenance returned invalid evidence.');
+  }
+  return { purged: Number(result.purged) };
+}
+
+export async function finalizeCandidateMmiResponseAt(
+  sessionId: string,
+  promptOrder: number,
+  finalizationKey: string,
+  finalizedAt: Date,
+  environment: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  if (
+    !UUID_PATTERN.test(sessionId)
+    || !Number.isInteger(promptOrder)
+    || promptOrder < 1
+    || promptOrder > 5
+    || !UUID_PATTERN.test(finalizationKey)
+    || !Number.isFinite(finalizedAt.getTime())
+  ) {
+    throw new Error('Local candidate finalization fixture requires valid identifiers and time.');
+  }
+  return executeLocalFixtureSql(
+    `SELECT (public.finalize_candidate_mmi_station_response_internal('${sessionId.toLowerCase()}'::uuid, ${promptOrder}::smallint, '${finalizationKey.toLowerCase()}'::uuid, '${finalizedAt.toISOString()}'::timestamptz)).id;`,
+    environment,
+  );
+}
+
 export async function activateVerifiedFlatMmiQuestionSet(
   environment: Record<string, string | undefined> = process.env,
 ): Promise<void> {

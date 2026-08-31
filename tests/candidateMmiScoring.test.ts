@@ -229,6 +229,23 @@ describe('candidate MMI scoring handler security boundary', () => {
     },
   );
 
+  it('honors the server kill switch before configuration or provider work', async () => {
+    const repo = repository({
+      claim: vi.fn(async () => ({ data: { status: 'feature_disabled' } })),
+    });
+    const callProvider = vi.fn();
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({ repository: repo, callProvider }),
+    )(scoringRequest());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'feature_disabled' });
+    expect(repo.loadProviderConfig).not.toHaveBeenCalled();
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(repo.fail).not.toHaveBeenCalled();
+    expect(callProvider).not.toHaveBeenCalled();
+  });
+
   it('returns in-progress with a retry hint and no provider work', async () => {
     const repo = repository({
       claim: vi.fn(async () => ({ data: { status: 'in_progress' } })),
@@ -437,6 +454,7 @@ describe('candidate MMI browser scoring boundary', () => {
   });
 
   it.each([
+    ['feature_disabled', 'Candidate MMI scoring is disabled.'],
     ['in_progress', 'This response is already being scored.'],
     ['feedback_unavailable', 'Feedback is unavailable for this response.'],
     ['provider_not_configured', 'Scoring is not configured yet.'],

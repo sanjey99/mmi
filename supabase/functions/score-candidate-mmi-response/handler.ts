@@ -105,6 +105,7 @@ type ClaimedResponse = Readonly<{
 }>;
 
 type CandidateMmiScoringClaim =
+  | Readonly<{ status: 'feature_disabled' }>
   | Readonly<{ status: 'no_response' }>
   | Readonly<{ status: 'feedback_unavailable' }>
   | Readonly<{ status: 'in_progress' }>
@@ -270,7 +271,8 @@ function parseClaim(
   const claim = record(value);
   if (claim === null || typeof claim.status !== 'string') return null;
   if (
-    (claim.status === 'no_response' ||
+    (claim.status === 'feature_disabled' ||
+      claim.status === 'no_response' ||
       claim.status === 'feedback_unavailable' ||
       claim.status === 'in_progress') &&
     hasExactKeys(claim, ['status'])
@@ -479,6 +481,9 @@ export function createCandidateMmiScoringHandler(
     const claim = parseClaim(claimResult.data, input);
     if (claim === null) return http.json({ code: 'unavailable' }, 500);
 
+    if (claim.status === 'feature_disabled') {
+      return http.json({ code: 'feature_disabled' }, 503);
+    }
     if (claim.status === 'no_response' || claim.status === 'feedback_unavailable') {
       return http.json({ status: claim.status });
     }

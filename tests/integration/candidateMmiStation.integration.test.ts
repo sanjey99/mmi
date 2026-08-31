@@ -7,6 +7,8 @@ import { parseMmiRubric } from '../../supabase/functions/_shared/mmiContracts';
 import {
   activateVerifiedFlatMmiQuestionSet,
   elevateLocalProfileToAdmin,
+  finalizeCandidateMmiResponseAt,
+  runCandidateMmiRetentionMaintenance,
   setCandidateSessionStartedAt,
 } from './localDatabaseFixture';
 import { canRunLocalProfileElevationTests } from './mutationTestSafety';
@@ -14,6 +16,8 @@ import { canRunLocalProfileElevationTests } from './mutationTestSafety';
 const root = process.cwd();
 const migrationPath = `${root}/supabase/migrations/20260826000000_normalized_mmi_station_orchestration.sql`;
 const browserSpeechMigrationPath = `${root}/supabase/migrations/20260831000000_candidate_mmi_browser_speech.sql`;
+const browserSpeechHardeningMigrationPath = `${root}/supabase/migrations/20260901000000_candidate_mmi_browser_speech_hardening.sql`;
+const browserSpeechRetentionScheduleMigrationPath = `${root}/supabase/migrations/20260901001000_candidate_mmi_retention_schedule.sql`;
 const importDirectory = `${root}/supabase/imports/20260825_med_interview_question_bank`;
 const flatCsvPaths = [
   `${importDirectory}/questions-part-1.csv`,
@@ -115,6 +119,22 @@ function readBrowserSpeechMigration(): string {
   return readFileSync(browserSpeechMigrationPath, 'utf8');
 }
 
+function readBrowserSpeechHardeningMigration(): string {
+  assert.ok(
+    existsSync(browserSpeechHardeningMigrationPath),
+    `expected browser-speech hardening migration: ${browserSpeechHardeningMigrationPath}`,
+  );
+  return readFileSync(browserSpeechHardeningMigrationPath, 'utf8');
+}
+
+function readBrowserSpeechRetentionScheduleMigration(): string {
+  assert.ok(
+    existsSync(browserSpeechRetentionScheduleMigrationPath),
+    `expected browser-speech retention schedule migration: ${browserSpeechRetentionScheduleMigrationPath}`,
+  );
+  return readFileSync(browserSpeechRetentionScheduleMigrationPath, 'utf8');
+}
+
 function readFlatImportBatches() {
   return flatCsvPaths.map(csvPath => {
     assert.ok(existsSync(csvPath), `expected ignored local flat import artifact: ${csvPath}`);
@@ -202,6 +222,23 @@ describe('normalized candidate station migration contract', () => {
     const sql = readBrowserSpeechMigration();
     assert.match(sql, /checkpoint_candidate_mmi_station_response/i);
     assert.match(sql, /candidate_mmi_station_response_drafts/i);
+  });
+
+  it('requires a forward-only browser-speech hardening migration for release safety controls', () => {
+    const sql = readBrowserSpeechHardeningMigration();
+    assert.match(sql, /candidate_checkpoint_rate_limited/i);
+    assert.match(sql, /feature_disabled/i);
+    assert.match(sql, /attempt_count\s*>=\s*3/i);
+    assert.match(sql, /candidate_mmi_station_response_drafts/i);
+  });
+
+  it('requires an hourly operator-owned retention schedule for candidate transcript text', () => {
+    const sql = readBrowserSpeechRetentionScheduleMigration();
+    assert.match(sql, /candidate-mmi-purge-expired-free-text/i);
+    assert.match(sql, /23 \* \* \* \*/i);
+    assert.match(sql, /cron\.schedule/i);
+    assert.match(sql, /purge_expired_candidate_mmi_free_text_internal/i);
+    assert.match(sql, /REVOKE ALL ON FUNCTION public\.purge_expired_candidate_mmi_free_text_internal/i);
   });
 });
 
@@ -894,5 +931,213 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       .eq('session_id', abandonSessionId);
     assert.equal(abandonedDraftError, null, abandonedDraftError?.message);
     assert.deepEqual(abandonedDraft, []);
+  });
+
+  it('enforces checkpoint throttling in the database and permits cleanup after the kill switch is disabled', async () => {
+    await setFeatureFlag('true');
+    const { data: started, error: startError } = await owner.rpc('start_candidate_mmi_station_session');
+    assert.equal(startError, null, startError?.message);
+    const sessionId = (started as { sessionId: string }).sessionId;
+
+    try {
+      await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 60_000));
+      for (let revision = 1; revision <= 5; revision += 1) {
+        const { error } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+          p_session_id: sessionId,
+          p_prompt_order: 1,
+          p_transcript: `Synthetic throttled checkpoint ${revision}.`,
+          p_client_revision: revision,
+        });
+        assert.equal(error, null, error?.message);
+      }
+      const { data: throttled, error: throttledError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_transcript: 'Synthetic checkpoint above the one-second quota.',
+        p_client_revision: 6,
+      });
+      assert.equal(throttled, null);
+      assert.match(throttledError?.message ?? '', /candidate_checkpoint_rate_limited/i);
+
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+      const { error: recoveredError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_transcript: 'Synthetic checkpoint after the quota window reset.',
+        p_client_revision: 7,
+      });
+      assert.equal(recoveredError, null, recoveredError?.message);
+
+      await setFeatureFlag('false');
+      const { error: otherAbandonError } = await other.rpc('abandon_candidate_mmi_station_session', {
+        p_session_id: sessionId,
+      });
+      assert.ok(otherAbandonError, 'expected the disabled kill switch to preserve owner isolation');
+      const { error: abandonError } = await owner.rpc('abandon_candidate_mmi_station_session', {
+        p_session_id: sessionId,
+      });
+      assert.equal(abandonError, null, abandonError?.message);
+      const { data: drafts, error: draftsError } = await service
+        .from('candidate_mmi_station_response_drafts')
+        .select('session_id')
+        .eq('session_id', sessionId);
+      assert.equal(draftsError, null, draftsError?.message);
+      assert.deepEqual(drafts, []);
+    } finally {
+      await service.from('candidate_mmi_station_sessions').delete().eq('id', sessionId);
+    }
+  });
+
+  it('blocks scoring claims at the database kill switch before transcript lookup', async () => {
+    await setFeatureFlag('false');
+    const { data, error } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: randomUUID(),
+      p_session_id: randomUUID(),
+      p_prompt_order: 1,
+      p_lease_token: randomUUID(),
+    });
+    assert.equal(error, null, error?.message);
+    assert.deepEqual(data, { status: 'feature_disabled' });
+  });
+
+  it('purges expired unfinished transcript drafts under the snapped privacy policy', async () => {
+    await setFeatureFlag('true');
+    const { data: started, error: startError } = await owner.rpc('start_candidate_mmi_station_session');
+    assert.equal(startError, null, startError?.message);
+    const sessionId = (started as { sessionId: string }).sessionId;
+    let finalizedSessionId = '';
+
+    try {
+      await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 60_000));
+      const { error: checkpointError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_transcript: 'Synthetic unfinished transcript subject to fixed retention.',
+        p_client_revision: 1,
+      });
+      assert.equal(checkpointError, null, checkpointError?.message);
+      const { error: ageError } = await service
+        .from('candidate_mmi_station_response_drafts')
+        .update({ accepted_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString() })
+        .eq('session_id', sessionId);
+      assert.equal(ageError, null, ageError?.message);
+
+      const { data: finalizedStarted, error: finalizedStartError } = await other.rpc('start_candidate_mmi_station_session');
+      assert.equal(finalizedStartError, null, finalizedStartError?.message);
+      finalizedSessionId = (finalizedStarted as { sessionId: string }).sessionId;
+      await setCandidateSessionStartedAt(finalizedSessionId, new Date(Date.now() - 60_000));
+      const { error: finalizedCheckpointError } = await other.rpc('checkpoint_candidate_mmi_station_response', {
+        p_session_id: finalizedSessionId,
+        p_prompt_order: 1,
+        p_transcript: 'Synthetic finalized transcript subject to fixed retention.',
+        p_client_revision: 1,
+      });
+      assert.equal(finalizedCheckpointError, null, finalizedCheckpointError?.message);
+      const finalizedResponseId = await finalizeCandidateMmiResponseAt(
+        finalizedSessionId,
+        1,
+        randomUUID(),
+        new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000),
+      );
+
+      const purgeResult = await runCandidateMmiRetentionMaintenance();
+      assert.equal(purgeResult.purged >= 2, true);
+      const { data: drafts, error: draftsError } = await service
+        .from('candidate_mmi_station_response_drafts')
+        .select('session_id')
+        .eq('session_id', sessionId);
+      assert.equal(draftsError, null, draftsError?.message);
+      assert.deepEqual(drafts, []);
+      const { data: finalizedResponse, error: finalizedResponseError } = await service
+        .from('candidate_mmi_station_responses')
+        .select('finalized_transcript,transcript_purged_at')
+        .eq('id', finalizedResponseId)
+        .single();
+      assert.equal(finalizedResponseError, null, finalizedResponseError?.message);
+      assert.equal(finalizedResponse?.finalized_transcript, null);
+      assert.ok(finalizedResponse?.transcript_purged_at);
+    } finally {
+      await service.from('candidate_mmi_station_sessions').delete().eq('id', sessionId);
+      if (finalizedSessionId) {
+        await service.from('candidate_mmi_station_sessions').delete().eq('id', finalizedSessionId);
+      }
+    }
+  });
+
+  it('caps scoring at three provider attempts while preserving the existing five-minute lease cooldown', async () => {
+    await setFeatureFlag('true');
+    const { data: started, error: startError } = await owner.rpc('start_candidate_mmi_station_session');
+    assert.equal(startError, null, startError?.message);
+    const sessionId = (started as { sessionId: string }).sessionId;
+
+    try {
+      await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 60_000));
+      const { error: checkpointError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_transcript: 'Synthetic transcript that repeatedly fails provider scoring.',
+        p_client_revision: 1,
+      });
+      assert.equal(checkpointError, null, checkpointError?.message);
+      await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 180_000));
+      const { error: finalizeError } = await owner.rpc('finalize_candidate_mmi_station_response', {
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_finalization_key: randomUUID(),
+      });
+      assert.equal(finalizeError, null, finalizeError?.message);
+
+      let responseId = '';
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const leaseToken = randomUUID();
+        const { data: claim, error: claimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+          p_user_id: authUserIds[1],
+          p_session_id: sessionId,
+          p_prompt_order: 1,
+          p_lease_token: leaseToken,
+        });
+        assert.equal(claimError, null, claimError?.message);
+        assert.equal((claim as { status: string }).status, 'claimed');
+        responseId = (claim as { responseId: string }).responseId;
+        const { error: failError } = await service.rpc('fail_candidate_mmi_response_scoring', {
+          p_response_id: responseId,
+          p_session_id: sessionId,
+          p_lease_token: leaseToken,
+          p_error_code: `synthetic_provider_failure_${attempt}`,
+        });
+        assert.equal(failError, null, failError?.message);
+        const { data: coolingDown, error: coolingDownError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+          p_user_id: authUserIds[1],
+          p_session_id: sessionId,
+          p_prompt_order: 1,
+          p_lease_token: randomUUID(),
+        });
+        assert.equal(coolingDownError, null, coolingDownError?.message);
+        assert.deepEqual(coolingDown, { status: 'in_progress' });
+        const { error: expireLeaseError } = await service
+          .from('candidate_mmi_response_scoring_claims')
+          .update({ lease_expires_at: new Date(Date.now() - 1_000).toISOString() })
+          .eq('response_id', responseId);
+        assert.equal(expireLeaseError, null, expireLeaseError?.message);
+      }
+
+      const { data: capped, error: cappedError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+        p_user_id: authUserIds[1],
+        p_session_id: sessionId,
+        p_prompt_order: 1,
+        p_lease_token: randomUUID(),
+      });
+      assert.equal(cappedError, null, cappedError?.message);
+      assert.deepEqual(capped, { status: 'feedback_unavailable' });
+      const { data: claimRow, error: claimRowError } = await service
+        .from('candidate_mmi_response_scoring_claims')
+        .select('attempt_count')
+        .eq('response_id', responseId)
+        .single();
+      assert.equal(claimRowError, null, claimRowError?.message);
+      assert.equal(claimRow?.attempt_count, 3);
+    } finally {
+      await service.from('candidate_mmi_station_sessions').delete().eq('id', sessionId);
+    }
   });
 });

@@ -169,33 +169,37 @@ The original navy/teal/ecru interface remains recoverable from the backup branch
 
 Most verification evidence above is local. The import-idempotency database capability and both separately approved workbook content batches are hosted as active candidate-visible rows, but its Vercel client workflow is not deployed; any next content operation remains separately exact-approval-gated and forward-only. The separately evidenced UI routing fix, direct-provider scoring fix, and dependency alignment are live as described above.
 
-## Required planned voice/webcam station workstream — not implemented, not deployment authorization
+## Browser-speech transcript station contract; webcam is next
 
-The product decision is **automated scoring**, but this is a pre-cofounder-viewing capability specification only. It does not authorize a schema migration, content mutation, camera/microphone capture, transcription/media provider, storage bucket, Edge deployment, Vercel deployment, or hosted test.
+The product decision for this cofounder release is **automated transcript-only scoring**. The 11-minute browser-speech candidate station is implemented locally on `feat/cofounder-ui-reliability`, but it is not yet deployed or feature-enabled. The browser or operating system may process microphone audio through its speech-recognition provider. This app does not record, upload, or persist raw audio. It saves transcript text privately on the server for deadline recovery, finalization, retention enforcement, and AI scoring.
+
+Webcam capture and webcam-derived assessment are the next product workstream. They are not part of this release contract and must not be enabled through the transcript-only feature flag. That later work requires its own approved design, consent, privacy, security, accessibility, validity, bias, retention, clinician-review, and deployment gates.
 
 ### Standard-station flow and source transformation
 
-- For each standard workbook MMI station, show `scenario_text` as a read-only brief for exactly 60 seconds. During that reading phase there is no text box, answer control, recording, or scoring; media scoring must cover response windows only.
-- Then reveal exactly five ordered `sub_questions`, one at a time. Each response window is exactly 120 seconds, accepts voice recording only, automatically stops/submits at timeout, and never exposes future prompts. The nominal station duration is exactly 660 seconds (11 minutes): 60 + (5 × 120).
-- Camera preview and device/calibration setup may happen before timing begins. Webcam-derived signals are limited to posture, camera-engagement/eye-contact proxy, movement, and hesitation/delivery. Camera engagement is an on-camera proxy, not ground-truth eye contact.
-- Server-trusted timing is authoritative for reveal, recording eligibility, stop/submit, and scoring-window evidence timestamps. Client timers are display-only and cannot extend a response window.
+- For each standard workbook MMI station, show `scenario_text` as a read-only brief for exactly 60 seconds. During that reading phase there is no text box, answer control, speech capture, transcript checkpoint, finalization, or scoring; transcript processing covers response windows only.
+- Then reveal exactly five ordered `sub_questions`, one at a time. Each response window is exactly 120 seconds. Browser speech recognition adds text to an editable transcript when supported; manual typing and operating-system/browser dictation remain the required accessibility and compatibility fallbacks. The server closes/finalizes each response at timeout and never exposes future prompts. The nominal station duration is exactly 660 seconds (11 minutes): 60 + (5 × 120).
+- A microphone capability/permission check may happen before timing begins, but it must not create a session or start the station clock. Permission denial, unsupported speech recognition, or recognition interruption must leave the editable transcript available.
+- No camera or video API is used in this release. No posture, movement, delivery, hesitation, vocal-confidence, accent, pronunciation, or camera-engagement inference is permitted.
+- Server-trusted timing is authoritative for reveal, response eligibility, transcript finalization, and scoring-window evidence timestamps. Client timers are display-only and cannot extend a response window.
 - The verified generator/converter output contains 775 flattened standard rows from exactly 155 complete station IDs × orders 1..5, mapping each row as `scenario_text + question_text` with source ID `station/subquestion`, plus 10 standalone panel rows. A separately reviewed, forward-only transformation must create/populate the existing `mmi_stations`/`mmi_sub_questions` domain while preserving source identity and provenance. It must not delete the active flat rows as an improvised rollback.
 - The 10 standalone panel questions remain outside the 11-minute standard-station flow until a separate product decision defines their format, timing, scoring, and safety boundary.
 
-### Automated-media scoring contract
+### Transcript scoring and retention contract
 
-- The current pinned contract grades only a reviewed transcript and explicitly forbids inference of vocal confidence, hesitation, or delivery. It is unchanged by this plan.
-- Automated media requires a new immutable, versioned contract and parser/schema; exact model/provider/version pin; scoring-window evidence timestamps; confidence and quality flags; clinician-approved dimensions and weights; calibration and drift thresholds; explainable feedback; audit/appeal path; and a server-side kill switch.
-- Transcript/rubric reasoning, verbal-delivery scoring, and nonverbal-behavior scoring must be separately represented and reported. Missing, interrupted, or low-confidence media must yield an unavailable/needs-review outcome, never a low score or negative inference.
-- The capability must not perform facial identity recognition, emotion diagnosis, protected-attribute inference, or make admissions or clinical claims.
+- The browser holds live/interim recognition text in UI memory. Accepted editable transcript text is checkpointed privately to the server so an owned session can recover after refresh and the server can finalize the deadline-safe version.
+- Final scoring requests contain only the owned session identity and prompt order. The scoring function obtains the finalized transcript, prompt, rubric, and pinned scoring contract from server-owned state before calling the configured AI provider.
+- The current pinned contract grades only the finalized transcript and explicitly forbids inference of vocal confidence, hesitation, delivery, pace, tone, accent, or pronunciation. It also forbids posture, movement, camera engagement, emotion, identity, protected-attribute, admissions, or clinical inference.
+- Raw microphone audio is never stored by this app on the client, server, Supabase Storage, logs, analytics, or session replay. The browser/platform speech provider may process it under that provider's disclosed behavior. Transcript text is sensitive retained response data and must follow the approved server-side purge policy, including abandoned and unfinalized drafts.
+- Migration `20260901001000` makes that retention policy operational through the postgres-owned `candidate-mmi-purge-expired-free-text` job at minute 23 of every hour. Runtime roles cannot execute its internal wrapper. For any hosted target, monitor `cron.job_run_details` for a success within the last two hours and alert on two consecutive failures; on failure, keep/turn the candidate flag off, repair forward, run the same maintenance function under an approved database-operator session, verify aggregate purge/run evidence without reading transcript content, and only then consider re-enablement.
+- The server feature flag is a real kill switch only when every session RPC and scoring-claim path checks it before database mutation or provider egress. Retry and checkpoint limits must bound database abuse and paid provider attempts.
 
-### Consent, privacy, accessibility, and validation gates
+### Consent, privacy, accessibility, and manual validation gates
 
-- Require explicit just-in-time microphone/camera consent and a purpose/processing/privacy disclosure, plus device and calibration checks before the server starts a timer. Support permission denial, device loss, and upload interruption recovery without silently converting media failure into a score.
-- Provide an accessibility/accommodation route despite the standard route having no text box, and validate supported browsers/devices, keyboard and assistive-technology flows, and alternate approved response modes.
-- Require encrypted transport. Raw media storage is prohibited unless separately approved; if approved, it may use only private encrypted storage. Media must never enter analytics, error logs, public URLs, session replay, or autocapture. The current raw-audio-transient rule remains in force; raw audio/video retention is an unresolved explicit approval gate covering numeric retention, deletion/export, processor/region, and access controls. Keep the feature disabled until that retention/audit tradeoff is approved.
-- Before any release, evaluate validity and disparate impact across lighting/hardware, skin tones/demographics, disabilities/assistive devices, speech/accent variation, neurodivergence, eye conditions, and cultural eye-contact norms. Require clinician, legal, and privacy review, documented acceptable calibration/drift and bias thresholds, and an approved remediation/kill-switch plan.
-- Run unit, integration, browser/device, timing, interruption/recovery, security, privacy, and scoring-calibration tests in isolated/local environments with synthetic media only. Do not run credential-gated media tests against shared or production infrastructure.
+- Show the microphone purpose/processing disclosure before the capability check. The user controls the browser permission decision and can complete the station by typing when permission is denied or speech recognition is unavailable.
+- Validate Chrome, Edge, Safari, Android, and iOS behavior where available; microphone allow/deny, recognition restart, refresh recovery, operating-system dictation, all five deadline transitions, transient retry, mobile keyboard/viewport, keyboard-only use, screen-reader announcements, focus, and reduced motion require dated human evidence.
+- Inspect the built client and monitoring configuration to confirm transcript, prompt, provider payload, credential, and audio data cannot enter browser logs, analytics, error monitoring, public URLs, or session replay.
+- Run automated unit, integration, browser, timing, interruption/recovery, security, privacy, and scoring-contract tests in isolated/local environments with synthetic speech events. Real microphone/device checks are manual because automated tests cannot prove native permission prompts, vendor speech behavior, physical-device keyboards, or assistive-technology output.
 
 ## Remaining P0 blockers before showing cofounders
 
@@ -215,7 +219,10 @@ The product decision is **automated scoring**, but this is a pre-cofounder-viewi
 - [x] Migration `20260825004000` was separately approved and applied on 26 August 2026; its recorded Management API preflight/apply/postflight evidence confirms the required ACL, function, trigger, row-count, and unchanged-default-ACL postconditions.
 - [x] Migration `20260825005000` was separately approved and applied on 26 August 2026; its recorded Management API preflight/apply/postflight evidence confirms provenance, ledger, RPC, ACL, unchanged-row, and unchanged-default-ACL postconditions. Both workbook batches are complete as separately approved; any next content operation remains its own exact approval-gated, forward-only operation.
 - [x] The separately approved part-1 and part-2 workbook batches were imported on 26 August 2026 through one authenticated-admin RPC transaction each, then separately published by activating all 785 imported rows and deactivating—not deleting—the two legacy rows. The final recorded postflight confirms candidate-visible active total 785, two unchanged ledgers, historical legacy answer/score references, closed direct ACLs, and all expected source IDs. This does not deploy the Vercel import client or establish overall hosted readiness.
-- [ ] Build and independently verify the planned 11-minute standard-station/media experience above: forward-only regrouping of the 775 standard rows, the 60-second brief plus five 120-second voice-only response windows, server-trusted timing/future-prompt denial, automated-media contract/persistence, consent/recovery/accommodation controls, and synthetic-media validation. The 10 panel questions remain out of scope pending their own product decision.
+- [x] Implement and automatically verify the local 11-minute candidate station: 155 complete stations × five ordered prompts, a 60-second brief plus five 120-second response windows, optional browser speech into an editable transcript, typing/dictation fallback, server-trusted timing, future-prompt denial, private transcript checkpoint/finalization, and transcript-only scoring. The 10 panel questions remain out of scope pending their own product decision.
+- [x] Close the candidate security gate before deployment: migration `20260901000000` makes feature disablement stop scoring-provider egress, permits owner-only draft cleanup while disabled, limits checkpoints to five accepted writes per second per session/prompt, caps scoring at three provider attempts while retaining the existing five-minute lease cooldown, and purges expired abandoned/unfinalized transcript drafts as well as finalized transcript text. Migration `20260901001000` installs the least-privilege hourly retention operator. On 1 September 2026, both migrations were applied only to the isolated loopback worktree database and the candidate integration proof passed 13/13, including expired finalized text and draft deletion through the operator path; this is not hosted deployment evidence.
+- [ ] Complete and date the manual browser/device/accessibility/privacy checks described above. Webcam is explicitly not part of this release and does not satisfy or replace these transcript-station checks.
+- [ ] On the exact hosted preview target, verify the normalized 155-station/775-prompt import is finalized, publish exactly one approved fixed-days privacy notice, and provision active clinician-reviewed rubrics for all candidate prompts before any smoke or feature enablement. The isolated local proof cleans these fixtures afterward and is not hosted content evidence.
 - [ ] Put the two public variables in Vercel **Preview and Production**, then create a new deployment:
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` containing the `sb_publishable_...` value
@@ -226,13 +233,13 @@ The product decision is **automated scoring**, but this is a pre-cofounder-viewi
 
 ## Priority order before cofounder viewing — largest to smallest
 
-1. Complete the 11-minute standard-station system and forward-only workbook regrouping: 155 complete stations × five ordered prompts, with the 10 panel questions left outside the flow pending their own decision.
-2. Implement automated transcription/media scoring backend and versioned persistence/contract, keeping transcript/rubric, verbal-delivery, and nonverbal behavior evidence separate.
-3. Close consent, privacy, retention, accessibility/accommodation, bias/validity, clinician, legal, and calibration gates; media remains disabled until the explicit retention/audit approval is obtained.
-4. Deploy reviewed client/functions/configuration to the stable Vercel/Supabase surfaces under exact approvals. The documented stable Vercel alias is from `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; current branch work is not thereby deployed.
-5. Run a named-account end-to-end hosted smoke covering scoring, media, timing, permission/device/upload failure recovery, and safe unavailable outcomes.
-6. Create/invite named cofounder accounts and apply exact approved roles.
-7. Complete browser/device/accessibility/go-no-go/rollback verification with dated evidence.
+1. Complete browser/device/accessibility/privacy checks with dated evidence for browser speech, typing/dictation fallback, deadlines, retry, refresh, and sensitive-data exclusion.
+2. Provision or identify exact approved isolated/preview Supabase and client-hosting targets. The worktree's currently linked Supabase `main` branch is shared, and no Vercel project is linked, so neither is a safe inferred deployment target.
+3. Deploy the reviewed migration, scoring function, client configuration, and disabled feature flag only to those exact targets. The documented stable Vercel alias is from `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; current branch work is not thereby deployed.
+4. Run a named-account end-to-end hosted smoke covering transcript scoring, timing, microphone permission/restart/fallback behavior, safe failures, and the scoring kill switch; deliberately enable the flag only after the smoke is accepted.
+5. Create/invite named cofounder accounts and apply exact approved roles.
+6. Confirm deep links and a hardened-compatible rollback with dated evidence.
+7. Design webcam capture/assessment as the next separately approved workstream; it is not a blocker or hidden capability in this transcript-only release.
 
 CI/CD and privacy-safe analytics remain pre-closed-round deployment work, not blockers for this internal cofounder viewing unless product scope changes.
 
@@ -276,8 +283,10 @@ Never mark a migration applied until its complete reviewed effect is present. Ne
 - [ ] Every visible Back action and protected deep link reaches a safe destination.
 - [ ] Published question availability matches the aggregate-only RFC-4180 artifact check: Ethics 457, Motivation 9, NHS 152, Scenarios 17, and Teamwork 150 are available (785 total); Resilience 0 is visibly unavailable.
 - [ ] Practice start, refresh restoration, validation, scoring, failure recovery, feedback, and progress work once each.
-- [ ] The planned standard station runs exactly 660 seconds: a 60-second read-only scenario brief followed by five ordered 120-second voice-only response windows; future prompts stay hidden and server timing controls stop/submit.
-- [ ] Camera/microphone consent, calibration, permission denial, device loss, upload interruption, low-confidence media, accommodation routing, and the kill switch each produce the approved safe outcome; no media is scored during the reading phase and no missing/low-confidence media becomes a low score.
+- [ ] The candidate station runs exactly 660 seconds: a 60-second read-only scenario brief followed by five ordered 120-second response windows; future prompts stay hidden and server timing controls finalization.
+- [ ] Browser speech adds text to the editable transcript when available; microphone denial/interruption or unsupported speech recognition leaves typing and operating-system/browser dictation usable. The app stores no audio.
+- [ ] Only the server-finalized transcript is scored; feature disablement prevents provider egress; abandoned/unfinalized drafts and finalized transcripts follow the approved purge policy; bounded retries cannot create unlimited paid provider calls.
+- [ ] Camera/video APIs and webcam-derived scoring are absent from the release artifact. Webcam remains the next separately approved workstream.
 - [ ] A retry does not create a duplicate logical submission or paid provider call.
 - [ ] An ordinary tester cannot invoke admin, question-write, feedback-read, AI-key, or cross-user operations.
 - [ ] An authorized founder creates a draft single question and previews a CSV without ambiguous column mapping.
@@ -290,4 +299,4 @@ Never mark a migration applied until its complete reviewed effect is present. Ne
 
 ## Release decision
 
-Do not show the hosted preview to cofounders while any P0 item is unresolved. Local tests do not deploy or authorize the remaining media, client, or configuration work; hosted-state claims rely only on the recorded exact approvals and read-only postflight evidence.
+Do not show the hosted preview to cofounders while any P0 item is unresolved. Migrations `20260901000000` and `20260901001000` have been applied only to the isolated loopback worktree database; local tests do not deploy them, the scoring function, client configuration, approved privacy/rubric content, or feature flag to a hosted target. Hosted-state claims rely only on exact-target approvals and dated postflight evidence. Webcam is not part of this release decision.
