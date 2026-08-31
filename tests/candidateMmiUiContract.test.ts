@@ -105,7 +105,8 @@ describe('candidate MMI chooser and station route contract', () => {
     expect(sql.match(/SET search_path = public, pg_temp/g)?.length).toBeGreaterThanOrEqual(10);
     expect(sql).toMatch(/char_length\(transcript\) <= 12000/i);
     expect(sql).toMatch(/finalized_transcript[\s\S]*char_length\(finalized_transcript\) <= 12000/i);
-    expect(sql).toMatch(/btrim\(COALESCE\(v_draft\.transcript, ''\)\) = ''/i);
+    expect(sql).toMatch(/COALESCE\(v_draft\.transcript, ''\) ~ '\^\[\[:space:\]\]\*\$'/i);
+    expect(sql).not.toMatch(/btrim\(COALESCE\(v_draft\.transcript, ''\)\) = ''/i);
     expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.is_valid_candidate_mmi_public_assessment/i);
     expect(sql).toMatch(/is_valid_candidate_mmi_public_assessment\(public_assessment\)/i);
     expect(sql).toMatch(/p_user_id uuid[\s\S]*p_session_id uuid[\s\S]*p_prompt_order smallint[\s\S]*p_lease_token uuid/i);

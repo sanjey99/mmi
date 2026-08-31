@@ -149,7 +149,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'candidate_prompt_snapshot_missing';
   END IF;
-  v_response_state := CASE WHEN btrim(COALESCE(v_draft.transcript, '')) = '' THEN 'no_response' ELSE 'response' END;
+  v_response_state := CASE WHEN COALESCE(v_draft.transcript, '') ~ '^[[:space:]]*$' THEN 'no_response' ELSE 'response' END;
   v_scoring_status := CASE
     WHEN v_response_state = 'no_response' THEN 'no_response'
     WHEN v_snapshot.rubric_snapshot IS NULL OR v_snapshot.scoring_contract_snapshot IS NULL THEN 'feedback_unavailable'
