@@ -40,6 +40,14 @@ function formatSeconds(value: number): string {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
+function createFinalizationKey(): string {
+  const capability = globalThis.crypto;
+  if (typeof capability?.randomUUID !== 'function') {
+    throw new Error('Secure finalization IDs are unavailable.');
+  }
+  return capability.randomUUID();
+}
+
 export default function CandidateMmiStationScreen() {
   const { sessionId: routeSessionId } = useLocalSearchParams<{ sessionId?: string }>();
   const sessionId = typeof routeSessionId === 'string' ? routeSessionId : '';
@@ -118,9 +126,12 @@ export default function CandidateMmiStationScreen() {
     const key = phaseKey(projection);
     if (expiringPhaseRef.current === key) return;
     expiringPhaseRef.current = key;
-    void runner().expireCurrentPhase(crypto.randomUUID()).then(acceptProjection).catch(() => {
+    void Promise.resolve()
+      .then(() => runner().expireCurrentPhase(createFinalizationKey()))
+      .then(acceptProjection)
+      .catch(() => {
       setErrorMessage('The candidate station could not advance safely.');
-    });
+      });
   }, [acceptProjection, projection, remaining, runner]);
 
   const handleLeave = async () => {

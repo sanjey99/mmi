@@ -1,4 +1,5 @@
 import type { CandidateMmiPromptOrder } from './types';
+import { MMI_DIMENSIONS, type MmiAssessment } from '../mmi/types';
 
 export type CandidateMmiApiErrorKind = 'access_denied' | 'feature_disabled' | 'invalid_request' | 'invalid_response' | 'response_closed' | 'response_not_closed' | 'in_progress' | 'unavailable';
 const errorMessages: Readonly<Record<CandidateMmiApiErrorKind, string>> = Object.freeze({
@@ -16,9 +17,16 @@ export type CandidateMmiServerProjection =
 export type CandidateMmiCheckpoint = Readonly<{ sessionId: string; promptOrder: CandidateMmiPromptOrder; draftRevision: number; acceptedAt: string }>;
 export type CandidateMmiScoringStatus = 'pending' | 'in_progress' | 'scored' | 'no_response' | 'feedback_unavailable' | 'failed';
 export type CandidateMmiFinalization = Readonly<{ sessionId: string; promptOrder: CandidateMmiPromptOrder; responseState: 'response' | 'no_response'; finalizedAt: string; scoringStatus: CandidateMmiScoringStatus }>;
-export type CandidateMmiDimension = 'structure' | 'ethics' | 'communication' | 'reflection' | 'nhs_awareness';
-export type CandidateMmiPublicDimensionResult = Readonly<{ score: number | null; applicable: boolean; evidence: string | null; improvement: string | null }>;
-export type CandidateMmiPublicAssessment = Readonly<{ dimensions: Readonly<Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>>; overallPct: number; strengths: readonly string[]; improvements: readonly string[]; improvementTip: string; rubricVersion: number }>;
+export type CandidateMmiDimension = (typeof MMI_DIMENSIONS)[number];
+export type CandidateMmiPublicDimensionResult = MmiAssessment['dimensions'][CandidateMmiDimension];
+export type CandidateMmiPublicAssessment = Readonly<{
+  dimensions: Readonly<Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>>;
+  overallPct: number;
+  strengths: readonly string[];
+  improvements: readonly string[];
+  improvementTip: string;
+  rubricVersion: number;
+}>;
 export type CandidateMmiFeedback = Readonly<{ promptOrder: CandidateMmiPromptOrder; status: CandidateMmiScoringStatus; assessment: CandidateMmiPublicAssessment | null }>;
 type CandidateMmiRpcResult = Readonly<{ data: unknown; error: Readonly<{ code?: string; message?: string }> | null }>;
 export type CandidateMmiRpcClient = Readonly<{ rpc: (name: string, args?: Record<string, unknown>) => PromiseLike<CandidateMmiRpcResult> }>;
@@ -34,13 +42,19 @@ const finalizationKeys = ['finalizedAt', 'promptOrder', 'responseState', 'scorin
 const feedbackKeys = ['assessment', 'promptOrder', 'status'] as const;
 const assessmentKeys = ['dimensions', 'improvementTip', 'improvements', 'overallPct', 'rubricVersion', 'strengths'] as const;
 const dimensionResultKeys = ['applicable', 'evidence', 'improvement', 'score'] as const;
-const dimensions = ['structure', 'ethics', 'communication', 'reflection', 'nhs_awareness'] as const;
+const dimensions = MMI_DIMENSIONS;
 const scoringStatuses = ['pending', 'in_progress', 'scored', 'no_response', 'feedback_unavailable', 'failed'] as const;
 
 function record(value: unknown): Record<string, unknown> | null { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean { const actual = Object.keys(value).sort(); const sortedExpected = [...expected].sort(); return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]); }
 function parseIsoTimestamp(value: unknown): Date | null { if (typeof value !== 'string' || !ISO_TIMESTAMP_PATTERN.test(value)) return null; const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? parsed : null; }
 function codePointLength(value: string): number { return Array.from(value).length; }
+function isPublicText(value: unknown): value is string {
+  return typeof value === 'string' && codePointLength(value) <= 1_000 && value.trim().length > 0;
+}
+function isPublicTextArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length <= 20 && value.every(isPublicText);
+}
 function isPromptOrder(value: unknown): value is CandidateMmiPromptOrder { return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5; }
 function isScoringStatus(value: unknown): value is CandidateMmiScoringStatus { return typeof value === 'string' && (scoringStatuses as readonly string[]).includes(value); }
 function isValidBaseProjection(value: Record<string, unknown>): boolean { return typeof value.sessionId === 'string' && UUID_PATTERN.test(value.sessionId) && typeof value.stationId === 'string' && STATION_ID_PATTERN.test(value.stationId) && parseIsoTimestamp(value.serverNow) !== null && parseIsoTimestamp(value.phaseStartedAt) !== null; }
@@ -74,10 +88,56 @@ function parseProjection(value: unknown): CandidateMmiServerProjection {
 function parseCheckpoint(value: unknown, sessionId: string, promptOrder: CandidateMmiPromptOrder, revision: number): CandidateMmiCheckpoint { const result = record(value); if (result === null || !hasExactKeys(result, checkpointKeys) || result.sessionId !== sessionId || result.promptOrder !== promptOrder || result.draftRevision !== revision || parseIsoTimestamp(result.acceptedAt) === null) return invalidResponse(); return Object.freeze({ sessionId, promptOrder, draftRevision: revision, acceptedAt: result.acceptedAt as string }); }
 function parseFinalization(value: unknown, sessionId: string, promptOrder: CandidateMmiPromptOrder): CandidateMmiFinalization { const result = record(value); if (result === null || !hasExactKeys(result, finalizationKeys) || result.sessionId !== sessionId || result.promptOrder !== promptOrder || (result.responseState !== 'response' && result.responseState !== 'no_response') || !isScoringStatus(result.scoringStatus) || parseIsoTimestamp(result.finalizedAt) === null) return invalidResponse(); return Object.freeze({ sessionId, promptOrder, responseState: result.responseState, finalizedAt: result.finalizedAt as string, scoringStatus: result.scoringStatus }); }
 function parseAssessment(value: unknown): CandidateMmiPublicAssessment {
-  const result = record(value); if (result === null || !hasExactKeys(result, assessmentKeys) || typeof result.overallPct !== 'number' || !Number.isInteger(result.overallPct) || result.overallPct < 0 || result.overallPct > 100 || typeof result.rubricVersion !== 'number' || !Number.isInteger(result.rubricVersion) || result.rubricVersion < 1 || typeof result.improvementTip !== 'string' || result.improvementTip.length === 0 || !Array.isArray(result.strengths) || !Array.isArray(result.improvements) || ![...result.strengths, ...result.improvements].every(item => typeof item === 'string')) return invalidResponse();
-  const valueDimensions = record(result.dimensions); if (valueDimensions === null || !hasExactKeys(valueDimensions, dimensions)) return invalidResponse(); const parsedDimensions = {} as Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>;
-  for (const dimension of dimensions) { const item = record(valueDimensions[dimension]); if (item === null || !hasExactKeys(item, dimensionResultKeys) || typeof item.applicable !== 'boolean' || !(item.score === null || (typeof item.score === 'number' && Number.isInteger(item.score) && item.score >= 1 && item.score <= 5)) || !(item.evidence === null || typeof item.evidence === 'string') || !(item.improvement === null || typeof item.improvement === 'string')) return invalidResponse(); parsedDimensions[dimension] = Object.freeze({ score: item.score as number | null, applicable: item.applicable, evidence: item.evidence as string | null, improvement: item.improvement as string | null }); }
-  return Object.freeze({ dimensions: Object.freeze(parsedDimensions), overallPct: result.overallPct, strengths: Object.freeze([...result.strengths] as string[]), improvements: Object.freeze([...result.improvements] as string[]), improvementTip: result.improvementTip, rubricVersion: result.rubricVersion });
+  const result = record(value);
+  if (
+    result === null
+    || !hasExactKeys(result, assessmentKeys)
+    || typeof result.overallPct !== 'number'
+    || !Number.isFinite(result.overallPct)
+    || result.overallPct < 0
+    || result.overallPct > 100
+    || typeof result.rubricVersion !== 'number'
+    || !Number.isInteger(result.rubricVersion)
+    || result.rubricVersion < 1
+    || !isPublicText(result.improvementTip)
+    || !isPublicTextArray(result.strengths)
+    || !isPublicTextArray(result.improvements)
+  ) return invalidResponse();
+
+  const valueDimensions = record(result.dimensions);
+  if (valueDimensions === null || !hasExactKeys(valueDimensions, dimensions)) return invalidResponse();
+  const parsedDimensions = {} as Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>;
+  for (const dimension of dimensions) {
+    const item = record(valueDimensions[dimension]);
+    const hasValidOptionalText = (item?.evidence === null || isPublicText(item?.evidence))
+      && (item?.improvement === null || isPublicText(item?.improvement));
+    const applicableScore = typeof item?.score === 'number'
+      && Number.isInteger(item.score)
+      && item.score >= 1
+      && item.score <= 5;
+    const inapplicableValuesAreNull = item?.score === null && item.evidence === null && item.improvement === null;
+    if (
+      item === null
+      || !hasExactKeys(item, dimensionResultKeys)
+      || typeof item.applicable !== 'boolean'
+      || !hasValidOptionalText
+      || (item.applicable ? !applicableScore : !inapplicableValuesAreNull)
+    ) return invalidResponse();
+    parsedDimensions[dimension] = Object.freeze({
+      score: item.score as CandidateMmiPublicDimensionResult['score'],
+      applicable: item.applicable,
+      evidence: item.evidence as string | null,
+      improvement: item.improvement as string | null,
+    });
+  }
+  return Object.freeze({
+    dimensions: Object.freeze(parsedDimensions),
+    overallPct: result.overallPct,
+    strengths: Object.freeze([...result.strengths]),
+    improvements: Object.freeze([...result.improvements]),
+    improvementTip: result.improvementTip,
+    rubricVersion: result.rubricVersion,
+  });
 }
 function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] { if (!Array.isArray(value) || value.length !== 5) return invalidResponse(); return Object.freeze(value.map((entry, index) => { const row = record(entry); const promptOrder = (index + 1) as CandidateMmiPromptOrder; if (row === null || !hasExactKeys(row, feedbackKeys) || row.promptOrder !== promptOrder || !isScoringStatus(row.status) || (row.status === 'scored') !== (row.assessment !== null)) return invalidResponse(); return Object.freeze({ promptOrder, status: row.status, assessment: row.status === 'scored' ? parseAssessment(row.assessment) : null }); })); }
 function mapRpcError(code: string | undefined, message: string | undefined): CandidateMmiApiError { if (code === '42501') return new CandidateMmiApiError('access_denied'); if (code === '22023') return new CandidateMmiApiError('invalid_request'); if (code === 'P0001' && message === 'feature_disabled') return new CandidateMmiApiError('feature_disabled'); if (code === 'P0001' && message === 'candidate_response_not_open') return new CandidateMmiApiError('response_closed'); if (code === 'P0001' && (message === 'candidate_response_deadline_not_reached' || message === 'candidate_feedback_not_ready')) return new CandidateMmiApiError('response_not_closed'); if (code === 'P0001' && message === 'stale_candidate_mmi_checkpoint') return new CandidateMmiApiError('in_progress'); return new CandidateMmiApiError('unavailable'); }

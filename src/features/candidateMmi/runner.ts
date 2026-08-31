@@ -40,9 +40,8 @@ export function createCandidateMmiRunner(api: CandidateMmiApi) {
   async function refresh(): Promise<CandidateMmiServerProjection> {
     if (projection === null) throw new CandidateMmiApiError('invalid_request');
     const currentProjection = projection;
-    const currentResponseIdentity = responseIdentity(currentProjection);
     const nextProjection = await api.refresh(currentProjection.sessionId);
-    if (projection !== currentProjection && responseIdentity(projection) !== currentResponseIdentity) return projection!;
+    if (projection !== currentProjection) return projection;
     return acceptProjection(nextProjection);
   }
 
