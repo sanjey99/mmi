@@ -1,121 +1,103 @@
-import {
-  CandidateMmiApiError,
-  type CandidateMmiServerProjection,
-} from './api';
-import type {
-  CandidateMmiAbortReason,
-  CandidateMmiMediaPort,
-  CompletedResponseArtifactRef,
-} from './types';
+import { CandidateMmiApiError, type CandidateMmiCheckpoint, type CandidateMmiFinalization, type CandidateMmiServerProjection } from './api';
+import type { CandidateMmiPromptOrder } from './types';
 
 type CandidateMmiApi = Readonly<{
   start: () => Promise<CandidateMmiServerProjection>;
   refresh: (sessionId: string) => Promise<CandidateMmiServerProjection>;
+  checkpoint: (sessionId: string, promptOrder: CandidateMmiPromptOrder, transcript: string, revision: number) => Promise<CandidateMmiCheckpoint>;
+  finalize: (sessionId: string, promptOrder: CandidateMmiPromptOrder, finalizationKey: string) => Promise<CandidateMmiFinalization>;
   abandon: (sessionId: string) => Promise<void>;
 }>;
+type ResponseState = Readonly<{ identity: string; revision: number; transcript: string; accepted: Promise<CandidateMmiCheckpoint>; latestRevision: number; latestTranscript: string }>;
+type CheckpointInput = Readonly<{ transcript: string; revision: number }>;
 
 function responseIdentity(projection: CandidateMmiServerProjection): string | null {
-  return projection.phase === 'response'
-    ? `${projection.sessionId}:${projection.promptOrder}:${projection.phaseStartedAt}`
-    : null;
+  return projection.phase === 'response' ? `${projection.sessionId}:${projection.promptOrder}:${projection.phaseStartedAt}` : null;
 }
+function checkpointIdentity(response: string, input: CheckpointInput): string { return `${response}:${input.revision}:${input.transcript}`; }
 
-export function createCandidateMmiRunner(api: CandidateMmiApi, media: CandidateMmiMediaPort) {
+export function createCandidateMmiRunner(api: CandidateMmiApi) {
   let projection: CandidateMmiServerProjection | null = null;
-  let preparedSessionIds: ReadonlySet<string> = new Set<string>();
-  let begunResponseIdentity: string | null = null;
-  let finishedResponseIdentity: string | null = null;
-  let finishedResponseArtifact: CompletedResponseArtifactRef | null = null;
-  let inFlightResponseFinish: Promise<CompletedResponseArtifactRef | null> | null = null;
-  let mediaAborted = false;
+  let responseState: ResponseState | null = null;
+  let inFlightCheckpoints: ReadonlyMap<string, Promise<CandidateMmiCheckpoint>> = new Map();
+  let inFlightFinalizations: ReadonlyMap<string, Promise<CandidateMmiServerProjection>> = new Map();
+  let leavePromise: Promise<void> | null = null;
 
-  async function beginCurrentResponse(nextProjection: CandidateMmiServerProjection): Promise<void> {
-    if (nextProjection.phase !== 'response') return;
-    const identity = responseIdentity(nextProjection)!;
-    if (begunResponseIdentity === identity) return;
-    if (!preparedSessionIds.has(nextProjection.sessionId)) {
-      await media.prepare({ sessionId: nextProjection.sessionId });
-      preparedSessionIds = new Set([...preparedSessionIds, nextProjection.sessionId]);
-    }
-    await media.beginResponse({
-      sessionId: nextProjection.sessionId,
-      promptOrder: nextProjection.promptOrder,
-    });
-    begunResponseIdentity = identity;
-    finishedResponseIdentity = null;
-    finishedResponseArtifact = null;
-  }
-
-  async function acceptProjection(nextProjection: CandidateMmiServerProjection): Promise<CandidateMmiServerProjection> {
+  function acceptProjection(nextProjection: CandidateMmiServerProjection): CandidateMmiServerProjection {
     projection = nextProjection;
-    await beginCurrentResponse(nextProjection);
-    return nextProjection;
-  }
-
-  async function abortMediaOnce(reason: CandidateMmiAbortReason): Promise<void> {
-    if (mediaAborted || projection === null) return;
-    mediaAborted = true;
-    await media.abort({ sessionId: projection.sessionId, reason });
-  }
-
-  async function finishCurrentResponseOnce(): Promise<CompletedResponseArtifactRef | null> {
-    if (projection?.phase !== 'response') return null;
-    const identity = responseIdentity(projection)!;
-    if (finishedResponseIdentity === identity) return finishedResponseArtifact;
-    if (inFlightResponseFinish !== null) return inFlightResponseFinish;
-    inFlightResponseFinish = media.finishResponse().then(artifact => {
-      finishedResponseIdentity = identity;
-      finishedResponseArtifact = artifact;
-      return artifact;
-    }).finally(() => {
-      inFlightResponseFinish = null;
-    });
-    return inFlightResponseFinish;
-  }
-
-  async function settleExpiredResponseBestEffort(expiredResponseIdentity: string): Promise<void> {
-    try {
-      await finishCurrentResponseOnce();
-    } catch {
-      const currentResponseIdentity = projection === null ? null : responseIdentity(projection);
-      if (currentResponseIdentity !== expiredResponseIdentity) return;
-      finishedResponseIdentity = expiredResponseIdentity;
-      finishedResponseArtifact = null;
+    if (nextProjection.phase !== 'response') {
+      responseState = null;
+      inFlightCheckpoints = new Map();
+      return nextProjection;
     }
+    const identity = responseIdentity(nextProjection)!;
+    const accepted = Promise.resolve(Object.freeze({ sessionId: nextProjection.sessionId, promptOrder: nextProjection.promptOrder, draftRevision: nextProjection.draftRevision, acceptedAt: nextProjection.serverNow }));
+    responseState = Object.freeze({ identity, revision: nextProjection.draftRevision, transcript: nextProjection.draftTranscript, accepted, latestRevision: nextProjection.draftRevision, latestTranscript: nextProjection.draftTranscript });
+    inFlightCheckpoints = new Map();
+    return nextProjection;
   }
 
   async function refresh(): Promise<CandidateMmiServerProjection> {
     if (projection === null) throw new CandidateMmiApiError('invalid_request');
-    try {
-      const currentProjection = projection;
-      const nextProjection = await api.refresh(currentProjection.sessionId);
-      if (currentProjection.phase === 'response'
-        && responseIdentity(currentProjection) !== responseIdentity(nextProjection)) {
-        await finishCurrentResponseOnce();
+    const currentProjection = projection;
+    const currentResponseIdentity = responseIdentity(currentProjection);
+    const nextProjection = await api.refresh(currentProjection.sessionId);
+    if (projection !== currentProjection && responseIdentity(projection) !== currentResponseIdentity) return projection!;
+    return acceptProjection(nextProjection);
+  }
+
+  function checkpoint(input: CheckpointInput): Promise<CandidateMmiCheckpoint> {
+    if (projection?.phase !== 'response' || responseState === null) return Promise.reject(new CandidateMmiApiError('response_closed'));
+    const stateAtRequest = responseState;
+    if (input.revision === stateAtRequest.revision && input.transcript === stateAtRequest.transcript) return stateAtRequest.accepted;
+    const key = checkpointIdentity(stateAtRequest.identity, input);
+    const existing = inFlightCheckpoints.get(key);
+    if (existing !== undefined) return existing;
+    responseState = Object.freeze({ ...stateAtRequest, latestRevision: input.revision, latestTranscript: input.transcript });
+    const promise = api.checkpoint(projection.sessionId, projection.promptOrder, input.transcript, input.revision).then(acknowledgement => {
+      if (responseState?.identity === stateAtRequest.identity && responseState.latestRevision === input.revision && responseState.latestTranscript === input.transcript) {
+        responseState = Object.freeze({ identity: stateAtRequest.identity, revision: acknowledgement.draftRevision, transcript: input.transcript, accepted: Promise.resolve(acknowledgement), latestRevision: acknowledgement.draftRevision, latestTranscript: input.transcript });
       }
-      return await acceptProjection(nextProjection);
-    } catch (error) {
-      if (error instanceof CandidateMmiApiError && error.kind === 'feature_disabled') {
-        await abortMediaOnce('feature_disabled');
+      return acknowledgement;
+    }).finally(() => {
+      const current = inFlightCheckpoints.get(key);
+      if (current === promise) {
+        const next = new Map(inFlightCheckpoints); next.delete(key); inFlightCheckpoints = next;
       }
-      throw error;
-    }
+    });
+    inFlightCheckpoints = new Map(inFlightCheckpoints).set(key, promise);
+    return promise;
+  }
+
+  function expireCurrentPhase(finalizationKey: string): Promise<CandidateMmiServerProjection> {
+    if (projection === null) return Promise.reject(new CandidateMmiApiError('invalid_request'));
+    if (projection.phase !== 'response') return refresh();
+    const currentProjection = projection;
+    const identity = responseIdentity(currentProjection)!;
+    const key = `${identity}:${finalizationKey}`;
+    const existing = inFlightFinalizations.get(key);
+    if (existing !== undefined) return existing;
+    const promise = api.finalize(currentProjection.sessionId, currentProjection.promptOrder, finalizationKey).then(async () => {
+      if (projection !== currentProjection || responseIdentity(projection) !== identity) return projection!;
+      return refresh();
+    }).finally(() => {
+      const current = inFlightFinalizations.get(key);
+      if (current === promise) { const next = new Map(inFlightFinalizations); next.delete(key); inFlightFinalizations = next; }
+    });
+    inFlightFinalizations = new Map(inFlightFinalizations).set(key, promise);
+    return promise;
   }
 
   return Object.freeze({
     start: async (): Promise<CandidateMmiServerProjection> => acceptProjection(await api.start()),
     restore: async (sessionId: string): Promise<CandidateMmiServerProjection> => acceptProjection(await api.refresh(sessionId)),
     refresh,
-    expireCurrentPhase: async (): Promise<CandidateMmiServerProjection> => {
-      const expiredResponseIdentity = projection === null ? null : responseIdentity(projection);
-      if (expiredResponseIdentity !== null) await settleExpiredResponseBestEffort(expiredResponseIdentity);
-      return refresh();
-    },
-    finishCurrentResponse: finishCurrentResponseOnce,
-    leave: async (): Promise<void> => {
-      if (projection === null) throw new CandidateMmiApiError('invalid_request');
-      await abortMediaOnce('leave');
-      await api.abandon(projection.sessionId);
+    checkpoint,
+    expireCurrentPhase,
+    leave: (): Promise<void> => {
+      if (projection === null) return Promise.reject(new CandidateMmiApiError('invalid_request'));
+      if (leavePromise === null) leavePromise = api.abandon(projection.sessionId);
+      return leavePromise;
     },
   });
 }

@@ -7,7 +7,6 @@ import { Button } from '../../src/components/ui/Button';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { createCandidateMmiApi, type CandidateMmiServerProjection } from '../../src/features/candidateMmi/api';
 import { isNormalizedMmiStationEnabled } from '../../src/features/candidateMmi/featureFlag';
-import { createNoCaptureMediaPort } from '../../src/features/candidateMmi/mediaPort';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { supabase } from '../../src/lib/supabase';
 import { colors, text } from '../../src/theme';
@@ -56,7 +55,7 @@ export default function CandidateMmiStationScreen() {
 
   const runner = useCallback((): CandidateRunner => {
     if (runnerRef.current !== null) return runnerRef.current;
-    runnerRef.current = createCandidateMmiRunner(createCandidateMmiApi(supabase), createNoCaptureMediaPort());
+    runnerRef.current = createCandidateMmiRunner(createCandidateMmiApi(supabase));
     return runnerRef.current;
   }, []);
 
@@ -119,7 +118,7 @@ export default function CandidateMmiStationScreen() {
     const key = phaseKey(projection);
     if (expiringPhaseRef.current === key) return;
     expiringPhaseRef.current = key;
-    void runner().expireCurrentPhase().then(acceptProjection).catch(() => {
+    void runner().expireCurrentPhase(crypto.randomUUID()).then(acceptProjection).catch(() => {
       setErrorMessage('The candidate station could not advance safely.');
     });
   }, [acceptProjection, projection, remaining, runner]);
