@@ -29,6 +29,7 @@ export default defineConfig({
       'tests/medInterviewQuestionBankImport.test.ts',
       'tests/candidateMmiImportPolicy.test.ts',
       'tests/candidateMmiApi.test.ts',
+      'tests/candidateMmiScoring.test.ts',
       'tests/candidateMmiSpeech.test.ts',
       'tests/candidateMmiUiContract.test.ts',
       'tests/cofounderFeedback.test.ts',
@@ -58,6 +59,8 @@ export default defineConfig({
         'src/features/candidateMmi/api.ts',
         'src/features/candidateMmi/featureFlag.ts',
         'src/features/candidateMmi/runner.ts',
+        'src/features/candidateMmi/scoringApi.ts',
+        'supabase/functions/score-candidate-mmi-response/handler.ts',
         'src/features/cofounderFeedback/api.ts',
       ],
       exclude: [

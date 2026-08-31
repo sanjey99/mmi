@@ -11,6 +11,8 @@
   },
   "include": [
     "supabase/functions/manage-ai-key/handler.ts",
-    "tests/manageAiKeyHandler.test.ts"
+    "supabase/functions/score-candidate-mmi-response/handler.ts",
+    "tests/manageAiKeyHandler.test.ts",
+    "tests/candidateMmiScoring.test.ts"
   ]
 }
