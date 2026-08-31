@@ -30,7 +30,10 @@ export type CandidateMmiSpeechStatus =
   | 'permission_denied'
   | 'unavailable';
 
-export type CandidateMmiSpeechCapability = 'supported' | 'unsupported';
+export type CandidateMmiSpeechCapability = Readonly<{
+  supported: boolean;
+  implementation: 'speech_recognition' | 'webkit_speech_recognition' | 'none';
+}>;
 
 export type CandidateMmiSpeechCallbacks = Readonly<{
   onFinalFragment: (text: string) => void;
@@ -52,6 +55,7 @@ export interface CandidateMmiSpeechRecognitionInstance {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  onstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: ((event: Readonly<{ error: string }>) => void) | null;
   onresult: ((event: CandidateMmiSpeechRecognitionEvent) => void) | null;
@@ -66,7 +70,6 @@ export interface CandidateMmiSpeechPort {
   getCapability(): CandidateMmiSpeechCapability;
   start(input: Readonly<{ responseIdentity: string }> & CandidateMmiSpeechCallbacks): Promise<void>;
   stop(input: Readonly<{ responseIdentity: string }>): Promise<void>;
-  startPreflight(onStatus: (status: CandidateMmiSpeechStatus) => void): Promise<void>;
-  stopPreflight(): Promise<void>;
+  preflight(input: Readonly<{ onStatus: (status: CandidateMmiSpeechStatus) => void }>): Promise<CandidateMmiSpeechStatus>;
   abort(): Promise<void>;
 }

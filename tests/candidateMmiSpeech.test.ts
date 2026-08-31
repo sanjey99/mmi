@@ -14,6 +14,7 @@ class FakeRecognition {
   lang = '';
   continuous = false;
   interimResults = false;
+  onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
   onerror: ((event: { error: string }) => void) | null = null;
   onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null = null;
@@ -39,21 +40,21 @@ function fakeConstructor(instances: FakeRecognition[]) {
 }
 
 describe('candidate MMI transcript reducer', () => {
-  it('restores a canonical draft, replaces it manually, and appends final fragments immutably', () => {
+  it('preserves restored and manual whitespace while appending normalized final fragments immutably', () => {
     const restored = reduceTranscript(createTranscriptState(responseOne), {
-      type: 'restore', responseIdentity: responseOne, text: '  I would listen first  ',
+      type: 'restore', responseIdentity: responseOne, text: '  I would listen\nfirst  ', revision: 4,
     });
     const manuallyEdited = reduceTranscript(restored, {
-      type: 'manualReplace', responseIdentity: responseOne, text: 'I would listen carefully first',
+      type: 'manualReplace', responseIdentity: responseOne, text: 'I would listen\ncarefully first',
     });
     const appended = reduceTranscript(manuallyEdited, {
-      type: 'finalFragment', responseIdentity: responseOne, text: ' and checked understanding ',
+      type: 'finalFragment', responseIdentity: responseOne, text: '  and\nchecked understanding  ',
     });
 
-    expect(restored).toMatchObject({ committedText: 'I would listen first', interimText: '', dirty: false });
-    expect(manuallyEdited).toMatchObject({ committedText: 'I would listen carefully first', dirty: true });
+    expect(restored).toMatchObject({ committedText: '  I would listen\nfirst  ', interimText: '', dirty: false, revision: 4 });
+    expect(manuallyEdited).toMatchObject({ committedText: 'I would listen\ncarefully first', dirty: true });
     expect(appended).toMatchObject({
-      committedText: 'I would listen carefully first and checked understanding',
+      committedText: 'I would listen\ncarefully first and checked understanding',
       interimText: '',
       dirty: true,
     });
@@ -75,10 +76,12 @@ describe('candidate MMI transcript reducer', () => {
     const drafted = reduceTranscript(createTranscriptState(responseOne), {
       type: 'manualReplace', responseIdentity: responseOne, text: 'I would check capacity',
     });
-    const checkpointed = reduceTranscript(drafted, { type: 'acceptedCheckpoint', responseIdentity: responseOne });
+    const checkpointed = reduceTranscript(drafted, {
+      type: 'acceptedCheckpoint', responseIdentity: responseOne, text: 'I would check capacity', revision: 1,
+    });
     const frozen = reduceTranscript(checkpointed, { type: 'freeze', responseIdentity: responseOne });
 
-    expect(checkpointed).toMatchObject({ committedText: 'I would check capacity', checkpointedText: 'I would check capacity', dirty: false });
+    expect(checkpointed).toMatchObject({ committedText: 'I would check capacity', checkpointedText: 'I would check capacity', dirty: false, revision: 1 });
     expect(reduceTranscript(frozen, {
       type: 'finalFragment', responseIdentity: responseOne, text: 'and seek support',
     })).toBe(frozen);
@@ -108,15 +111,48 @@ describe('candidate MMI transcript reducer', () => {
     expect(state.committedText).toHaveLength(CANDIDATE_MMI_TRANSCRIPT_MAX_CODE_POINTS * 2);
     expect(Array.from(capped.committedText)).toHaveLength(CANDIDATE_MMI_TRANSCRIPT_MAX_CODE_POINTS);
   });
+
+  it('keeps a newer local edit dirty when an older checkpoint acknowledgement arrives', () => {
+    const acknowledgedA = reduceTranscript(createTranscriptState(responseOne), {
+      type: 'manualReplace', responseIdentity: responseOne, text: 'A',
+    });
+    const locallyEditedB = reduceTranscript(acknowledgedA, {
+      type: 'manualReplace', responseIdentity: responseOne, text: 'B',
+    });
+    const acknowledgedWhileBWasDirty = reduceTranscript(locallyEditedB, {
+      type: 'acceptedCheckpoint', responseIdentity: responseOne, text: 'A', revision: 1,
+    });
+    const staleAcknowledgement = reduceTranscript(acknowledgedWhileBWasDirty, {
+      type: 'acceptedCheckpoint', responseIdentity: responseOne, text: 'A', revision: 0,
+    });
+
+    expect(acknowledgedWhileBWasDirty).toMatchObject({ committedText: 'B', checkpointedText: 'A', revision: 1, dirty: true });
+    expect(staleAcknowledgement).toBe(acknowledgedWhileBWasDirty);
+  });
+
+  it('preserves manual trailing whitespace while adding one programmatic speech boundary', () => {
+    const manual = reduceTranscript(createTranscriptState(responseOne), {
+      type: 'manualReplace', responseIdentity: responseOne, text: 'I would listen first  ',
+    });
+    const appended = reduceTranscript(manual, {
+      type: 'finalFragment', responseIdentity: responseOne, text: 'then explain options',
+    });
+
+    expect(appended.committedText).toBe('I would listen first   then explain options');
+  });
 });
 
 describe('candidate MMI browser speech port', () => {
   it('uses the standard constructor, configures en-GB, and routes final and interim text separately', async () => {
     const instances: FakeRecognition[] = [];
+    const webkitInstances: FakeRecognition[] = [];
     const finals: string[] = [];
     const interim: string[] = [];
     const statuses: string[] = [];
-    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+    const port = createBrowserSpeechPort({
+      SpeechRecognition: fakeConstructor(instances),
+      webkitSpeechRecognition: fakeConstructor(webkitInstances),
+    });
 
     await port.start({
       responseIdentity: responseOne,
@@ -127,9 +163,10 @@ describe('candidate MMI browser speech port', () => {
     const recognition = instances[0]!;
     recognition.emitResult({ isFinal: false, transcript: 'interim response' }, { isFinal: true, transcript: 'final response' });
 
-    expect(port.getCapability()).toBe('supported');
+    expect(port.getCapability()).toEqual({ supported: true, implementation: 'speech_recognition' });
     expect(recognition).toMatchObject({ lang: 'en-GB', continuous: true, interimResults: true });
     expect(recognition.start).toHaveBeenCalledOnce();
+    expect(webkitInstances).toHaveLength(0);
     expect(finals).toEqual(['final response']);
     expect(interim).toEqual(['interim response']);
     expect(statuses).toEqual(['listening']);
@@ -144,21 +181,41 @@ describe('candidate MMI browser speech port', () => {
     await unsupportedPort.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: vi.fn() });
 
     expect(webkitInstances).toHaveLength(1);
-    expect(unsupportedPort.getCapability()).toBe('unsupported');
+    expect(webkitPort.getCapability()).toEqual({ supported: true, implementation: 'webkit_speech_recognition' });
+    expect(unsupportedPort.getCapability()).toEqual({ supported: false, implementation: 'none' });
   });
 
-  it('starts and explicitly stops a preflight instance without retaining any results', async () => {
+  it('resolves successful preflight only from native onstart, stops it immediately, and retains no results', async () => {
     const instances: FakeRecognition[] = [];
     const statuses: string[] = [];
     const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
 
-    await port.startPreflight(status => statuses.push(status));
+    const preflight = port.preflight({ onStatus: status => statuses.push(status) });
     instances[0]!.emitResult({ isFinal: true, transcript: 'discarded preflight result' });
-    await port.stopPreflight();
+    expect(instances[0]!.stop).not.toHaveBeenCalled();
+    instances[0]!.onstart?.();
 
+    await expect(preflight).resolves.toBe('listening');
     expect(instances[0]!.start).toHaveBeenCalledOnce();
     expect(instances[0]!.stop).toHaveBeenCalledOnce();
     expect(statuses).toEqual(['listening']);
+  });
+
+  it('resolves unsupported and permission-denied preflight safely without retaining microphone state', async () => {
+    const unsupportedStatuses: string[] = [];
+    const unsupportedPort = createBrowserSpeechPort({});
+    await expect(unsupportedPort.preflight({ onStatus: status => unsupportedStatuses.push(status) })).resolves.toBe('unsupported');
+
+    const instances: FakeRecognition[] = [];
+    const deniedStatuses: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+    const preflight = port.preflight({ onStatus: status => deniedStatuses.push(status) });
+    instances[0]!.onerror?.({ error: 'service-not-allowed' });
+
+    await expect(preflight).resolves.toBe('permission_denied');
+    expect(unsupportedStatuses).toEqual(['unsupported']);
+    expect(deniedStatuses).toEqual(['permission_denied']);
+    expect(instances[0]!.stop).toHaveBeenCalledOnce();
   });
 
   it('restarts a fresh instance after an unexpected end only for the active response', async () => {
@@ -214,6 +271,22 @@ describe('candidate MMI browser speech port', () => {
     instances[2]!.onend?.();
     expect(instances).toHaveLength(4);
     expect(statuses).toContain('restarting');
+  });
+
+  it('does not restart after service-not-allowed or network failures', async () => {
+    const instances: FakeRecognition[] = [];
+    const statuses: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+
+    await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: status => statuses.push(status) });
+    instances[0]!.onerror?.({ error: 'service-not-allowed' });
+    instances[0]!.onend?.();
+    await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: status => statuses.push(status) });
+    instances[1]!.onerror?.({ error: 'network' });
+    instances[1]!.onend?.();
+
+    expect(instances).toHaveLength(2);
+    expect(statuses).toEqual(['listening', 'permission_denied', 'listening', 'unavailable']);
   });
 
   it('invalidates callbacks before aborting the native instance', async () => {

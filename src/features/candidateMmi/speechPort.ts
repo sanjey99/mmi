@@ -51,7 +51,15 @@ function stopRecognition(recognition: CandidateMmiSpeechRecognitionInstance, abo
 }
 
 export function createBrowserSpeechPort(constructors: SpeechConstructors): CandidateMmiSpeechPort {
-  const Recognition = constructors.SpeechRecognition ?? constructors.webkitSpeechRecognition;
+  const selectedRecognition = constructors.SpeechRecognition
+    ? { constructor: constructors.SpeechRecognition, implementation: 'speech_recognition' as const }
+    : constructors.webkitSpeechRecognition
+      ? { constructor: constructors.webkitSpeechRecognition, implementation: 'webkit_speech_recognition' as const }
+      : null;
+  const Recognition = selectedRecognition?.constructor;
+  const capability: CandidateMmiSpeechCapability = Object.freeze(selectedRecognition
+    ? { supported: true, implementation: selectedRecognition.implementation }
+    : { supported: false, implementation: 'none' });
   let generation = 0;
   let activeResponse: ActiveResponse | null = null;
   let preflight: Readonly<{ generation: number; recognition: CandidateMmiSpeechRecognitionInstance }> | null = null;
@@ -107,7 +115,7 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
   }
 
   return Object.freeze({
-    getCapability: (): CandidateMmiSpeechCapability => Recognition ? 'supported' : 'unsupported',
+    getCapability: (): CandidateMmiSpeechCapability => capability,
     start: async (input: SpeechStartInput) => {
       if (activeResponse) {
         generation += 1;
@@ -123,31 +131,27 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
       activeResponse = null;
       stopRecognition(recognition, false);
     },
-    startPreflight: async (onStatus: (status: CandidateMmiSpeechStatus) => void) => {
+    preflight: async ({ onStatus }: Readonly<{ onStatus: (status: CandidateMmiSpeechStatus) => void }>) => {
       if (!Recognition) {
         onStatus('unsupported');
-        return;
+        return 'unsupported';
       }
-      if (preflight) stopRecognition(preflight.recognition, true);
       const recognition = createRecognition()!;
       const current = { generation: ++generation, recognition };
       preflight = current;
-      recognition.onerror = event => {
-        if (preflight?.generation === current.generation) onStatus(recognitionErrorStatus(event.error).status);
-      };
-      try {
-        recognition.start();
-        onStatus('listening');
-      } catch {
-        if (preflight?.generation === current.generation) onStatus('unavailable');
-      }
-    },
-    stopPreflight: async () => {
-      if (!preflight) return;
-      const recognition = preflight.recognition;
-      generation += 1;
-      preflight = null;
-      stopRecognition(recognition, false);
+      return new Promise<CandidateMmiSpeechStatus>(resolve => {
+        const settle = (status: CandidateMmiSpeechStatus) => {
+          if (preflight?.generation !== current.generation) return;
+          generation += 1;
+          preflight = null;
+          stopRecognition(recognition, false);
+          onStatus(status);
+          resolve(status);
+        };
+        recognition.onstart = () => settle('listening');
+        recognition.onerror = event => settle(recognitionErrorStatus(event.error).status);
+        try { recognition.start(); } catch { settle('unavailable'); }
+      });
     },
     abort: async () => {
       const responseRecognition = activeResponse?.recognition;
