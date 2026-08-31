@@ -129,4 +129,17 @@ describe('candidate MMI chooser and station route contract', () => {
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role/i);
     expect(sql).not.toMatch(/audio|blob|bucket|storage|recorder/i);
   });
+
+  it('uses PostgreSQL-valid individual RLS alterations for every private transcript table', () => {
+    const sql = readBrowserSpeechMigration();
+
+    for (const table of [
+      'candidate_mmi_station_prompt_snapshots',
+      'candidate_mmi_station_response_drafts',
+      'candidate_mmi_station_responses',
+      'candidate_mmi_response_scoring_claims',
+    ]) {
+      expect(sql).toMatch(new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY;`, 'i'));
+    }
+  });
 });

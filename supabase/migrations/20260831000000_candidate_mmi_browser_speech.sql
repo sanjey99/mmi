@@ -687,16 +687,14 @@ BEGIN
   RETURN jsonb_build_object('purged', v_purged);
 END;
 $function$;
-ALTER TABLE public.candidate_mmi_station_prompt_snapshots, public.candidate_mmi_station_response_drafts,
-  public.candidate_mmi_station_responses, public.candidate_mmi_response_scoring_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidate_mmi_station_prompt_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidate_mmi_station_response_drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidate_mmi_station_responses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidate_mmi_response_scoring_claims ENABLE ROW LEVEL SECURITY;
 REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots,
   public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses,
   public.candidate_mmi_response_scoring_claims FROM PUBLIC, anon, authenticated;
-GRANT ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions,
-  public.candidate_mmi_station_prompt_snapshots,
-  public.candidate_mmi_station_response_drafts,
-  public.candidate_mmi_station_responses,
-  public.candidate_mmi_response_scoring_claims TO service_role;
+GRANT ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots, public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses, public.candidate_mmi_response_scoring_claims TO service_role;
 REVOKE ALL ON TABLE public.mmi_stations FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.candidate_mmi_station_window(timestamptz, smallint),
