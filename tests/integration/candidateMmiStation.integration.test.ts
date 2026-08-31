@@ -803,6 +803,67 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     assert.equal(scoredAfterPurgeError, null, scoredAfterPurgeError?.message);
     assert.deepEqual(scoredAfterPurge, { status: 'scored', assessment });
 
+    const { data: purgedPendingStarted, error: purgedPendingStartError } = await owner.rpc('start_candidate_mmi_station_session');
+    assert.equal(purgedPendingStartError, null, purgedPendingStartError?.message);
+    const purgedPendingSessionId = (purgedPendingStarted as { sessionId: string }).sessionId;
+    await setCandidateSessionStartedAt(purgedPendingSessionId, new Date(Date.now() - 120_000));
+    const { error: purgedPendingDraftError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+      p_session_id: purgedPendingSessionId,
+      p_prompt_order: 1,
+      p_transcript: 'Synthetic response whose unscored transcript will be purged.',
+      p_client_revision: 1,
+    });
+    assert.equal(purgedPendingDraftError, null, purgedPendingDraftError?.message);
+    await setCandidateSessionStartedAt(purgedPendingSessionId, new Date(Date.now() - 300_000));
+    const { error: purgedPendingFinalizeError } = await owner.rpc('finalize_candidate_mmi_station_response', {
+      p_session_id: purgedPendingSessionId,
+      p_prompt_order: 1,
+      p_finalization_key: randomUUID(),
+    });
+    assert.equal(purgedPendingFinalizeError, null, purgedPendingFinalizeError?.message);
+    const pendingLeaseToken = randomUUID();
+    const { data: pendingClaim, error: pendingClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: authUserIds[1],
+      p_session_id: purgedPendingSessionId,
+      p_prompt_order: 1,
+      p_lease_token: pendingLeaseToken,
+    });
+    assert.equal(pendingClaimError, null, pendingClaimError?.message);
+    assert.equal((pendingClaim as { status: string }).status, 'claimed');
+    const pendingResponseId = (pendingClaim as { responseId: string }).responseId;
+    const { error: pendingPurgeError } = await service.rpc('purge_expired_candidate_mmi_free_text', {
+      p_now: new Date(Date.now() + 2 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    assert.equal(pendingPurgeError, null, pendingPurgeError?.message);
+    const { data: activePurgedClaim, error: activePurgedClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: authUserIds[1],
+      p_session_id: purgedPendingSessionId,
+      p_prompt_order: 1,
+      p_lease_token: randomUUID(),
+    });
+    assert.equal(activePurgedClaimError, null, activePurgedClaimError?.message);
+    assert.deepEqual(activePurgedClaim, { status: 'in_progress' });
+    const { error: expirePurgedLeaseError } = await service
+      .from('candidate_mmi_response_scoring_claims')
+      .update({ lease_expires_at: new Date(Date.now() - 1_000).toISOString() })
+      .eq('response_id', pendingResponseId);
+    assert.equal(expirePurgedLeaseError, null, expirePurgedLeaseError?.message);
+    const { data: settledPurgedClaim, error: settledPurgedClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: authUserIds[1],
+      p_session_id: purgedPendingSessionId,
+      p_prompt_order: 1,
+      p_lease_token: randomUUID(),
+    });
+    assert.equal(settledPurgedClaimError, null, settledPurgedClaimError?.message);
+    assert.deepEqual(settledPurgedClaim, { status: 'feedback_unavailable' });
+    const { data: settledPurgedResponse, error: settledPurgedResponseError } = await service
+      .from('candidate_mmi_station_responses')
+      .select('scoring_status')
+      .eq('id', pendingResponseId)
+      .single();
+    assert.equal(settledPurgedResponseError, null, settledPurgedResponseError?.message);
+    assert.equal(settledPurgedResponse?.scoring_status, 'feedback_unavailable');
+
     const { data: abandonStarted, error: abandonStartError } = await owner.rpc('start_candidate_mmi_station_session');
     assert.equal(abandonStartError, null, abandonStartError?.message);
     const abandonSessionId = (abandonStarted as { sessionId: string }).sessionId;

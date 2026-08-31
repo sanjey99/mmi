@@ -558,6 +558,9 @@ BEGIN
       WHERE id = v_response.id;
     ELSIF v_response.scoring_status = 'in_progress' AND v_has_claim AND v_claim.lease_expires_at > v_now THEN
       RETURN jsonb_build_object('status', 'in_progress');
+    ELSIF v_response.scoring_status = 'in_progress' THEN
+      UPDATE public.candidate_mmi_station_responses SET scoring_status = 'failed' WHERE id = v_response.id;
+      UPDATE public.candidate_mmi_station_responses SET scoring_status = 'feedback_unavailable' WHERE id = v_response.id;
     END IF;
     RETURN jsonb_build_object('status', 'feedback_unavailable');
   END IF;
@@ -688,9 +691,7 @@ ALTER TABLE public.candidate_mmi_station_prompt_snapshots ENABLE ROW LEVEL SECUR
 ALTER TABLE public.candidate_mmi_station_response_drafts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.candidate_mmi_station_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.candidate_mmi_response_scoring_claims ENABLE ROW LEVEL SECURITY;
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots,
-  public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses,
-  public.candidate_mmi_response_scoring_claims FROM PUBLIC, anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots, public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses, public.candidate_mmi_response_scoring_claims FROM PUBLIC, anon, authenticated;
 GRANT ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots, public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses, public.candidate_mmi_response_scoring_claims TO service_role;
 REVOKE ALL ON TABLE public.mmi_stations FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role;
@@ -719,6 +720,8 @@ DECLARE
   v_table regclass;
 BEGIN
   FOREACH v_signature IN ARRAY ARRAY[
+    'public.finalize_candidate_mmi_station_response_internal(uuid,smallint,uuid,timestamptz)',
+    'public.catch_up_candidate_mmi_station_responses(uuid,timestamptz)',
     'public.start_candidate_mmi_station_session()',
     'public.get_candidate_mmi_station_session(uuid)',
     'public.abandon_candidate_mmi_station_session(uuid)',
@@ -730,9 +733,7 @@ BEGIN
     'public.fail_candidate_mmi_response_scoring(uuid,uuid,uuid,text)',
     'public.purge_expired_candidate_mmi_free_text(timestamptz)'
   ] LOOP
-    v_owner := NULL;
-    v_security_definer := NULL;
-    v_config := NULL;
+    v_owner := NULL; v_security_definer := NULL; v_config := NULL;
     SELECT pg_get_userbyid(proowner), prosecdef, proconfig
     INTO v_owner, v_security_definer, v_config
     FROM pg_proc WHERE oid = to_regprocedure(v_signature);
@@ -741,6 +742,9 @@ BEGIN
       RAISE EXCEPTION 'candidate browser-speech function security postcondition failed: %', v_signature;
     END IF;
   END LOOP;
+  IF (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.candidate_mmi_station_responses'::regclass AND convalidated AND conname = ANY(ARRAY['candidate_mmi_station_response_text_state', 'candidate_mmi_station_response_assessment_state', 'candidate_mmi_station_response_public_assessment_valid'])) <> 3 THEN
+    RAISE EXCEPTION 'candidate browser-speech response constraint postcondition failed';
+  END IF;
   FOREACH v_signature IN ARRAY ARRAY[
     'public.start_candidate_mmi_station_session()',
     'public.get_candidate_mmi_station_session(uuid)',
