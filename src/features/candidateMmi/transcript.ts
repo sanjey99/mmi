@@ -48,8 +48,8 @@ export function reduceTranscript(
   action: CandidateMmiTranscriptAction,
 ): CandidateMmiTranscriptState {
   if (action.responseIdentity !== state.responseIdentity) return state;
-  if (action.type === 'restore') return createTranscriptState(state.responseIdentity, action.text, action.revision);
   if (state.frozen) return state;
+  if (action.type === 'restore') return createTranscriptState(state.responseIdentity, action.text, action.revision);
   if (action.type === 'manualReplace') {
     const committedText = capCodePoints(action.text);
     return withState(state, { committedText, interimText: '', dirty: committedText !== state.checkpointedText });

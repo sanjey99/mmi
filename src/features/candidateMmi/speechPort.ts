@@ -21,6 +21,12 @@ type ActiveResponse = Readonly<{
   restartable: boolean;
 }>;
 
+type ActivePreflight = Readonly<{
+  generation: number;
+  recognition: CandidateMmiSpeechRecognitionInstance;
+  settle: (status: CandidateMmiSpeechStatus, abort?: boolean) => void;
+}>;
+
 type SpeechStartInput = Readonly<{ responseIdentity: string }> & CandidateMmiSpeechCallbacks;
 
 function normalizeText(value: string): string {
@@ -62,7 +68,7 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
     : { supported: false, implementation: 'none' });
   let generation = 0;
   let activeResponse: ActiveResponse | null = null;
-  let preflight: Readonly<{ generation: number; recognition: CandidateMmiSpeechRecognitionInstance }> | null = null;
+  let preflight: ActivePreflight | null = null;
 
   function isCurrent(active: ActiveResponse): boolean {
     return activeResponse?.generation === active.generation && activeResponse.responseIdentity === active.responseIdentity;
@@ -85,6 +91,12 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
     }
     const current: ActiveResponse = { generation: ++generation, responseIdentity: input.responseIdentity, callbacks: input, recognition, restartable: true };
     activeResponse = current;
+    let started = false;
+    recognition.onstart = () => {
+      if (!isCurrent(current) || started) return;
+      started = true;
+      input.onStatus('listening');
+    };
     recognition.onresult = event => {
       if (!isCurrent(current)) return;
       const decoded = decodeResults(event);
@@ -104,7 +116,6 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
     };
     try {
       recognition.start();
-      input.onStatus('listening');
     } catch {
       if (isCurrent(current)) {
         activeResponse = null;
@@ -136,31 +147,35 @@ export function createBrowserSpeechPort(constructors: SpeechConstructors): Candi
         onStatus('unsupported');
         return 'unsupported';
       }
+      preflight?.settle('idle', true);
       const recognition = createRecognition()!;
-      const current = { generation: ++generation, recognition };
-      preflight = current;
       return new Promise<CandidateMmiSpeechStatus>(resolve => {
-        const settle = (status: CandidateMmiSpeechStatus) => {
+        const current: ActivePreflight = {
+          generation: ++generation,
+          recognition,
+          settle: (status, abort = false) => {
           if (preflight?.generation !== current.generation) return;
           generation += 1;
           preflight = null;
-          stopRecognition(recognition, false);
-          onStatus(status);
+          try { stopRecognition(recognition, abort); } catch { /* Cleanup must not prevent settlement. */ }
+          try { onStatus(status); } catch { /* Consumer callback errors must not leave preflight pending. */ }
           resolve(status);
+          },
         };
-        recognition.onstart = () => settle('listening');
-        recognition.onerror = event => settle(recognitionErrorStatus(event.error).status);
-        try { recognition.start(); } catch { settle('unavailable'); }
+        preflight = current;
+        recognition.onstart = () => current.settle('listening');
+        recognition.onend = () => current.settle('unavailable');
+        recognition.onerror = event => current.settle(recognitionErrorStatus(event.error).status);
+        try { recognition.start(); } catch { current.settle('unavailable'); }
       });
     },
     abort: async () => {
       const responseRecognition = activeResponse?.recognition;
-      const preflightRecognition = preflight?.recognition;
+      const pendingPreflight = preflight;
       generation += 1;
       activeResponse = null;
-      preflight = null;
+      pendingPreflight?.settle('idle', true);
       if (responseRecognition) stopRecognition(responseRecognition, true);
-      if (preflightRecognition && preflightRecognition !== responseRecognition) stopRecognition(preflightRecognition, true);
     },
   });
 }

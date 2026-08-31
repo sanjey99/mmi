@@ -30,10 +30,11 @@ class FakeRecognition {
   }
 }
 
-function fakeConstructor(instances: FakeRecognition[]) {
+function fakeConstructor(instances: FakeRecognition[], configure?: (instance: FakeRecognition) => void) {
   return class extends FakeRecognition {
     constructor() {
       super();
+      configure?.(this);
       instances.push(this);
     }
   };
@@ -88,6 +89,22 @@ describe('candidate MMI transcript reducer', () => {
     expect(reduceTranscript(frozen, {
       type: 'manualReplace', responseIdentity: responseOne, text: 'changed after deadline',
     })).toBe(frozen);
+  });
+
+  it('ignores every action including restore after the response is frozen', () => {
+    const frozen = reduceTranscript(reduceTranscript(createTranscriptState(responseOne, 'submitted', 3), {
+      type: 'freeze', responseIdentity: responseOne,
+    }), { type: 'interim', responseIdentity: responseOne, text: 'ignored' });
+    const actions = [
+      { type: 'restore', responseIdentity: responseOne, text: 'late restore', revision: 4 },
+      { type: 'manualReplace', responseIdentity: responseOne, text: 'late manual edit' },
+      { type: 'finalFragment', responseIdentity: responseOne, text: 'late speech' },
+      { type: 'interim', responseIdentity: responseOne, text: 'late interim' },
+      { type: 'acceptedCheckpoint', responseIdentity: responseOne, text: 'late checkpoint', revision: 4 },
+      { type: 'freeze', responseIdentity: responseOne },
+    ] as const;
+
+    for (const action of actions) expect(reduceTranscript(frozen, action)).toBe(frozen);
   });
 
   it('ignores final fragments from a stale response identity', () => {
@@ -161,6 +178,8 @@ describe('candidate MMI browser speech port', () => {
       onStatus: value => statuses.push(value),
     });
     const recognition = instances[0]!;
+    expect(statuses).toEqual([]);
+    recognition.onstart?.();
     recognition.emitResult({ isFinal: false, transcript: 'interim response' }, { isFinal: true, transcript: 'final response' });
 
     expect(port.getCapability()).toEqual({ supported: true, implementation: 'speech_recognition' });
@@ -218,13 +237,55 @@ describe('candidate MMI browser speech port', () => {
     expect(instances[0]!.stop).toHaveBeenCalledOnce();
   });
 
+  it('settles a pending preflight as idle when the caller aborts it', async () => {
+    const instances: FakeRecognition[] = [];
+    const statuses: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+    const pending = port.preflight({ onStatus: status => statuses.push(status) });
+
+    await port.abort();
+
+    await expect(pending).resolves.toBe('idle');
+    expect(statuses).toEqual(['idle']);
+    expect(instances[0]!.abort).toHaveBeenCalledOnce();
+  });
+
+  it('settles a preflight as unavailable when native recognition ends before starting', async () => {
+    const instances: FakeRecognition[] = [];
+    const statuses: string[] = [];
+    const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
+    const pending = port.preflight({ onStatus: status => statuses.push(status) });
+
+    instances[0]!.onend?.();
+
+    await expect(pending).resolves.toBe('unavailable');
+    expect(statuses).toEqual(['unavailable']);
+  });
+
+  it('settles a preflight as unavailable when native start and cleanup throw', async () => {
+    const instances: FakeRecognition[] = [];
+    const port = createBrowserSpeechPort({
+      SpeechRecognition: fakeConstructor(instances, instance => {
+        instance.start.mockImplementation(() => { throw new Error('start failed'); });
+        instance.stop.mockImplementation(() => { throw new Error('cleanup failed'); });
+      }),
+    });
+    const statuses: string[] = [];
+
+    await expect(port.preflight({ onStatus: status => statuses.push(status) })).resolves.toBe('unavailable');
+    expect(statuses).toEqual(['unavailable']);
+  });
+
   it('restarts a fresh instance after an unexpected end only for the active response', async () => {
     const instances: FakeRecognition[] = [];
     const statuses: string[] = [];
     const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
 
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: value => statuses.push(value) });
+    expect(statuses).toEqual([]);
+    instances[0]!.onstart?.();
     instances[0]!.onend?.();
+    instances[1]!.onstart?.();
 
     expect(instances).toHaveLength(2);
     expect(instances[1]!.start).toHaveBeenCalledOnce();
@@ -255,18 +316,21 @@ describe('candidate MMI browser speech port', () => {
     const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
 
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: value => statuses.push(value) });
+    instances[0]!.onstart?.();
     instances[0]!.onerror?.({ error: 'not-allowed' });
     instances[0]!.onend?.();
     expect(statuses).toEqual(['listening', 'permission_denied']);
     expect(instances).toHaveLength(1);
 
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: value => statuses.push(value) });
+    instances[1]!.onstart?.();
     instances[1]!.onerror?.({ error: 'audio-capture' });
     instances[1]!.onend?.();
     expect(statuses).toContain('unavailable');
     expect(instances).toHaveLength(2);
 
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: value => statuses.push(value) });
+    instances[2]!.onstart?.();
     instances[2]!.onerror?.({ error: 'no-speech' });
     instances[2]!.onend?.();
     expect(instances).toHaveLength(4);
@@ -279,9 +343,11 @@ describe('candidate MMI browser speech port', () => {
     const port = createBrowserSpeechPort({ SpeechRecognition: fakeConstructor(instances) });
 
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: status => statuses.push(status) });
+    instances[0]!.onstart?.();
     instances[0]!.onerror?.({ error: 'service-not-allowed' });
     instances[0]!.onend?.();
     await port.start({ responseIdentity: responseOne, onFinalFragment: vi.fn(), onInterimText: vi.fn(), onStatus: status => statuses.push(status) });
+    instances[1]!.onstart?.();
     instances[1]!.onerror?.({ error: 'network' });
     instances[1]!.onend?.();
 
