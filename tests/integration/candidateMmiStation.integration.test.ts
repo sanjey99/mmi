@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, it } from 'vitest';
+import { parseMmiRubric } from '../../supabase/functions/_shared/mmiContracts';
 import {
   activateVerifiedFlatMmiQuestionSet,
   elevateLocalProfileToAdmin,
@@ -32,6 +33,43 @@ const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const run = describe.runIf(canRunLocalProfileElevationTests(process.env));
 const fixturePrefix = `candidate-mmi-${randomUUID().slice(0, 8)}`;
 const password = `Local-only-${randomUUID()}!`;
+const scoringContractModulePath = '../../supabase/functions/_shared/mmiScoringContract';
+const loadCurrentScoringContract = async (): Promise<unknown> => {
+  const contractModule = await import(scoringContractModulePath) as {
+    CURRENT_MMI_SCORING_CONTRACT_VERSION: string;
+    createMmiScoringContractSnapshot: (version: string) => unknown;
+  };
+  return contractModule.createMmiScoringContractSnapshot(contractModule.CURRENT_MMI_SCORING_CONTRACT_VERSION);
+};
+const validRubric = {
+  version: 1,
+  criteria: {
+    'clear-priorities': {
+      dimension: 'structure', kind: 'strength',
+      assessorCriterion: 'Sets out priorities in a clear order.', studentFeedback: 'clear-priorities',
+    },
+    'explicit-safety-netting': {
+      dimension: 'ethics', kind: 'improvement',
+      assessorCriterion: 'Explains when to escalate safety concerns.', studentFeedback: 'explicit-safety-netting',
+    },
+  },
+  dimensionWeights: { structure: 0.2, ethics: 0.2, communication: 0.2, reflection: 0.2, nhs_awareness: 0.2 },
+  safetyCriticalItems: [],
+} as const;
+const validAssessment = {
+  dimensions: {
+    structure: { score: 4, applicable: true, evidence: null, improvement: null },
+    ethics: { score: 3, applicable: true, evidence: null, improvement: null },
+    communication: { score: null, applicable: false, evidence: null, improvement: null },
+    reflection: { score: null, applicable: false, evidence: null, improvement: null },
+    nhs_awareness: { score: null, applicable: false, evidence: null, improvement: null },
+  },
+  overallPct: 70,
+  strengths: ['clear-priorities'],
+  improvements: ['explicit-safety-netting'],
+  improvementTip: 'Make the safety-netting steps explicit, including when and how you would escalate.',
+  rubricVersion: 1,
+} as const;
 
 type CandidatePayload = {
   artifact_version: number;
@@ -185,15 +223,9 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       standard_sub_q_id: subQuestionId,
       version: 1,
       status: 'active',
-      criteria: { summary: 'Synthetic clinician-reviewed browser-speech rubric.' },
-      dimension_weights: {
-        structure: 0.2,
-        ethics: 0.2,
-        communication: 0.2,
-        reflection: 0.2,
-        nhs_awareness: 0.2,
-      },
-      safety_critical_items: [],
+      criteria: validRubric.criteria,
+      dimension_weights: validRubric.dimensionWeights,
+      safety_critical_items: validRubric.safetyCriticalItems,
       clinician_reviewed_at: new Date().toISOString(),
       clinician_reviewed_by: authUserIds[1],
     })));
@@ -595,27 +627,37 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     assert.equal((nextResponse as { draftTranscript: string }).draftTranscript, '');
     assert.equal(JSON.stringify(nextResponse).includes(transcript), false);
 
-    const { data: responseRows, error: responseRowsError } = await service
-      .from('candidate_mmi_station_responses')
-      .select('id,finalized_transcript')
-      .eq('session_id', sessionId)
-      .eq('prompt_order', 1);
-    assert.equal(responseRowsError, null, responseRowsError?.message);
-    assert.equal(responseRows?.length, 1);
-    assert.equal(responseRows?.[0]?.finalized_transcript, transcript);
-    const responseId = responseRows?.[0]?.id as string;
-
     const leaseToken = randomUUID();
+    const { data: wrongUserClaim, error: wrongUserClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: authUserIds[2],
+      p_session_id: sessionId,
+      p_prompt_order: 1,
+      p_lease_token: leaseToken,
+    });
+    assert.equal(wrongUserClaim, null);
+    assert.ok(wrongUserClaimError, 'expected a different user UUID to be unable to claim this response');
     const { data: claim, error: claimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
-      p_response_id: responseId,
+      p_user_id: authUserIds[1],
       p_session_id: sessionId,
       p_prompt_order: 1,
       p_lease_token: leaseToken,
     });
     assert.equal(claimError, null, claimError?.message);
+    assert.deepEqual(Object.keys(claim as Record<string, unknown>).sort(), [
+      'promptOrder', 'promptText', 'responseId', 'rubric', 'scoringContract', 'sessionId', 'status', 'transcript',
+    ]);
     assert.equal((claim as { status: string }).status, 'claimed');
+    assert.equal((claim as { sessionId: string }).sessionId, sessionId);
+    assert.equal((claim as { promptOrder: number }).promptOrder, 1);
+    assert.equal((claim as { transcript: string }).transcript, transcript);
+    assert.deepEqual(parseMmiRubric((claim as { rubric: unknown }).rubric), validRubric);
+    assert.deepEqual(
+      (claim as { scoringContract: unknown }).scoringContract,
+      await loadCurrentScoringContract(),
+    );
+    const responseId = (claim as { responseId: string }).responseId;
     const { data: duplicateClaim, error: duplicateClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
-      p_response_id: responseId,
+      p_user_id: authUserIds[1],
       p_session_id: sessionId,
       p_prompt_order: 1,
       p_lease_token: randomUUID(),
@@ -629,7 +671,7 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     assert.equal(expireLeaseError, null, expireLeaseError?.message);
     const reclaimedLeaseToken = randomUUID();
     const { data: reclaimedClaim, error: reclaimedClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
-      p_response_id: responseId,
+      p_user_id: authUserIds[1],
       p_session_id: sessionId,
       p_prompt_order: 1,
       p_lease_token: reclaimedLeaseToken,
@@ -640,7 +682,7 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       p_response_id: responseId,
       p_session_id: sessionId,
       p_lease_token: leaseToken,
-      p_public_assessment: { result: 'Synthetic stale assessment.' },
+      p_public_assessment: validAssessment,
     });
     assert.equal(staleCompletion, null);
     assert.ok(staleCompletionError, 'expected stale lease completion denial');
@@ -651,7 +693,15 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       p_error_code: 'synthetic_stale_failure',
     });
     assert.ok(staleFailureError, 'expected stale lease failure denial');
-    const assessment = { result: 'Synthetic public feedback.' };
+    const { data: invalidCompletion, error: invalidCompletionError } = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: responseId,
+      p_session_id: sessionId,
+      p_lease_token: reclaimedLeaseToken,
+      p_public_assessment: { result: 'Synthetic provider prose must be rejected.' },
+    });
+    assert.equal(invalidCompletion, null);
+    assert.ok(invalidCompletionError, 'expected invalid public assessment keys to be rejected');
+    const assessment = validAssessment;
     const { data: completedClaim, error: completedClaimError } = await service.rpc('complete_candidate_mmi_response_scoring', {
       p_response_id: responseId,
       p_session_id: sessionId,
@@ -660,6 +710,22 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     });
     assert.equal(completedClaimError, null, completedClaimError?.message);
     assert.equal((completedClaim as { status: string }).status, 'scored');
+
+    const { error: whitespaceDraftError } = await owner.rpc('checkpoint_candidate_mmi_station_response', {
+      p_session_id: sessionId,
+      p_prompt_order: 2,
+      p_transcript: ' \n\t ',
+      p_client_revision: 1,
+    });
+    assert.equal(whitespaceDraftError, null, whitespaceDraftError?.message);
+    await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 300_000));
+    const { data: whitespaceFinalized, error: whitespaceFinalizeError } = await owner.rpc('finalize_candidate_mmi_station_response', {
+      p_session_id: sessionId,
+      p_prompt_order: 2,
+      p_finalization_key: randomUUID(),
+    });
+    assert.equal(whitespaceFinalizeError, null, whitespaceFinalizeError?.message);
+    assert.equal((whitespaceFinalized as { responseState: string }).responseState, 'no_response');
 
     await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 660_000));
     const { error: completionError } = await owner.rpc('get_candidate_mmi_station_session', { p_session_id: sessionId });
@@ -684,8 +750,9 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
       .eq('session_id', sessionId)
       .eq('prompt_order', 2);
     assert.equal(noResponseRowsError, null, noResponseRowsError?.message);
+    assert.equal(noResponseRows?.length, 1);
     const { data: noResponseClaim, error: noResponseClaimError } = await service.rpc('claim_candidate_mmi_response_scoring', {
-      p_response_id: noResponseRows?.[0]?.id,
+      p_user_id: authUserIds[1],
       p_session_id: sessionId,
       p_prompt_order: 2,
       p_lease_token: randomUUID(),

@@ -72,6 +72,10 @@ describe('candidate MMI chooser and station route contract', () => {
 
   it('keeps browser-speech transcript persistence private, RPC-only, and free of media storage', () => {
     const sql = readBrowserSpeechMigration();
+    const rlsStatements = sql.match(/ALTER TABLE[\s\S]*?ENABLE ROW LEVEL SECURITY;/gi) ?? [];
+    const tableRevokeStatements = sql.match(/REVOKE ALL(?: PRIVILEGES)? ON TABLE[\s\S]*?;/gi) ?? [];
+    const authenticatedGrantStatements = sql.match(/GRANT EXECUTE ON FUNCTION[\s\S]*?TO authenticated;/gi) ?? [];
+    const serviceGrantStatements = sql.match(/GRANT EXECUTE ON FUNCTION[\s\S]*?TO service_role;/gi) ?? [];
 
     for (const table of [
       'candidate_mmi_station_prompt_snapshots',
@@ -80,8 +84,9 @@ describe('candidate MMI chooser and station route contract', () => {
       'candidate_mmi_response_scoring_claims',
     ]) {
       expect(sql).toMatch(new RegExp(`CREATE TABLE public\\.${table}`, 'i'));
-      expect(sql).toMatch(new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY`, 'i'));
-      expect(sql).toMatch(new RegExp(`REVOKE ALL(?: PRIVILEGES)? ON TABLE public\\.${table} FROM PUBLIC, anon, authenticated`, 'i'));
+      expect(rlsStatements.some((statement) => statement.includes(`public.${table}`))).toBe(true);
+      expect(tableRevokeStatements.some((statement) => statement.includes(`public.${table}`)
+        && /FROM PUBLIC, anon, authenticated/i.test(statement))).toBe(true);
     }
 
     for (const functionName of [
@@ -100,11 +105,26 @@ describe('candidate MMI chooser and station route contract', () => {
     expect(sql.match(/SET search_path = public, pg_temp/g)?.length).toBeGreaterThanOrEqual(10);
     expect(sql).toMatch(/char_length\(transcript\) <= 12000/i);
     expect(sql).toMatch(/finalized_transcript[\s\S]*char_length\(finalized_transcript\) <= 12000/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.checkpoint_candidate_mmi_station_response\(uuid, smallint, text, bigint\)\s+TO authenticated/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.finalize_candidate_mmi_station_response\(uuid, smallint, uuid\)\s+TO authenticated/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.get_candidate_mmi_station_feedback\(uuid\)\s+TO authenticated/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.claim_candidate_mmi_response_scoring\(uuid, uuid, smallint, uuid\)\s+TO service_role/i);
-    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.purge_expired_candidate_mmi_free_text\(timestamptz\)\s+TO service_role/i);
+    expect(sql).toMatch(/btrim\(COALESCE\(v_draft\.transcript, ''\)\) = ''/i);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.is_valid_candidate_mmi_public_assessment/i);
+    expect(sql).toMatch(/is_valid_candidate_mmi_public_assessment\(public_assessment\)/i);
+    expect(sql).toMatch(/p_user_id uuid[\s\S]*p_session_id uuid[\s\S]*p_prompt_order smallint[\s\S]*p_lease_token uuid/i);
+    expect(sql).toMatch(/session\.user_id = p_user_id/i);
+    expect(sql).toMatch(/'responseId', v_response\.id/i);
+    expect(sql).toMatch(/'scoringContract', v_snapshot\.scoring_contract_snapshot/i);
+    for (const signature of [
+      'checkpoint_candidate_mmi_station_response\\(uuid, smallint, text, bigint\\)',
+      'finalize_candidate_mmi_station_response\\(uuid, smallint, uuid\\)',
+      'get_candidate_mmi_station_feedback\\(uuid\\)',
+    ]) {
+      expect(authenticatedGrantStatements.some((statement) => new RegExp(signature, 'i').test(statement))).toBe(true);
+    }
+    for (const signature of [
+      'claim_candidate_mmi_response_scoring\\(uuid, uuid, smallint, uuid\\)',
+      'purge_expired_candidate_mmi_free_text\\(timestamptz\\)',
+    ]) {
+      expect(serviceGrantStatements.some((statement) => new RegExp(signature, 'i').test(statement))).toBe(true);
+    }
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.mmi_stations FROM PUBLIC, anon, authenticated, service_role/i);
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role/i);
     expect(sql).not.toMatch(/audio|blob|bucket|storage|recorder/i);

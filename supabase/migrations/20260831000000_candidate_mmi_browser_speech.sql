@@ -1,10 +1,8 @@
 -- Server-authoritative browser-speech MMI transcript persistence.
 -- This migration deliberately stores reviewed text only.
 BEGIN;
-
 ALTER TABLE public.candidate_mmi_station_sessions
   ADD COLUMN privacy_notice_version text REFERENCES public.mmi_privacy_notices(version);
-
 CREATE TABLE public.candidate_mmi_station_prompt_snapshots (
   session_id uuid NOT NULL REFERENCES public.candidate_mmi_station_sessions(id) ON DELETE CASCADE,
   prompt_order smallint NOT NULL CHECK (prompt_order BETWEEN 1 AND 5),
@@ -18,7 +16,6 @@ CREATE TABLE public.candidate_mmi_station_prompt_snapshots (
     OR (rubric_snapshot IS NOT NULL AND scoring_contract_snapshot IS NOT NULL)
   )
 );
-
 CREATE TABLE public.candidate_mmi_station_response_drafts (
   session_id uuid NOT NULL REFERENCES public.candidate_mmi_station_sessions(id) ON DELETE CASCADE,
   prompt_order smallint NOT NULL CHECK (prompt_order BETWEEN 1 AND 5),
@@ -27,7 +24,6 @@ CREATE TABLE public.candidate_mmi_station_response_drafts (
   accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (session_id, prompt_order)
 );
-
 CREATE TABLE public.candidate_mmi_station_responses (
   id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   session_id uuid NOT NULL REFERENCES public.candidate_mmi_station_sessions(id) ON DELETE CASCADE,
@@ -48,7 +44,6 @@ CREATE TABLE public.candidate_mmi_station_responses (
     (scoring_status = 'scored') = (public_assessment IS NOT NULL)
   )
 );
-
 CREATE TABLE public.candidate_mmi_response_scoring_claims (
   id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   response_id uuid NOT NULL UNIQUE REFERENCES public.candidate_mmi_station_responses(id) ON DELETE CASCADE,
@@ -59,42 +54,40 @@ CREATE TABLE public.candidate_mmi_response_scoring_claims (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-
 CREATE INDEX candidate_mmi_station_responses_retention_cutoff
   ON public.candidate_mmi_station_responses (finalized_at)
   WHERE finalized_transcript IS NOT NULL AND transcript_purged_at IS NULL;
 CREATE INDEX candidate_mmi_response_scoring_claims_lease
   ON public.candidate_mmi_response_scoring_claims (lease_expires_at);
-
-CREATE OR REPLACE FUNCTION public.candidate_mmi_station_window(
-  p_started_at timestamptz,
-  p_prompt_order smallint
-)
-RETURNS TABLE (starts_at timestamptz, ends_at timestamptz)
-LANGUAGE sql
-IMMUTABLE
-SET search_path = public, pg_temp
-AS $function$
+CREATE OR REPLACE FUNCTION public.candidate_mmi_station_window(p_started_at timestamptz, p_prompt_order smallint)
+RETURNS TABLE (starts_at timestamptz, ends_at timestamptz) LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $function$
   SELECT
     p_started_at + interval '60 seconds' + (p_prompt_order - 1) * interval '120 seconds',
     p_started_at + interval '60 seconds' + p_prompt_order * interval '120 seconds';
 $function$;
-
 CREATE OR REPLACE FUNCTION public.candidate_mmi_browser_speech_contract()
-RETURNS jsonb
-LANGUAGE sql
-IMMUTABLE
-SET search_path = public, pg_temp
-AS $function$
-  SELECT '{"version":"candidate-mmi-browser-speech-v1","input":"reviewed_transcript","output":"public_assessment"}'::jsonb;
+RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $function$
+  SELECT '{"version":"2026-08-17.1","parserVersion":"1","assessorInstructions":"You are a UK medical-school MMI assessor grading only the reviewed transcript supplied below. Do not infer vocal confidence, pace, tone, hesitation, pronunciation, or any delivery quality from transcript text. Assess valid alternative reasoning fairly; a curated reference answer is context, never the only acceptable answer. For each applicable dimension, return a score from 1 through 5 and one evidenceReference using start-inclusive, end-exclusive Unicode code-point offsets into the reviewed transcript. For each non-applicable dimension, return null for both score and evidenceReference. Select only rubricStrengthCodes, rubricImprovementCodes, and safetyCriticalOmissionCodes supplied in the clinician-reviewed rubric. Select improvementFramework only from sbar, starr, spar, or four-pillars. Return no prose, overall percentage, hidden context, rubric criteria, internal instructions, or fields outside the strict JSON schema.","responseSchema":{"type":"object","additionalProperties":false,"required":["dimensions","rubricStrengthCodes","rubricImprovementCodes","safetyCriticalOmissionCodes","improvementFramework"],"properties":{"dimensions":{"type":"object","additionalProperties":false,"required":["structure","ethics","communication","reflection","nhs_awareness"],"properties":{"structure":{"oneOf":[{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"integer","enum":[1,2,3,4,5]},"evidenceReference":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0,"maximum":12000},"end":{"type":"integer","minimum":1,"maximum":12000}}}}},{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"null"},"evidenceReference":{"type":"null"}}}]},"ethics":{"oneOf":[{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"integer","enum":[1,2,3,4,5]},"evidenceReference":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0,"maximum":12000},"end":{"type":"integer","minimum":1,"maximum":12000}}}}},{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"null"},"evidenceReference":{"type":"null"}}}]},"communication":{"oneOf":[{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"integer","enum":[1,2,3,4,5]},"evidenceReference":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0,"maximum":12000},"end":{"type":"integer","minimum":1,"maximum":12000}}}}},{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"null"},"evidenceReference":{"type":"null"}}}]},"reflection":{"oneOf":[{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"integer","enum":[1,2,3,4,5]},"evidenceReference":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0,"maximum":12000},"end":{"type":"integer","minimum":1,"maximum":12000}}}}},{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"null"},"evidenceReference":{"type":"null"}}}]},"nhs_awareness":{"oneOf":[{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"integer","enum":[1,2,3,4,5]},"evidenceReference":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0,"maximum":12000},"end":{"type":"integer","minimum":1,"maximum":12000}}}}},{"type":"object","additionalProperties":false,"required":["score","evidenceReference"],"properties":{"score":{"type":"null"},"evidenceReference":{"type":"null"}}}]}}},"rubricStrengthCodes":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"}},"rubricImprovementCodes":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"}},"safetyCriticalOmissionCodes":{"type":"array","minItems":0,"maxItems":20,"items":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"}},"improvementFramework":{"type":"string","enum":["sbar","starr","spar","four-pillars"]}}},"studentFeedbackCatalog":{"templates":{"clear-priorities":{"kind":"strength","text":"You set out the main priorities in a clear and logical order."},"balanced-ethical-reasoning":{"kind":"strength","text":"You considered more than one ethical responsibility before reaching a decision."},"patient-centred-language":{"kind":"strength","text":"You kept the explanation focused on the patient and used accessible language."},"reflective-learning":{"kind":"strength","text":"You identified a concrete lesson that could improve future practice."},"nhs-context":{"kind":"strength","text":"You connected your reasoning to relevant NHS values and responsibilities."},"explicit-safety-netting":{"kind":"improvement","text":"Make the safety-netting steps explicit, including when and how you would escalate."},"weigh-ethical-pillars":{"kind":"improvement","text":"Explain how the relevant ethical principles support or conflict with each possible action."},"check-understanding":{"kind":"improvement","text":"Add a clear check that the patient has understood the explanation and next steps."},"deepen-reflection":{"kind":"improvement","text":"State what you would change next time and how you would know that the change helped."},"connect-nhs-values":{"kind":"improvement","text":"Link your proposed action to the most relevant NHS value or professional responsibility."},"escalate-immediate-risk":{"kind":"safety","text":"Explain when you would escalate an immediate risk to a senior clinician."},"protect-confidentiality":{"kind":"safety","text":"Explain how you would protect confidentiality while responding to the concern."},"seek-senior-support":{"kind":"safety","text":"Include the point at which you would seek appropriate senior support."}},"frameworkTips":{"sbar":"Use SBAR to organise a concise escalation: situation, background, assessment, then recommendation.","starr":"Use STARR to structure the example: situation, task, action, result, then reflection.","spar":"Use SPAR to structure the response: situation, problem, action, then reflection.","four-pillars":"Use the four pillars to compare autonomy, beneficence, non-maleficence, and justice."}}}'::jsonb;
 $function$;
-
+CREATE OR REPLACE FUNCTION public.is_valid_candidate_mmi_public_assessment(p_assessment jsonb)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $function$
+  SELECT jsonb_typeof(p_assessment) = 'object'
+    AND p_assessment ?& ARRAY['dimensions', 'overallPct', 'strengths', 'improvements', 'improvementTip', 'rubricVersion']
+    AND (SELECT count(*) FROM jsonb_object_keys(p_assessment)) = 6
+    AND public.is_valid_mmi_public_dimension_results(p_assessment->'dimensions')
+    AND jsonb_typeof(p_assessment->'overallPct') = 'number'
+    AND (p_assessment->>'overallPct')::numeric BETWEEN 0 AND 100
+    AND public.is_valid_mmi_text_array(p_assessment->'strengths')
+    AND public.is_valid_mmi_text_array(p_assessment->'improvements')
+    AND jsonb_typeof(p_assessment->'improvementTip') = 'string'
+    AND char_length(btrim(p_assessment->>'improvementTip')) BETWEEN 1 AND 1000
+    AND jsonb_typeof(p_assessment->'rubricVersion') = 'number'
+    AND (p_assessment->>'rubricVersion')::numeric > 0
+    AND (p_assessment->>'rubricVersion')::numeric % 1 = 0;
+$function$;
+ALTER TABLE public.candidate_mmi_station_responses ADD CONSTRAINT candidate_mmi_station_response_public_assessment_valid CHECK (public_assessment IS NULL OR public.is_valid_candidate_mmi_public_assessment(public_assessment));
 CREATE OR REPLACE FUNCTION public.prevent_candidate_mmi_station_response_mutation()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 BEGIN
   IF NEW.id IS DISTINCT FROM OLD.id
     OR NEW.session_id IS DISTINCT FROM OLD.session_id
@@ -128,23 +121,12 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
-
 DROP TRIGGER IF EXISTS candidate_mmi_station_response_immutable ON public.candidate_mmi_station_responses;
 CREATE TRIGGER candidate_mmi_station_response_immutable
   BEFORE UPDATE ON public.candidate_mmi_station_responses
   FOR EACH ROW EXECUTE FUNCTION public.prevent_candidate_mmi_station_response_mutation();
-
-CREATE OR REPLACE FUNCTION public.finalize_candidate_mmi_station_response_internal(
-  p_session_id uuid,
-  p_prompt_order smallint,
-  p_finalization_key uuid,
-  p_now timestamptz
-)
-RETURNS public.candidate_mmi_station_responses
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+CREATE OR REPLACE FUNCTION public.finalize_candidate_mmi_station_response_internal(p_session_id uuid, p_prompt_order smallint, p_finalization_key uuid, p_now timestamptz)
+RETURNS public.candidate_mmi_station_responses LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_draft public.candidate_mmi_station_response_drafts;
   v_snapshot public.candidate_mmi_station_prompt_snapshots;
@@ -158,7 +140,6 @@ BEGIN
   IF FOUND THEN
     RETURN v_existing;
   END IF;
-
   SELECT * INTO v_draft
   FROM public.candidate_mmi_station_response_drafts
   WHERE session_id = p_session_id AND prompt_order = p_prompt_order;
@@ -168,8 +149,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'candidate_prompt_snapshot_missing';
   END IF;
-
-  v_response_state := CASE WHEN COALESCE(v_draft.transcript, '') = '' THEN 'no_response' ELSE 'response' END;
+  v_response_state := CASE WHEN btrim(COALESCE(v_draft.transcript, '')) = '' THEN 'no_response' ELSE 'response' END;
   v_scoring_status := CASE
     WHEN v_response_state = 'no_response' THEN 'no_response'
     WHEN v_snapshot.rubric_snapshot IS NULL OR v_snapshot.scoring_contract_snapshot IS NULL THEN 'feedback_unavailable'
@@ -188,16 +168,11 @@ BEGIN
   RETURN v_existing;
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.catch_up_candidate_mmi_station_responses(
   p_session_id uuid,
   p_now timestamptz
 )
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_started_at timestamptz;
   v_prompt_order smallint;
@@ -219,13 +194,8 @@ BEGIN
   END LOOP;
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.start_candidate_mmi_station_session()
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
   v_session_id uuid;
@@ -254,7 +224,6 @@ BEGIN
   IF v_session_id IS NOT NULL THEN
     RETURN public.get_candidate_mmi_station_session(v_session_id);
   END IF;
-
   SELECT version INTO v_notice_version
   FROM public.mmi_privacy_notices
   WHERE is_active AND published_at IS NOT NULL
@@ -263,7 +232,6 @@ BEGIN
   IF v_notice_version IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'active_privacy_notice_required';
   END IF;
-
   SELECT station.station_id INTO v_station_id
   FROM public.mmi_stations AS station
   LEFT JOIN public.candidate_mmi_station_sessions AS previous
@@ -285,7 +253,6 @@ BEGIN
   IF v_station_id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'candidate station unavailable';
   END IF;
-
   INSERT INTO public.candidate_mmi_station_sessions (user_id, station_id, started_at, privacy_notice_version)
   VALUES (v_user_id, v_station_id, v_now, v_notice_version)
   RETURNING id INTO v_session_id;
@@ -309,7 +276,7 @@ BEGIN
     ) VALUES (
       v_session_id, v_prompt.order_num, v_prompt.sub_q_id, v_prompt.question_text,
       CASE WHEN v_prompt.rubric_id IS NULL THEN NULL ELSE jsonb_build_object(
-        'id', v_prompt.rubric_id, 'version', v_prompt.rubric_version,
+        'version', v_prompt.rubric_version,
         'criteria', v_prompt.criteria, 'dimensionWeights', v_prompt.dimension_weights,
         'safetyCriticalItems', v_prompt.safety_critical_items
       ) END,
@@ -325,13 +292,8 @@ BEGIN
   RETURN public.get_candidate_mmi_station_session(v_session_id);
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.get_candidate_mmi_station_session(p_session_id uuid)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
   v_now timestamptz := clock_timestamp();
@@ -394,18 +356,13 @@ BEGIN
   );
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.checkpoint_candidate_mmi_station_response(
   p_session_id uuid,
   p_prompt_order smallint,
   p_transcript text,
   p_client_revision bigint
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
   v_now timestamptz := clock_timestamp();
@@ -460,17 +417,12 @@ BEGIN
   );
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.finalize_candidate_mmi_station_response(
   p_session_id uuid,
   p_prompt_order smallint,
   p_finalization_key uuid
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
   v_now timestamptz := clock_timestamp();
@@ -516,13 +468,8 @@ BEGIN
   );
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.get_candidate_mmi_station_feedback(p_session_id uuid)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
   v_now timestamptz := clock_timestamp();
@@ -555,13 +502,8 @@ BEGIN
   );
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.abandon_candidate_mmi_station_session(p_session_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_user_id uuid := auth.uid();
 BEGIN
@@ -583,18 +525,13 @@ BEGIN
   WHERE id = p_session_id;
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.claim_candidate_mmi_response_scoring(
-  p_response_id uuid,
+  p_user_id uuid,
   p_session_id uuid,
   p_prompt_order smallint,
   p_lease_token uuid
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
   v_response public.candidate_mmi_station_responses;
@@ -604,38 +541,42 @@ BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
   END IF;
-  IF p_response_id IS NULL OR p_session_id IS NULL OR p_prompt_order NOT BETWEEN 1 AND 5 OR p_lease_token IS NULL THEN
+  IF p_user_id IS NULL OR p_session_id IS NULL OR p_prompt_order NOT BETWEEN 1 AND 5 OR p_lease_token IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid_candidate_mmi_scoring_claim';
   END IF;
-  SELECT * INTO v_response FROM public.candidate_mmi_station_responses
-  WHERE id = p_response_id AND session_id = p_session_id AND prompt_order = p_prompt_order
-  FOR UPDATE;
+  SELECT response.* INTO v_response
+  FROM public.candidate_mmi_station_responses AS response
+  JOIN public.candidate_mmi_station_sessions AS session ON session.id = response.session_id
+  WHERE session.user_id = p_user_id
+    AND session.id = p_session_id
+    AND response.prompt_order = p_prompt_order
+  FOR UPDATE OF response, session;
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'candidate_response_not_found';
   END IF;
-  IF v_response.response_state = 'no_response' THEN
-    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'candidate_no_response_not_scoreable';
+  IF v_response.response_state = 'no_response' OR v_response.finalized_transcript IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'candidate_response_not_scoreable';
   END IF;
   SELECT * INTO v_snapshot FROM public.candidate_mmi_station_prompt_snapshots
   WHERE session_id = p_session_id AND prompt_order = p_prompt_order;
   IF v_snapshot.rubric_snapshot IS NULL OR v_snapshot.scoring_contract_snapshot IS NULL THEN
     UPDATE public.candidate_mmi_station_responses
     SET scoring_status = 'feedback_unavailable'
-    WHERE id = p_response_id AND scoring_status IN ('pending', 'failed');
+    WHERE id = v_response.id AND scoring_status IN ('pending', 'failed');
     RETURN jsonb_build_object('status', 'feedback_unavailable');
   END IF;
   IF v_response.scoring_status = 'scored' THEN
-    RETURN jsonb_build_object('status', 'scored');
+    RETURN jsonb_build_object('status', 'scored', 'assessment', v_response.public_assessment);
   END IF;
   SELECT * INTO v_claim FROM public.candidate_mmi_response_scoring_claims
-  WHERE response_id = p_response_id
+  WHERE response_id = v_response.id
   FOR UPDATE;
   IF FOUND AND v_claim.lease_expires_at > v_now THEN
     RETURN jsonb_build_object('status', 'in_progress');
   END IF;
   INSERT INTO public.candidate_mmi_response_scoring_claims (
     response_id, lease_token, lease_expires_at, attempt_count, last_error_code, updated_at
-  ) VALUES (p_response_id, p_lease_token, v_now + interval '5 minutes', 1, NULL, v_now)
+  ) VALUES (v_response.id, p_lease_token, v_now + interval '5 minutes', 1, NULL, v_now)
   ON CONFLICT (response_id) DO UPDATE SET
     lease_token = EXCLUDED.lease_token,
     lease_expires_at = EXCLUDED.lease_expires_at,
@@ -644,22 +585,22 @@ BEGIN
     updated_at = EXCLUDED.updated_at;
   UPDATE public.candidate_mmi_station_responses
   SET scoring_status = 'in_progress'
-  WHERE id = p_response_id AND scoring_status IN ('pending', 'failed');
-  RETURN jsonb_build_object('status', 'claimed');
+  WHERE id = v_response.id AND scoring_status IN ('pending', 'failed');
+  RETURN jsonb_build_object(
+    'status', 'claimed', 'responseId', v_response.id, 'sessionId', p_session_id,
+    'promptOrder', p_prompt_order, 'transcript', v_response.finalized_transcript,
+    'promptText', v_snapshot.prompt_text, 'rubric', v_snapshot.rubric_snapshot,
+    'scoringContract', v_snapshot.scoring_contract_snapshot
+  );
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.complete_candidate_mmi_response_scoring(
   p_response_id uuid,
   p_session_id uuid,
   p_lease_token uuid,
   p_public_assessment jsonb
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
 BEGIN
@@ -667,7 +608,7 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'service role required';
   END IF;
   IF p_response_id IS NULL OR p_session_id IS NULL OR p_lease_token IS NULL
-    OR p_public_assessment IS NULL OR jsonb_typeof(p_public_assessment) <> 'object' THEN
+    OR NOT public.is_valid_candidate_mmi_public_assessment(p_public_assessment) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid_candidate_mmi_scoring_completion';
   END IF;
   IF NOT EXISTS (
@@ -686,18 +627,13 @@ BEGIN
   RETURN jsonb_build_object('status', 'scored');
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.fail_candidate_mmi_response_scoring(
   p_response_id uuid,
   p_session_id uuid,
   p_lease_token uuid,
   p_error_code text
 )
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_now timestamptz := clock_timestamp();
 BEGIN
@@ -726,13 +662,8 @@ BEGIN
   WHERE id = p_response_id AND session_id = p_session_id;
 END;
 $function$;
-
 CREATE OR REPLACE FUNCTION public.purge_expired_candidate_mmi_free_text(p_now timestamptz)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $function$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
   v_purged integer;
 BEGIN
@@ -756,60 +687,33 @@ BEGIN
   RETURN jsonb_build_object('purged', v_purged);
 END;
 $function$;
-
-ALTER TABLE public.candidate_mmi_station_prompt_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.candidate_mmi_station_response_drafts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.candidate_mmi_station_responses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.candidate_mmi_response_scoring_claims ENABLE ROW LEVEL SECURITY;
-
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions FROM PUBLIC, anon, authenticated;
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_prompt_snapshots FROM PUBLIC, anon, authenticated;
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_response_drafts FROM PUBLIC, anon, authenticated;
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_responses FROM PUBLIC, anon, authenticated;
-REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_response_scoring_claims FROM PUBLIC, anon, authenticated;
+ALTER TABLE public.candidate_mmi_station_prompt_snapshots, public.candidate_mmi_station_response_drafts,
+  public.candidate_mmi_station_responses, public.candidate_mmi_response_scoring_claims ENABLE ROW LEVEL SECURITY;
+REVOKE ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions, public.candidate_mmi_station_prompt_snapshots,
+  public.candidate_mmi_station_response_drafts, public.candidate_mmi_station_responses,
+  public.candidate_mmi_response_scoring_claims FROM PUBLIC, anon, authenticated;
 GRANT ALL PRIVILEGES ON TABLE public.candidate_mmi_station_sessions,
   public.candidate_mmi_station_prompt_snapshots,
   public.candidate_mmi_station_response_drafts,
   public.candidate_mmi_station_responses,
   public.candidate_mmi_response_scoring_claims TO service_role;
-
 REVOKE ALL ON TABLE public.mmi_stations FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role;
-
-REVOKE ALL ON FUNCTION public.candidate_mmi_station_window(timestamptz, smallint) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.candidate_mmi_browser_speech_contract() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.prevent_candidate_mmi_station_response_mutation() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.finalize_candidate_mmi_station_response_internal(uuid, smallint, uuid, timestamptz) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.catch_up_candidate_mmi_station_responses(uuid, timestamptz) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.start_candidate_mmi_station_session() FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.get_candidate_mmi_station_session(uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.abandon_candidate_mmi_station_session(uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.checkpoint_candidate_mmi_station_response(uuid, smallint, text, bigint) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.finalize_candidate_mmi_station_response(uuid, smallint, uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.get_candidate_mmi_station_feedback(uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.claim_candidate_mmi_response_scoring(uuid, uuid, smallint, uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.complete_candidate_mmi_response_scoring(uuid, uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.fail_candidate_mmi_response_scoring(uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.purge_expired_candidate_mmi_free_text(timestamptz) FROM PUBLIC, anon, authenticated, service_role;
-
-GRANT EXECUTE ON FUNCTION public.start_candidate_mmi_station_session() TO authenticated;
-GRANT EXECUTE ON FUNCTION public.get_candidate_mmi_station_session(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.abandon_candidate_mmi_station_session(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.checkpoint_candidate_mmi_station_response(uuid, smallint, text, bigint)
-  TO authenticated;
-GRANT EXECUTE ON FUNCTION public.finalize_candidate_mmi_station_response(uuid, smallint, uuid)
-  TO authenticated;
-GRANT EXECUTE ON FUNCTION public.get_candidate_mmi_station_feedback(uuid)
-  TO authenticated;
-GRANT EXECUTE ON FUNCTION public.claim_candidate_mmi_response_scoring(uuid, uuid, smallint, uuid)
-  TO service_role;
-GRANT EXECUTE ON FUNCTION public.complete_candidate_mmi_response_scoring(uuid, uuid, uuid, jsonb)
-  TO service_role;
-GRANT EXECUTE ON FUNCTION public.fail_candidate_mmi_response_scoring(uuid, uuid, uuid, text)
-  TO service_role;
-GRANT EXECUTE ON FUNCTION public.purge_expired_candidate_mmi_free_text(timestamptz)
-  TO service_role;
-
+REVOKE ALL ON FUNCTION public.candidate_mmi_station_window(timestamptz, smallint),
+  public.candidate_mmi_browser_speech_contract(), public.is_valid_candidate_mmi_public_assessment(jsonb),
+  public.prevent_candidate_mmi_station_response_mutation(), public.finalize_candidate_mmi_station_response_internal(uuid, smallint, uuid, timestamptz),
+  public.catch_up_candidate_mmi_station_responses(uuid, timestamptz), public.start_candidate_mmi_station_session(),
+  public.get_candidate_mmi_station_session(uuid), public.abandon_candidate_mmi_station_session(uuid),
+  public.checkpoint_candidate_mmi_station_response(uuid, smallint, text, bigint), public.finalize_candidate_mmi_station_response(uuid, smallint, uuid),
+  public.get_candidate_mmi_station_feedback(uuid), public.claim_candidate_mmi_response_scoring(uuid, uuid, smallint, uuid),
+  public.complete_candidate_mmi_response_scoring(uuid, uuid, uuid, jsonb), public.fail_candidate_mmi_response_scoring(uuid, uuid, uuid, text),
+  public.purge_expired_candidate_mmi_free_text(timestamptz) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.start_candidate_mmi_station_session(), public.get_candidate_mmi_station_session(uuid),
+  public.abandon_candidate_mmi_station_session(uuid), public.checkpoint_candidate_mmi_station_response(uuid, smallint, text, bigint),
+  public.finalize_candidate_mmi_station_response(uuid, smallint, uuid), public.get_candidate_mmi_station_feedback(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_candidate_mmi_response_scoring(uuid, uuid, smallint, uuid),
+  public.complete_candidate_mmi_response_scoring(uuid, uuid, uuid, jsonb), public.fail_candidate_mmi_response_scoring(uuid, uuid, uuid, text),
+  public.purge_expired_candidate_mmi_free_text(timestamptz) TO service_role;
 DO $postconditions$
 DECLARE
   v_signature text;
@@ -831,12 +735,41 @@ BEGIN
     'public.fail_candidate_mmi_response_scoring(uuid,uuid,uuid,text)',
     'public.purge_expired_candidate_mmi_free_text(timestamptz)'
   ] LOOP
+    v_owner := NULL;
+    v_security_definer := NULL;
+    v_config := NULL;
     SELECT pg_get_userbyid(proowner), prosecdef, proconfig
     INTO v_owner, v_security_definer, v_config
     FROM pg_proc WHERE oid = to_regprocedure(v_signature);
-    IF v_owner <> 'postgres' OR v_security_definer IS DISTINCT FROM TRUE
+    IF NOT FOUND OR v_owner <> 'postgres' OR v_security_definer IS DISTINCT FROM TRUE
       OR NOT (COALESCE(v_config, ARRAY[]::text[]) @> ARRAY['search_path=public, pg_temp']) THEN
       RAISE EXCEPTION 'candidate browser-speech function security postcondition failed: %', v_signature;
+    END IF;
+  END LOOP;
+  FOREACH v_signature IN ARRAY ARRAY[
+    'public.start_candidate_mmi_station_session()',
+    'public.get_candidate_mmi_station_session(uuid)',
+    'public.abandon_candidate_mmi_station_session(uuid)',
+    'public.checkpoint_candidate_mmi_station_response(uuid,smallint,text,bigint)',
+    'public.finalize_candidate_mmi_station_response(uuid,smallint,uuid)',
+    'public.get_candidate_mmi_station_feedback(uuid)'
+  ] LOOP
+    IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE')
+      OR has_function_privilege('anon', v_signature, 'EXECUTE')
+      OR has_function_privilege('service_role', v_signature, 'EXECUTE') THEN
+      RAISE EXCEPTION 'candidate browser-speech browser RPC ACL postcondition failed: %', v_signature;
+    END IF;
+  END LOOP;
+  FOREACH v_signature IN ARRAY ARRAY[
+    'public.claim_candidate_mmi_response_scoring(uuid,uuid,smallint,uuid)',
+    'public.complete_candidate_mmi_response_scoring(uuid,uuid,uuid,jsonb)',
+    'public.fail_candidate_mmi_response_scoring(uuid,uuid,uuid,text)',
+    'public.purge_expired_candidate_mmi_free_text(timestamptz)'
+  ] LOOP
+    IF NOT has_function_privilege('service_role', v_signature, 'EXECUTE')
+      OR has_function_privilege('anon', v_signature, 'EXECUTE')
+      OR has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
+      RAISE EXCEPTION 'candidate browser-speech service RPC ACL postcondition failed: %', v_signature;
     END IF;
   END LOOP;
   FOREACH v_table IN ARRAY ARRAY[
@@ -863,5 +796,4 @@ BEGIN
   END IF;
 END;
 $postconditions$;
-
 COMMIT;
