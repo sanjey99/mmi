@@ -188,6 +188,47 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 14. Separate completed MMI history in Progress without changing legacy aggregates.
 15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
 
+### Candidate browser-speech station release gate — local evidence only
+
+The 11-minute candidate station is implemented locally on `feat/cofounder-ui-reliability`; it is not hosted, deployed, or feature-enabled by this work. Browser speech recognition is an optional enhancement only when the runtime capability probe succeeds. Manual typing, including operating-system/browser dictation through the editable field, is the required compatibility baseline everywhere.
+
+| Browser/runtime | Speech enhancement gate | Required baseline |
+| --- | --- | --- |
+| Current stable Chrome desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
+| Current stable Edge desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
+| Current stable Safari desktop | [ ] Capability-probe and fallback evidence | Manual typing |
+| Current stable Chrome Android | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
+| Current stable Safari iOS | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
+
+Privacy and scope are fixed for this release candidate:
+
+- The browser or platform may send microphone audio to its own speech provider for transcription. This app does not record, upload, or store audio.
+- The editable transcript text is checkpointed privately and used for transcript-only feedback. It is not logged or sent in finalization/scoring request bodies.
+- No delivery-quality inference is permitted. Accent, vocal delivery, posture, movement, and camera engagement are outside scoring.
+- Camera/video capture remains excluded from this station and requires a separate design, privacy, security, and approval process.
+
+Automated local evidence:
+
+- [x] Synthetic `SpeechRecognition` covers start, interim/final results, unexpected end/restart, permission denial, refresh-paused recovery, and abort without requesting a real microphone.
+- [x] The preflight performs no candidate session RPC and starts no timer until **Start station**.
+- [x] Deadline proof freezes editing, stops recognition, saves eligible pre-deadline text, and sends only session ID, prompt order, and an idempotency UUID to finalization.
+- [x] Completion proof launches identity-only scoring and renders five ordered transcript-only feedback states.
+- [x] Local verification passed: 37 Node tests, 294 Vitest tests, 10/10 Playwright flows, TypeScript, production web export, and coverage above 80% in every enforced category.
+
+Manual evidence required before enabling the feature for cofounders:
+
+- [ ] Permission allow and deny on each supported desktop/mobile target; unsupported API remains fully usable by typing.
+- [ ] Operating-system/browser dictation fallback, recognition restart, refresh restore, and **Resume microphone** behavior.
+- [ ] All five deadline transitions, a transient finalization retry, and the ordered completion-feedback states.
+- [ ] Keyboard-only editing, screen-reader labels/status announcements, mobile viewport/keyboard behavior, and reduced-motion behavior.
+- [ ] Confirm browser bundles and monitoring contain no transcript, prompt, provider payload, credential, audio, or other sensitive logging.
+
+Separately approval-gated external actions:
+
+- [ ] Apply the candidate browser-speech database migration to an approved isolated environment.
+- [ ] Configure and deploy the JWT-verified candidate scoring function and its server-only provider settings.
+- [ ] Deploy the reviewed client artifact, run bounded real-environment smoke tests, and deliberately enable the server feature flag.
+
 ### Preserved Phase 4 contracts
 
 - Legacy questions and MMI content remain separate domains.
