@@ -7,8 +7,10 @@ directly because it requires the runner's local-proof database setting.
 
 ## Disposable pre-040 preparation
 
-Prepare a separate disposable local Postgres/Supabase volume from the observed
-hosted catalog generation: the four `app_config` policies must use the legacy
+Prepare a separate disposable local Postgres/Supabase volume and a dedicated
+database whose name matches `mmi_*proof*`, for example
+`mmi_cofounder_proof`. The database must be restored from the observed hosted
+catalog generation: the four `app_config` policies must use the legacy
 `app_config_*_admin` names, `is_admin()` must exist, the seven assessor tables
 must exist, and migration `040` must not have been applied. A normal full
 `supabase db reset` is not suitable because it applies `040`; use a local clone
@@ -20,19 +22,35 @@ four hosted-preexisting assessor tables `mmi_marking_criteria`,
 definitions in this disposable volume before running the proof. Never use a
 hosted connection string.
 
+Before running the proof, set this exact database-level marker while connected
+to the local Postgres instance as a database administrator:
+
+```sql
+CREATE DATABASE mmi_cofounder_proof;
+ALTER DATABASE mmi_cofounder_proof
+  SET app.mmi_adversarial_disposable = 'I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA';
+```
+
+Restore or prepare the disposable pre-040 catalog in that database after
+creation. The runner checks this marker from `pg_db_role_setting`, the exact
+database name, and local client/server addresses before it sets its session
+acknowledgement or runs any fixture.
+
 ## Sole execution command
 
 ```bash
 SUPABASE_LOCAL_MUTATION_TESTS=I_UNDERSTAND_THIS_MUTATES_LOCAL_DATA \
-SUPABASE_LOCAL_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
+SUPABASE_LOCAL_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/mmi_cofounder_proof' \
 bash scripts/run-local-cofounder-adversarial-proof.sh
 ```
 
-The runner parses the URL and accepts only the exact loopback hostnames
-`127.0.0.1`, `localhost`, and `[::1]` (the bracketed IPv6 URL form), with
-`postgres`/`postgresql` schemes.
-It rejects suffix attacks such as `127.0.0.1.evil.example` before invoking
-`psql`.
+The runner parses the URL once and uses only its canonical validated form. It
+accepts only the exact loopback hostnames `127.0.0.1`, `localhost`, and `[::1]`
+(the bracketed IPv6 URL form), with `postgres`/`postgresql` schemes and an
+`mmi_*proof*` database name. It rejects all URL query parameters and fragments,
+including libpq `host=` overrides, and suffix attacks such as
+`127.0.0.1.evil.example` before invoking `psql`. `psql -X` prevents local
+startup files from changing proof behavior.
 
 The runner executes the following internal stages:
 
