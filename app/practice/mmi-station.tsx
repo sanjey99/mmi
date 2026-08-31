@@ -130,6 +130,7 @@ export default function CandidateMmiStationScreen() {
       .then(() => runner().expireCurrentPhase(createFinalizationKey()))
       .then(acceptProjection)
       .catch(() => {
+      if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
       setErrorMessage('The candidate station could not advance safely.');
       });
   }, [acceptProjection, projection, remaining, runner]);

@@ -228,7 +228,7 @@ describe('candidate MMI runner finalization boundary', () => {
     expect(api.refresh).toHaveBeenNthCalledWith(2, sessionId);
   });
 
-  it('rejects a checkpoint outside a current response and does not let an older same-identity refresh overwrite a newer result', async () => {
+  it('does not let an older same-identity refresh overwrite a newer result', async () => {
     const api = apiFixture();
     let resolveFirstRefresh: ((value: CandidateMmiServerProjection) => void) | undefined;
     let resolveSecondRefresh: ((value: CandidateMmiServerProjection) => void) | undefined;
@@ -261,5 +261,22 @@ describe('candidate MMI runner finalization boundary', () => {
     expect(route).toContain('globalThis.crypto');
     expect(route).toContain("typeof capability?.randomUUID !== 'function'");
     expect(route).not.toContain('crypto.randomUUID()');
+  });
+
+  it('releases only its own expiry guard after a failed finalization attempt', () => {
+    const route = readFileSync(resolve(process.cwd(), 'app/practice/mmi-station.tsx'), 'utf8');
+    expect(route).toContain('if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;');
+    expect(route).toMatch(/\.catch\(\(\) => \{[\s\S]*expiringPhaseRef\.current === key/);
+  });
+});
+
+describe('candidate MMI feature flag', () => {
+  it('uses the exact flag key and fails closed except for the exact enabled string', async () => {
+    const { CANDIDATE_MMI_FEATURE_FLAG, isNormalizedMmiStationEnabled } = await import('../src/features/candidateMmi/featureFlag');
+    expect(CANDIDATE_MMI_FEATURE_FLAG).toBe('normalized_mmi_station_enabled');
+    await expect(isNormalizedMmiStationEnabled(async () => 'true')).resolves.toBe(true);
+    for (const value of [undefined, null, false, true, 'TRUE', ' true ', 'false', {}, []]) {
+      await expect(isNormalizedMmiStationEnabled(async () => value)).resolves.toBe(false);
+    }
   });
 });
