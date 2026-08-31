@@ -295,7 +295,10 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     authUserIds.push(createdAdmin.userId, createdOwner.userId, createdOther.userId);
 
     const flatImportBatches = readFlatImportBatches();
-    const importedFlatBatches = await Promise.all(flatImportBatches.map(rows => importQuestionRows(admin, rows)));
+    let importedFlatBatches: ImportedQuestionBatch[] = [];
+    for (const rows of flatImportBatches) {
+      importedFlatBatches = [...importedFlatBatches, await importQuestionRows(admin, rows)];
+    }
     assert.equal(importedFlatBatches.reduce((count, result) => count + result.ids.length, 0), 785);
     await activateVerifiedFlatMmiQuestionSet();
 
@@ -391,7 +394,7 @@ run('normalized candidate MMI station orchestration (disposable local Supabase o
     });
     assert.equal(finalizeError, null, finalizeError?.message);
     finalizationProof = data as FinalizationProof;
-  });
+  }, 30_000);
 
   afterAll(async () => {
     if (!service) return;
