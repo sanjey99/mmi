@@ -21,3 +21,52 @@ export interface CandidateMmiMediaPort {
   finishResponse(): Promise<CompletedResponseArtifactRef | null>;
   abort(input: Readonly<{ sessionId: string; reason: CandidateMmiAbortReason }>): Promise<void>;
 }
+
+export type CandidateMmiSpeechStatus =
+  | 'idle'
+  | 'listening'
+  | 'restarting'
+  | 'unsupported'
+  | 'permission_denied'
+  | 'unavailable';
+
+export type CandidateMmiSpeechCapability = 'supported' | 'unsupported';
+
+export type CandidateMmiSpeechCallbacks = Readonly<{
+  onFinalFragment: (text: string) => void;
+  onInterimText: (text: string) => void;
+  onStatus: (status: CandidateMmiSpeechStatus) => void;
+}>;
+
+export interface CandidateMmiSpeechRecognitionResult {
+  readonly isFinal: boolean;
+  readonly 0: Readonly<{ transcript: string }>;
+}
+
+export interface CandidateMmiSpeechRecognitionEvent {
+  readonly resultIndex: number;
+  readonly results: ArrayLike<CandidateMmiSpeechRecognitionResult>;
+}
+
+export interface CandidateMmiSpeechRecognitionInstance {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onend: (() => void) | null;
+  onerror: ((event: Readonly<{ error: string }>) => void) | null;
+  onresult: ((event: CandidateMmiSpeechRecognitionEvent) => void) | null;
+  start(): void;
+  stop(): void;
+  abort?(): void;
+}
+
+export type CandidateMmiSpeechRecognitionConstructor = new () => CandidateMmiSpeechRecognitionInstance;
+
+export interface CandidateMmiSpeechPort {
+  getCapability(): CandidateMmiSpeechCapability;
+  start(input: Readonly<{ responseIdentity: string }> & CandidateMmiSpeechCallbacks): Promise<void>;
+  stop(input: Readonly<{ responseIdentity: string }>): Promise<void>;
+  startPreflight(onStatus: (status: CandidateMmiSpeechStatus) => void): Promise<void>;
+  stopPreflight(): Promise<void>;
+  abort(): Promise<void>;
+}

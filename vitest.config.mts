@@ -29,6 +29,7 @@ export default defineConfig({
       'tests/medInterviewQuestionBankImport.test.ts',
       'tests/candidateMmiImportPolicy.test.ts',
       'tests/candidateMmiApi.test.ts',
+      'tests/candidateMmiSpeech.test.ts',
       'tests/candidateMmiUiContract.test.ts',
       'tests/cofounderFeedback.test.ts',
       'tests/cofounderFeedbackPolicy.test.ts',
