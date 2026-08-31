@@ -131,7 +131,12 @@ describe('cofounder preview hosted reconciliation policy', () => {
         `REVOKE EXECUTE ON FUNCTION public.${signature} FROM PUBLIC, anon, authenticated, service_role`,
       );
     }
-    expect(sql).not.toMatch(/REVOKE EXECUTE ON FUNCTION public\.is_admin\(\)\s+FROM PUBLIC, anon, authenticated, service_role/i);
+    expect(normalizedSql).toContain(
+      'REVOKE EXECUTE ON FUNCTION public.is_admin() FROM PUBLIC, anon, authenticated, service_role',
+    );
+    expect(normalizedSql).toContain(
+      'GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated',
+    );
     expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.update_streak\(UUID\) TO service_role/i);
     expect(sql).toMatch(/legacy security-definer hardening postcondition failed/i);
     for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
@@ -139,6 +144,6 @@ describe('cofounder preview hosted reconciliation policy', () => {
         `has_function_privilege('${role}', 'public.update_streak(uuid)', 'EXECUTE')`,
       );
     }
-    expect(sql).not.toContain("has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')");
+    expect(sql).toContain("has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')");
   });
 });

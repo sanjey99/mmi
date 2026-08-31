@@ -14,6 +14,10 @@ DECLARE
   v_table text;
   v_column text;
   v_policy_count integer;
+  v_helper record;
+  v_owner text;
+  v_security_definer boolean;
+  v_config text[];
 BEGIN
   FOREACH v_table IN ARRAY ARRAY[
     'app_config',
@@ -29,6 +33,30 @@ BEGIN
   LOOP
     IF to_regclass('public.' || v_table) IS NULL THEN
       RAISE EXCEPTION 'required hosted table public.% is missing', v_table;
+    END IF;
+  END LOOP;
+
+  FOR v_helper IN
+    SELECT *
+    FROM (VALUES
+      ('handle_new_user', 'public.handle_new_user()'),
+      ('update_streak', 'public.update_streak(uuid)'),
+      ('is_admin', 'public.is_admin()')
+    ) AS required(name, signature)
+  LOOP
+    IF to_regprocedure(v_helper.signature) IS NULL THEN
+      RAISE EXCEPTION 'required hosted helper % is missing', v_helper.signature;
+    END IF;
+
+    SELECT pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig
+    INTO v_owner, v_security_definer, v_config
+    FROM pg_proc AS p
+    WHERE p.oid = to_regprocedure(v_helper.signature);
+
+    IF v_owner <> 'postgres'
+      OR v_security_definer IS DISTINCT FROM TRUE
+    THEN
+      RAISE EXCEPTION 'required hosted helper % has unsafe identity', v_helper.signature;
     END IF;
   END LOOP;
 
@@ -80,6 +108,69 @@ BEGIN
       )
   ) THEN
     RAISE EXCEPTION 'app_config policy set differs from the reviewed hosted snapshot';
+  END IF;
+END;
+$$;
+
+-- Trigger invocation does not require a caller EXECUTE grant. Pin every
+-- pre-existing SECURITY DEFINER helper before reducing its callable surface.
+-- is_admin stays available to authenticated legacy policies until cutover 040
+-- replaces those predicates with direct profile checks.
+ALTER FUNCTION public.handle_new_user() SET search_path = pg_catalog, public;
+ALTER FUNCTION public.update_streak(uuid) SET search_path = pg_catalog, public;
+ALTER FUNCTION public.is_admin() SET search_path = pg_catalog, public;
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_user()
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.update_streak(uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.is_admin()
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
+DO $$
+DECLARE
+  v_helper record;
+  v_owner text;
+  v_security_definer boolean;
+  v_config text[];
+  v_role text;
+BEGIN
+  FOR v_helper IN
+    SELECT *
+    FROM (VALUES
+      ('handle_new_user', 'public.handle_new_user()'),
+      ('update_streak', 'public.update_streak(uuid)'),
+      ('is_admin', 'public.is_admin()')
+    ) AS required(name, signature)
+  LOOP
+    SELECT pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig
+    INTO v_owner, v_security_definer, v_config
+    FROM pg_proc AS p
+    WHERE p.oid = to_regprocedure(v_helper.signature);
+
+    IF v_owner <> 'postgres'
+      OR v_security_definer IS DISTINCT FROM TRUE
+      OR NOT (COALESCE(v_config, ARRAY[]::text[]) @> ARRAY['search_path=pg_catalog, public'])
+    THEN
+      RAISE EXCEPTION 'reconciliation helper security postcondition failed for %', v_helper.signature;
+    END IF;
+  END LOOP;
+
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role']
+  LOOP
+    IF has_function_privilege(v_role, 'public.handle_new_user()', 'EXECUTE')
+      OR has_function_privilege(v_role, 'public.update_streak(uuid)', 'EXECUTE')
+    THEN
+      RAISE EXCEPTION 'reconciliation helper execution postcondition failed for %', v_role;
+    END IF;
+  END LOOP;
+
+  IF NOT has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.is_admin()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION 'reconciliation legacy is_admin execution postcondition failed';
   END IF;
 END;
 $$;
@@ -227,7 +318,7 @@ BEGIN
       AND table_name = v_table;
 
     EXECUTE format(
-      'REVOKE SELECT (%1$s), INSERT (%1$s), UPDATE (%1$s), REFERENCES (%1$s) ON TABLE public.%2$I FROM PUBLIC, anon, authenticated',
+      'REVOKE SELECT (%1$s), INSERT (%1$s), UPDATE (%1$s), REFERENCES (%1$s) ON TABLE public.%2$I FROM PUBLIC, anon, authenticated, service_role',
       v_columns,
       v_table
     );
@@ -280,13 +371,13 @@ GRANT SELECT (key, value), INSERT (key, value), UPDATE (key, value)
 REVOKE ALL ON TABLE public.app_config FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO authenticated;
 
-REVOKE ALL ON TABLE public.mmi_stations FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.mmi_sub_questions FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.roleplay_stations FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.mmi_marking_criteria FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.roleplay_end_criteria FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.roleplay_mark_domains FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON TABLE public.roleplay_response_rules FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.mmi_stations FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.mmi_sub_questions FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.roleplay_stations FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.mmi_marking_criteria FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.roleplay_end_criteria FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.roleplay_mark_domains FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.roleplay_response_rules FROM PUBLIC, anon, authenticated, service_role;
 
 REVOKE ALL ON TABLE public.mmi_stations FROM service_role;
 REVOKE ALL ON TABLE public.mmi_sub_questions FROM service_role;

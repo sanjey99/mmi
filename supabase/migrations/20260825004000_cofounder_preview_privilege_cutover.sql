@@ -667,6 +667,28 @@ ALTER POLICY "profiles_update_own"
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
 
+-- Replace the final legacy helper-dependent policy before the final helper
+-- revocation below. The policy remains bound to the requesting administrator.
+ALTER POLICY "questions_write_admin"
+  ON public.questions
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.profiles AS p
+      WHERE p.id = auth.uid()
+        AND p.is_admin IS TRUE
+    )
+  );
+
 -- Remove both table-level and any inherited column-level browser grants.
 DO $$
 DECLARE
@@ -911,6 +933,18 @@ BEGIN
     )
   THEN
     RAISE EXCEPTION 'legacy security-definer hardening postcondition failed';
+  END IF;
+END;
+$$;
+
+-- Keep an explicit final-cutover guard alongside the per-helper verifier.
+DO $$
+BEGIN
+  IF has_function_privilege('authenticated', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.is_admin()', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.is_admin()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION 'cutover helper execution postcondition failed';
   END IF;
 END;
 $$;

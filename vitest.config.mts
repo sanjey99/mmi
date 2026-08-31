@@ -36,6 +36,7 @@ export default defineConfig({
       'tests/cofounderFeedbackPolicy.test.ts',
       'tests/cofounderHostedReconciliationPolicy.test.ts',
       'tests/cofounderPrivilegeCutoverPolicy.test.ts',
+      'tests/cofounderAdversarialHardeningPolicy.test.ts',
       'tests/hostedCatalogSnapshotPolicy.test.ts',
       'tests/releaseUiPolicy.test.ts',
     ],
