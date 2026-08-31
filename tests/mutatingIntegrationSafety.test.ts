@@ -79,6 +79,7 @@ describe('credential-gated mutation test safety', () => {
     expect(packageJson.scripts['test:coverage']).not.toContain('tests/integration');
     expect(packageJson.scripts['test:integration:mutating']).toContain('vitest.mutation.config.mts');
     expect(packageJson.scripts['test:integration:mutating']).toContain('tests/integration/mmi*.integration.test.ts');
+    expect(packageJson.scripts['test:integration:mutating']).toContain('--test-concurrency=1');
 
     const mutationConfig = await readFile(join(process.cwd(), 'vitest.mutation.config.mts'), 'utf8');
     expect(mutationConfig).toContain("'tests/integration/candidateMmiStation.integration.test.ts'");

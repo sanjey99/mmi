@@ -14,7 +14,7 @@
     "test": "npm run test:node && npm run test:vitest",
     "test:node": "node --test tests/mmi*.test.ts",
     "test:vitest": "vitest run",
-    "test:integration:mutating": "vitest run --config vitest.mutation.config.mts && node --test tests/integration/mmi*.integration.test.ts",
+    "test:integration:mutating": "vitest run --config vitest.mutation.config.mts && node --test --test-concurrency=1 tests/integration/mmi*.integration.test.ts",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 tests/mmi*.test.ts && vitest run --coverage",
     "test:e2e": "playwright test"
   },
