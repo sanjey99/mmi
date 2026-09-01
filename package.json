@@ -14,7 +14,7 @@
     "test": "npm run test:node && npm run test:vitest",
     "test:node": "node --test tests/mmi*.test.ts",
     "test:vitest": "vitest run",
-    "test:integration:mutating": "vitest run --config vitest.mutation.config.mts && node --test tests/integration/mmi*.integration.test.ts",
+    "test:integration:mutating": "vitest run --config vitest.mutation.config.mts && node --test --test-concurrency=1 tests/integration/mmi*.integration.test.ts",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 tests/mmi*.test.ts && vitest run --coverage",
     "test:e2e": "playwright test"
   },
@@ -25,7 +25,7 @@
     "@react-native-async-storage/async-storage": "^2.1.0",
     "@react-navigation/native": "^7.0.0",
     "@supabase/supabase-js": "^2.46.0",
-    "expo": "~55.0.30",
+    "expo": "~55.0.31",
     "expo-constants": "~55.0.17",
     "expo-document-picker": "~55.0.17",
     "expo-file-system": "~55.0.26",

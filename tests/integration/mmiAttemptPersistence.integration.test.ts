@@ -6,6 +6,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode } from './mmiPersistenceFixtures.ts';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { canRunLocalMutationTests } from './mutationTestSafety.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { deleteLocalAssessorContentByPrefix, insertLocalAssessorContentRows, isLocalAssessorContentTable } from './localDatabaseFixture.ts';
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
@@ -27,6 +29,9 @@ let standardRubricId: string;
 let roleplayRubricId: string;
 async function mustInsert(table: string,
   row: Record<string, unknown> | Record<string, unknown>[]) {
+  if (isLocalAssessorContentTable(table)) {
+    return insertLocalAssessorContentRows(table, row);
+  }
   const { data, error } = await service.from(table).insert(row).select();
   assert.equal(error, null, error?.message);
   assert.ok(data);
@@ -196,17 +201,14 @@ run('MMI practice persistence (disposable local Supabase only)', () => {
       .from('mmi_scoring_rubrics').delete()
       .or(`standard_sub_q_id.like.${fixturePrefix}%,roleplay_station_id.like.${fixturePrefix}%`);
     cleanupErrors.push(rubricError);
-    const [noticeCleanup, roleplayCleanup, standardCleanup] = await Promise.all([
-      service.from('mmi_privacy_notices').delete()
-        .like('version', `${fixturePrefix}%`),
-      service.from('roleplay_stations').delete()
-        .like('station_id', `${fixturePrefix}%`),
-      service.from('mmi_stations').delete()
-        .like('station_id', `${fixturePrefix}%`),
-    ]);
-    cleanupErrors.push(
-      noticeCleanup.error, roleplayCleanup.error, standardCleanup.error,
-    );
+    const noticeCleanup = await service.from('mmi_privacy_notices').delete()
+      .like('version', `${fixturePrefix}%`);
+    cleanupErrors.push(noticeCleanup.error);
+    try {
+      await deleteLocalAssessorContentByPrefix(fixturePrefix);
+    } catch (error) {
+      cleanupErrors.push(error as Error);
+    }
     for (const userId of authUserIds) {
       const { error } = await service.auth.admin.deleteUser(userId);
       cleanupErrors.push(error);

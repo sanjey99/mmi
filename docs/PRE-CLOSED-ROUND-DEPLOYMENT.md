@@ -4,9 +4,18 @@
 
 **Entry condition:** Every release gate in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md) is complete and evidenced.
 
+## Production infrastructure decision — blocks user onboarding
+
+> Before onboarding any production users, migrate the application from Vercel and Supabase to an approved production infrastructure stack. Vercel and Supabase are limited to development and isolated preview use. Production deployment is blocked until the replacement passes security, backup/restore, rollback, and 500-concurrent-station load tests.
+
+- The replacement provider and implementation are **TBD**. Selection, provisioning, migration, cutover, and public launch each require explicit approval; this document does not authorize a vendor or implementation.
+- Vercel and Supabase may support development and isolated preview only. They must not be used to onboard production users or as the public production runtime, database, Auth/session service, storage, or function platform.
+- Any historical reference below to a Vercel or Supabase “production” alias or operation is retained as prior evidence only; it is not authorization for production-user traffic under this decision.
+- No production users may be onboarded until the approved replacement has completed every migration and launch gate in this guide.
+
 ## Current checkpoint — 25–26 August 2026
 
-- The import-idempotency database capability and all 785 active candidate-visible workbook rows are hosted, while its client workflow remains local on `feat/cofounder-ui-reliability` and is not deployed to Vercel. During this current phase, the separately approved `040`, `050`, exact part-1/part-2 workbook RPC imports, and exact publication transaction were applied as recorded below; every next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain separately approval-gated and forward-only. This is not overall hosted deployment/readiness completion.
+- The import-idempotency database capability and all 785 active candidate-visible workbook rows are hosted. Its client workflow is present only in protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`, not the stable alias. During this current phase, the separately approved `040`, `050`, exact part-1/part-2 workbook RPC imports, and exact publication transaction were applied as recorded below; every next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain separately approval-gated and forward-only. This is not overall hosted deployment/readiness completion.
 - Earlier separately approved operations applied the hosted-only reconciliation, additive migrations `20260825000000`, `20260825001000`, and `20260825002000`, final cutover `20260825004000`, import-capability migration `20260825005000`, and both workbook imports on 26 August 2026; `score-answer` is v4 ACTIVE and `manage-ai-key` remains v3. The stable Vercel production alias is live at `https://mmi-hazel.vercel.app` from commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; it does not include the client import workflow.
 - Latest local preview verification passes: 35 Node tests; 213 Vitest tests; Node coverage 98.52% lines, 84.63% branches, 98.82% functions; Vitest coverage 95.95% lines, 87.24% branches, 97.27% functions; TypeScript including the Edge handler; Expo web export; and 4/4 fully intercepted local Playwright tests, including station-overlap geometry and Profile → `/admin/questions` direct routing.
 - Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
@@ -36,7 +45,7 @@
 ## Product boundary for the 100-person round
 
 - Invite/allowlist enrollment only; no public account creation.
-- Stable web deployment on Vercel; Supabase remains Auth/Postgres/Edge backend.
+- Until a replacement is approved and migrated, Vercel and Supabase are development/isolated-preview dependencies only; the production web runtime, PostgreSQL, Auth/session service, storage, and functions are explicitly TBD and approval-gated.
 - Legacy free/timed practice is the default student experience until Phase 4 passes its own gates.
 - Founder/system admin, content editor, and tester/student are separate roles.
 - Content editors can manage questions but cannot change roles, AI credentials, providers, allowlists, retention, or deployments.
@@ -163,7 +172,7 @@ No tracked CI workflow or analytics integration exists at this checkpoint. Neith
 
 ## Phase 4 MMI roadmap
 
-The planned automated voice/webcam cofounder experience is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). It is not implemented, deployed, or authorized here; this roadmap retains the current transcript-only contract and does not restore a standard typed-answer box.
+The candidate browser-speech station is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). Its transcript-only client implementation is hosted only as the protected exact-SHA Vercel Preview recorded below; its candidate Supabase backend is not deployed, it is not feature-enabled, and it is not authorized for cofounder viewing. Browser speech is optional and the editable typed/dictation path is the required baseline. Webcam capture and webcam-derived assessment are a separate next workstream and are not part of this release contract.
 
 ### Completed locally and merged
 
@@ -179,14 +188,62 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 ### Remaining before Phase 4 can be exposed
 
 7. Idempotent rubric-driven scoring and atomic progression.
-8. Provider-isolated transcription and ephemeral recording validation for the retained transcript-only contract; automated-media work follows the separately gated pre-cofounder specification.
+8. Browser/platform speech-processing disclosure and raw-audio non-retention validation for the optional speech-to-text path; webcam or other automated-media work follows a separate future specification.
 9. Typed station-library data layer and filters.
 10. Dedicated MMI client state engine.
 11. Student station library replacing the hidden Questions placeholder.
-12. Retained transcript-review flow and accessibility accommodations; the planned voice/webcam station experience follows the separately gated pre-cofounder specification.
+12. Retained editable-transcript review with typing/dictation fallback and accessibility accommodations; webcam work follows its own future approval gates.
 13. Immediate feedback, explicit sole forward progression, deterministic summary, and single-turn role-play.
 14. Separate completed MMI history in Progress without changing legacy aggregates.
 15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
+
+### Candidate browser-speech station release gate — local backend evidence; protected client preview
+
+The 11-minute candidate station at exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` is deployed only as protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. Its candidate Supabase migrations, scoring function, hosted configuration, and feature flag are not deployed or enabled. Browser speech recognition is an optional enhancement only when the runtime capability probe succeeds. Manual typing, including operating-system/browser dictation through the editable field, is the required compatibility baseline everywhere.
+
+| Browser/runtime | Speech enhancement gate | Required baseline |
+| --- | --- | --- |
+| Current stable Chrome desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
+| Current stable Edge desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
+| Current stable Safari desktop | [ ] Capability-probe and fallback evidence | Manual typing |
+| Current stable Chrome Android | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
+| Current stable Safari iOS | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
+
+Privacy and scope are fixed for this release candidate:
+
+- The browser or platform may send microphone audio to its own speech provider for transcription. This app does not record, upload, or store audio.
+- The editable transcript text is held in UI memory while editing, checkpointed privately to server-owned session state for recovery, finalized at the trusted deadline, and used for transcript-only feedback. It is not persisted as app-managed audio, logged, or sent in finalization/scoring request bodies; the scoring function loads the finalized transcript from server-owned state.
+- No delivery-quality inference is permitted. Accent, vocal delivery, posture, movement, and camera engagement are outside scoring.
+- Camera/video capture remains excluded from this station. It is the next product workstream and requires a separate design, privacy, security, accessibility, validity, bias, clinician-review, retention, and approval process before implementation or testing.
+
+Automated local evidence:
+
+- [x] Synthetic `SpeechRecognition` covers start, interim/final results, unexpected end/restart, permission denial, refresh-paused recovery, and abort without requesting a real microphone.
+- [x] The preflight performs no candidate session RPC and starts no timer until **Start station**.
+- [x] Deadline proof freezes editing, stops recognition, saves eligible pre-deadline text, and sends only session ID, prompt order, and an idempotency UUID to finalization.
+- [x] Completion proof launches identity-only scoring and renders five ordered transcript-only feedback states.
+- [x] Local verification passed after the security hardening: 37 Node tests, 300 Vitest tests, 13/13 isolated candidate database integration tests, 10/10 Playwright flows, TypeScript, production web export, and coverage above 80% in every enforced category.
+
+Manual evidence required before enabling the feature for cofounders:
+
+These checks mean a person must use real browsers and devices rather than relying only on simulated Playwright events. Native microphone permission prompts, browser/OS speech-provider behavior, mobile keyboards, VoiceOver/TalkBack or other screen readers, focus order, and reduced-motion rendering are controlled outside the JavaScript test harness. Record the browser/device/version, result, and date for each applicable check; an unsupported speech API passes only when the typed/dictation fallback remains fully usable.
+
+- [ ] Permission allow and deny on each supported desktop/mobile target; unsupported API remains fully usable by typing.
+- [ ] Operating-system/browser dictation fallback, recognition restart, refresh restore, and **Resume microphone** behavior.
+- [ ] All five deadline transitions, a transient finalization retry, and the ordered completion-feedback states.
+- [ ] Keyboard-only editing, screen-reader labels/status announcements, mobile viewport/keyboard behavior, and reduced-motion behavior.
+- [ ] Confirm browser bundles and monitoring contain no transcript, prompt, provider payload, credential, audio, or other sensitive logging.
+
+Approval-gated deployment status:
+
+- [x] Applied candidate migrations through `20260901001000` only to the isolated loopback worktree database on 1 September 2026; 13/13 candidate database integration tests passed, including expired finalized transcript and unfinished-draft deletion through the hourly operator path. No hosted database was mutated.
+- [x] Served `score-candidate-mmi-response` in the local Supabase Edge runtime with JWT verification enabled and confirmed a missing-authentication request is rejected with HTTP 401 before handler/provider work. The temporary local server was stopped; no provider credential was configured or contacted.
+- [ ] Apply the same reviewed forward migrations to an exact approved hosted isolated/preview environment. The currently linked Supabase `main` branch is shared and is not an inferred deployment target.
+- [ ] Verify the hosted normalized import/finalization contains exactly 155 candidate stations and 775 ordered prompts, then publish exactly one approved fixed-days privacy notice and active clinician-reviewed rubrics for every candidate prompt. Keep the flag off if any prerequisite is absent.
+- [ ] Verify exactly one active `candidate-mmi-purge-expired-free-text` Cron job runs at minute 23 hourly on that target. The database operator owns the non-runtime wrapper; monitor for a successful `cron.job_run_details` entry within two hours, alert on two consecutive failures, disable on failure, repair forward, run approved operator maintenance, and verify only aggregate purge/run evidence before re-enabling.
+- [ ] Configure and deploy the JWT-verified candidate scoring function and its server-only provider settings.
+- [x] GitHub's Vercel integration deployed exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` as protected Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. An authenticated HTTP smoke returned `200` for the `Interview Station` app shell and its JavaScript bundle. The worktree itself remains unlinked from a Vercel project, and no interactive/device or candidate-backend smoke is claimed.
+- [ ] After the exact approved hosted Supabase preview exists and the migration/function/content/configuration gates pass, run the bounded named-account end-to-end smoke while disabled and deliberately enable the server feature flag only after acceptance.
 
 ### Preserved Phase 4 contracts
 
@@ -225,7 +282,7 @@ These migrations/functions are not thereby authorized for hosted deployment. The
 2. The hosted-only reconciliation was earlier applied under an exact approval, outside `db push`. Re-audit before any additional hosted operation.
 3. Additive migrations `20260825000000`, `20260825001000`, and `20260825002000` and final cutover `20260825004000` were applied under exact approvals. Retain the recorded `040` Management API postflight evidence and re-prove changed release commits locally.
 4. Verify the created tables/RPCs, security-definer ownership/search paths, service-only storage, RLS, and exact function grants.
-5. `score-answer` is v4 ACTIVE, `manage-ai-key` remains v3, and the stable Vercel production alias is live at commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; the client import workflow is not deployed. Complete a bounded hosted smoke before any further promotion.
+5. `score-answer` is v4 ACTIVE, `manage-ai-key` remains v3, and the stable Vercel production alias is live at commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; the client import workflow is not deployed to that stable alias and exists only in the protected exact-SHA Preview. Complete a bounded hosted smoke before any further promotion.
 6. Final cutover `20260825004000` is complete; it rewrote exact ownership policies, removed table/column grant drift, disabled direct score/streak/question access, and restored only the minimum safe browser grants. Retain the recorded preflight/apply/postflight evidence.
 7. Import-capability migration `20260825005000_cofounder_question_import_idempotency.sql` is complete after `040`. It added nullable source identity, a private RLS ledger, and a fixed-path authenticated-admin RPC, and performed no workbook import at migration time. Retain its recorded unique-index, ledger ACL/RLS, owner/security-definer/search-path, and direct-table-denial postflight evidence.
 8. Workbook staging and publication are complete as separately approved and recorded above: part 1 (500) and part 2 (285) are active candidate-visible content, while the two legacy rows are deactivated without deletion. Present any next content operation as its own exact, forward-only approval with the appropriate source-manifest SHA, batch ID, row count, and expected result. Separately verify the operator artifacts: `manifest.json` SHA and the corresponding part CSV SHA-256. Do not alter or rename an ambiguous retry, and never delete imported rows: use a separately approved correction or deactivation batch.
@@ -244,18 +301,23 @@ Never mark a migration applied until its complete reviewed effect exists. Never 
 3. Produce exact reviewed SQL diffs, function list, secret names (never values), allowed origins, and rollback plan.
 4. Confirm the preview and Phase 4 deployment scopes are not mixed.
 
-### Approval-gated production stages
+### Approval-gated production migration and launch
 
-1. Audit the hosted schema and repair only a separately proven migration-history baseline; never claim unapplied effects.
-2. Separately apply the hosted-only reconciliation artifact outside `db push`.
-3. Separately apply only additive preview migrations `000`–`020`, then re-audit all objects and grants.
-4. Configure exact public origins, provider host allowlist if needed, provider/model/key, and later transcription key only if that feature is approved.
-5. Deploy only reviewed JWT-verified Edge functions and the hardened Vercel client; complete bounded smoke while the legacy client surface still exists.
-6. Final privilege cutover `040` is complete; retain the recorded postflight proof for every policy, table/column privilege, and function grant postcondition.
-7. Insert only approved privacy/rubric/content rows through an audited workflow.
-8. Create a dedicated synthetic smoke user and run bounded production-safe checks.
-9. Verify client bundles contain no secret, RLS denies adversarial paths, and old deployments can be restored.
-10. Invite users in small cohorts; watch errors, latency, rate limits, spend, and support load before expanding to 100.
+This sequence supersedes any earlier implication that Vercel or Supabase can be promoted to public production. The replacement provider remains **TBD** and no stage may proceed without its own explicit approval.
+
+1. Select and provision the approved replacement production stack, with separately reviewed ownership, region, contractual/security posture, capacity, and operating model.
+2. Complete and evidence the following migration gates before public launch:
+   - [ ] Application hosting and server/runtime migration, including a reviewed deployment artifact and hardened-compatible rollback release.
+   - [ ] PostgreSQL schema and required data migration, integrity verification, access-control review, and a forward-fix plan.
+   - [ ] Auth, users, sessions, invite/allowlist, confirmation, reset, redirect, and abuse-control migration as applicable.
+   - [ ] Storage and function/workload migration as applicable, with least privilege and no unapproved media, upload, scoring, or analytics scope expansion.
+   - [ ] Environment configuration and secrets migration, using approved secret management; inventory names and access boundaries only—never values.
+   - [ ] DNS, domain, origin/CORS, and traffic-cutover plan, including an isolated rehearsal and a tested return path.
+   - [ ] Independent security review of the replacement and migration, resolving all Critical and High findings.
+   - [ ] Backup and restore exercise proving the required recovery objectives, plus a rehearsed application/data rollback or forward-fix procedure.
+   - [ ] A 500-concurrent-station load test on the approved replacement using isolated synthetic users and content only, with approved capacity, latency, error-rate, and cost results.
+3. Perform the approved cutover only after every gate passes; monitor the agreed safety, reliability, and cost signals, and keep the tested rollback path ready.
+4. Onboard production users only after the migration, security, backup/restore, rollback, and 500-concurrent-station evidence is complete and explicitly accepted.
 
 ## Rollback and stop conditions
 
@@ -270,7 +332,7 @@ Stop or disable the affected feature on any of these:
 - Error monitoring captures sensitive answer/transcript/auth material.
 - Critical/High security finding without a verified fix.
 
-Rollback uses a previously verified **hardened-compatible** Vercel deployment plus server-side feature/kill switches. The archival pre-redesign client is not a safe rollback after backend privilege revocation unless it has separately passed compatibility testing. Database rollback is forward-fix only unless a separately reviewed reversible operation exists; never delete user data as an improvised rollback.
+Rollback uses a previously verified **hardened-compatible** deployment on the approved replacement stack plus server-side feature/kill switches. The archival pre-redesign client is not a safe rollback after backend privilege revocation unless it has separately passed compatibility testing. Database rollback is forward-fix only unless a separately reviewed reversible operation exists; never delete user data as an improvised rollback. Do not fall back to Vercel or Supabase for production users.
 
 ## Authoritative external references
 
@@ -287,4 +349,4 @@ Rollback uses a previously verified **hardened-compatible** Vercel deployment pl
 
 ## Closed-round release gate
 
-Launch only after all applicable checkboxes have dated evidence, capacity/cost/retention/ownership values are approved, hosted reconciliation is complete, and the independent final review has no unresolved Critical or High finding.
+Launch only after all applicable checkboxes have dated evidence, the approved replacement-stack migration is complete, capacity/cost/retention/ownership values are approved, security plus backup/restore and rollback exercises pass, the 500-concurrent-station load test passes, and the independent final review has no unresolved Critical or High finding. No production users may be onboarded before then.

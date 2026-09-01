@@ -6,7 +6,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { buildMmiPersistenceFixtures, createAuthenticatedTestClient, expectDbCode } from './mmiPersistenceFixtures.ts';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
-import { teardownMmiAttemptLifecycleFixtures } from './mmiAttemptLifecycleFixtures.ts';
+import { shouldPreserveMmiAttemptLifecycleFixtures, teardownMmiAttemptLifecycleFixtures } from './mmiAttemptLifecycleFixtures.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { deleteLocalAssessorContentByPrefix, insertLocalAssessorContentRows, isLocalAssessorContentTable } from './localDatabaseFixture.ts';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { canRunLocalMutationTests } from './mutationTestSafety.ts';
 
@@ -220,6 +222,7 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
   let otherId: string;
   let ownerToken: string;
   let otherToken: string;
+  let previouslyActiveNoticeVersions: string[] = [];
   const { ids, safetyItems, weights } = buildMmiPersistenceFixtures(fixturePrefix);
 
   const markers = {
@@ -235,6 +238,9 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
   }
 
   async function insert(table: string, row: Record<string, unknown> | Record<string, unknown>[]) {
+    if (isLocalAssessorContentTable(table)) {
+      return insertLocalAssessorContentRows(table, row);
+    }
     const { data, error } = await service.from(table).insert(row).select();
     assert.equal(error, null, error?.message);
     return data ?? [];
@@ -254,6 +260,14 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
     otherToken = (await other.auth.getSession()).data.session?.access_token ?? '';
     assert.ok(ownerToken);
     assert.ok(otherToken);
+
+    const { data: deactivatedNotices, error: deactivateNoticeError } = await service
+      .from('mmi_privacy_notices')
+      .update({ is_active: false })
+      .eq('is_active', true)
+      .select('version');
+    assert.equal(deactivateNoticeError, null, deactivateNoticeError?.message);
+    previouslyActiveNoticeVersions = (deactivatedNotices ?? []).map((notice) => notice.version);
 
     await insert('mmi_stations', [
       { station_id: ids.standard, category: 'ethics', topic: 'Published fixture', difficulty: 'intermediate', prep_time_sec: 1, status: 'published', scenario_text: 'Safe student brief.' },
@@ -281,7 +295,33 @@ run('MMI authenticated lifecycle (explicit disposable-local integration only)', 
 
   after(async () => {
     if (!service) return;
-    await teardownMmiAttemptLifecycleFixtures(service, ownerId, otherId, fixturePrefix);
+    const cleanupErrors: Array<{ message?: string } | null> = [];
+    try {
+      await teardownMmiAttemptLifecycleFixtures(service, ownerId, otherId, fixturePrefix);
+    } catch (error) {
+      cleanupErrors.push(error as Error);
+    }
+    if (!shouldPreserveMmiAttemptLifecycleFixtures(process.env)) {
+      try {
+        await deleteLocalAssessorContentByPrefix(fixturePrefix);
+      } catch (error) {
+        cleanupErrors.push(error as Error);
+      }
+    }
+    const { error: deactivateFixtureNoticeError } = await service
+      .from('mmi_privacy_notices')
+      .update({ is_active: false })
+      .eq('version', ids.noticeAccount);
+    cleanupErrors.push(deactivateFixtureNoticeError);
+    if (previouslyActiveNoticeVersions.length > 0) {
+      const { error } = await service.from('mmi_privacy_notices')
+        .update({ is_active: true })
+        .in('version', previouslyActiveNoticeVersions);
+      cleanupErrors.push(error);
+    }
+    for (const error of cleanupErrors) {
+      assert.equal(error, null, error?.message);
+    }
   });
 
   it('rejects unauthenticated, draft, missing, and unreviewed starts', async () => {

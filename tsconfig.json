@@ -19,6 +19,7 @@
   ],
   "exclude": [
     "supabase/functions/**",
-    "tests/manageAiKeyHandler.test.ts"
+    "tests/manageAiKeyHandler.test.ts",
+    "tests/candidateMmiScoring.test.ts"
   ]
 }

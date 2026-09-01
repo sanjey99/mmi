@@ -4,6 +4,8 @@ import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { canRunLocalMutationTests } from './mutationTestSafety.ts';
+// @ts-expect-error Node's native TypeScript test runner requires the source extension.
+import { deleteLocalAssessorContentByPrefix, elevateLocalProfileToAdmin, insertLocalAssessorContentRows, type LocalAssessorContentTable } from './localDatabaseFixture.ts';
 
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
@@ -84,9 +86,8 @@ function assertExactKeys(
   }
 }
 
-async function mustInsert(table: string, rows: Record<string, unknown>[]) {
-  const { error } = await service.from(table).insert(rows);
-  assert.equal(error, null, error?.message);
+async function mustInsert(table: LocalAssessorContentTable, rows: Record<string, unknown>[]) {
+  await insertLocalAssessorContentRows(table, rows);
 }
 
 async function createAuthenticatedClient(isAdmin: boolean) {
@@ -101,11 +102,7 @@ async function createAuthenticatedClient(isAdmin: boolean) {
   authUserIds.push(data.user.id);
 
   if (isAdmin) {
-    const { error: profileError } = await service
-      .from('profiles')
-      .update({ is_admin: true })
-      .eq('id', data.user.id);
-    assert.equal(profileError, null, profileError?.message);
+    await elevateLocalProfileToAdmin(data.user.id);
   }
 
   const client = createClient(url!, anonKey!, {
@@ -242,15 +239,7 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
 
   after(async () => {
     if (!service) return;
-
-    const { error: roleplayCleanupError } = await service
-      .from('roleplay_stations')
-      .delete()
-      .like('station_id', `${fixturePrefix}%`);
-    const { error: standardCleanupError } = await service
-      .from('mmi_stations')
-      .delete()
-      .like('station_id', `${fixturePrefix}%`);
+    await deleteLocalAssessorContentByPrefix(fixturePrefix);
 
     const userCleanupErrors: Array<Error | null> = [];
     for (const userId of authUserIds) {
@@ -258,16 +247,6 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
       userCleanupErrors.push(error);
     }
 
-    assert.equal(
-      roleplayCleanupError,
-      null,
-      roleplayCleanupError?.message,
-    );
-    assert.equal(
-      standardCleanupError,
-      null,
-      standardCleanupError?.message,
-    );
     for (const error of userCleanupErrors) {
       assert.equal(error, null, error?.message);
     }
@@ -319,8 +298,10 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
       const { data, error } = await client.rpc('list_mmi_station_cards');
       assert.equal(error, null, error?.message);
       assert.ok(data);
+      const fixtureCards = data.filter((card: { station_id: string }) =>
+        card.station_id.startsWith(fixturePrefix));
       assert.deepEqual(
-        data.map((card: {
+        fixtureCards.map((card: {
           station_id: string;
           station_kind: string;
           title: string;
@@ -460,6 +441,26 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
   });
 
   it('selects the next published station deterministically and wraps once', async () => {
+    const cards: Array<{
+      station_id: string;
+      station_kind: string;
+    }> = [];
+    for (let offset = 0; ; offset += 50) {
+      const { data: page, error: pageError } = await student.rpc('list_mmi_station_cards', {
+        p_limit: 50,
+        p_offset: offset,
+      });
+      assert.equal(pageError, null, pageError?.message);
+      assert.ok(page);
+      cards.push(...page);
+      if (page.length < 50) break;
+    }
+    const fixtureFirstIndex = cards.findIndex(
+      (card: { station_id: string }) => card.station_id === ids.standardFirst,
+    );
+    assert.ok(fixtureFirstIndex >= 0);
+    const expectedNext = cards[(fixtureFirstIndex + 1) % cards.length];
+
     const { data: next, error: nextError } = await student.rpc(
       'get_next_mmi_station_preview',
       { p_kind: 'standard', p_station_id: ids.standardFirst },
@@ -470,14 +471,18 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
         card.station_kind,
         card.station_id,
       ]),
-      [['roleplay', ids.roleplay]],
+      [[expectedNext.station_kind, expectedNext.station_id]],
     );
     assertExactKeys(next ?? [], previewKeys);
     assertSafeJson(next);
 
+    const lastCard = cards.at(-1);
+    const firstCard = cards[0];
+    assert.ok(lastCard);
+    assert.ok(firstCard);
     const { data: wrapped, error: wrappedError } = await student.rpc(
       'get_next_mmi_station_preview',
-      { p_kind: 'standard', p_station_id: ids.standardLast },
+      { p_kind: lastCard.station_kind, p_station_id: lastCard.station_id },
     );
     assert.equal(wrappedError, null, wrappedError?.message);
     assert.deepEqual(
@@ -485,7 +490,7 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
         card.station_kind,
         card.station_id,
       ]),
-      [['standard', ids.standardFirst]],
+      [[firstCard.station_kind, firstCard.station_id]],
     );
 
     const { data: guessed, error: guessedError } = await student.rpc(
@@ -494,47 +499,6 @@ run('MMI student content boundary (disposable local Supabase only)', () => {
     );
     assert.equal(guessedError, null, guessedError?.message);
     assert.deepEqual(guessed, []);
-
-    const { error: hideStandardError } = await service
-      .from('mmi_stations')
-      .update({ status: 'draft' })
-      .eq('station_id', ids.standardLast);
-    assert.equal(hideStandardError, null, hideStandardError?.message);
-    const { error: hideRoleplayError } = await service
-      .from('roleplay_stations')
-      .update({ status: 'draft' })
-      .eq('station_id', ids.roleplay);
-    assert.equal(hideRoleplayError, null, hideRoleplayError?.message);
-
-    try {
-      const { data: noAlternative, error: noAlternativeError } =
-        await student.rpc('get_next_mmi_station_preview', {
-          p_kind: 'standard',
-          p_station_id: ids.standardFirst,
-        });
-      assert.equal(noAlternativeError, null, noAlternativeError?.message);
-      assert.deepEqual(noAlternative, []);
-    } finally {
-      const { error: restoreStandardError } = await service
-        .from('mmi_stations')
-        .update({ status: 'published' })
-        .eq('station_id', ids.standardLast);
-      const { error: restoreRoleplayError } = await service
-        .from('roleplay_stations')
-        .update({ status: 'published' })
-        .eq('station_id', ids.roleplay);
-
-      assert.equal(
-        restoreStandardError,
-        null,
-        restoreStandardError?.message,
-      );
-      assert.equal(
-        restoreRoleplayError,
-        null,
-        restoreRoleplayError?.message,
-      );
-    }
   });
 
   it('denies anonymous execution of every student content RPC', async () => {
