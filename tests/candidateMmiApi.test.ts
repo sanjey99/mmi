@@ -19,7 +19,7 @@ const scenarioProjection = Object.freeze({
   phase: 'scenario' as const,
   phaseStartedAt: '2026-08-26T00:00:00.000Z',
   phaseEndsAt: '2026-08-26T00:01:00.000Z',
-  scenarioText: 'Synthetic scenario.',
+  scenarioText: 'SCENARIO_ONLY',
 });
 const responseProjection = Object.freeze({
   sessionId,
@@ -29,7 +29,7 @@ const responseProjection = Object.freeze({
   phaseStartedAt: '2026-08-26T00:01:00.000Z',
   phaseEndsAt: '2026-08-26T00:03:00.000Z',
   promptOrder: 1 as const,
-  promptText: 'Synthetic response prompt.',
+  promptText: 'Q1_ONLY',
   draftTranscript: 'Manual draft',
   draftRevision: 3,
   responseStatus: 'open' as const,
@@ -165,8 +165,10 @@ describe('candidate MMI API transcript boundary', () => {
     for (const malformed of [
       { ...responseProjection, futurePrompts: ['private'] },
       { ...responseProjection, rubric: 'private' },
+      { ...responseProjection, scenarioText: 'SCENARIO_ONLY' },
       { ...responseProjection, promptText: ['current', 'future'] },
       { ...responseProjection, serverNow: responseProjection.phaseEndsAt },
+      { ...scenarioProjection, promptText: 'Q1_ONLY' },
       { ...scenarioProjection, phaseEndsAt: '2026-08-26T00:00:59.000Z' },
       { ...abandonedProjection, phaseEndsAt: '2026-08-26T00:01:11.000Z' },
     ]) {
@@ -595,36 +597,5 @@ describe('candidate MMI runner finalization boundary', () => {
     expect(route).toMatch(
       /\.catch\(\(\) => \{[\s\S]*expiringPhaseRef\.current === key/,
     );
-  });
-});
-
-describe('candidate MMI feature flag', () => {
-  it('uses the exact flag key and fails closed except for the exact enabled string', async () => {
-    const { CANDIDATE_MMI_FEATURE_FLAG, isNormalizedMmiStationEnabled } =
-      await import('../src/features/candidateMmi/featureFlag');
-    expect(CANDIDATE_MMI_FEATURE_FLAG).toBe('normalized_mmi_station_enabled');
-    await expect(
-      isNormalizedMmiStationEnabled(async () => 'true'),
-    ).resolves.toBe(true);
-    for (const value of [
-      undefined,
-      null,
-      false,
-      true,
-      'TRUE',
-      ' true ',
-      'false',
-      {},
-      [],
-    ]) {
-      await expect(
-        isNormalizedMmiStationEnabled(async () => value),
-      ).resolves.toBe(false);
-    }
-    await expect(
-      isNormalizedMmiStationEnabled(async () => {
-        throw new Error('Synthetic config failure.');
-      }),
-    ).resolves.toBe(false);
   });
 });

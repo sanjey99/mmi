@@ -7,7 +7,6 @@ import {
 import {
   createMmiPublicOutputContext,
   MMI_DIMENSIONS,
-  parseMmiRubric,
   toPublicMmiAssessment,
   type MmiAssessment,
   type MmiDimension,
@@ -15,7 +14,8 @@ import {
   type MmiRubric,
 } from '../_shared/mmiContracts.ts';
 import {
-  getMmiScoringContract,
+  getCurrentMmiRubric,
+  getCurrentMmiScoringContract,
   parseProviderAssessmentForContract,
   validateJsonSchema,
   type MmiScoringContract,
@@ -100,15 +100,13 @@ type ClaimedResponse = Readonly<{
   promptOrder: number;
   transcript: string;
   promptText: string;
-  rubric: unknown;
-  scoringContract: unknown;
 }>;
 
 type CandidateMmiScoringClaim =
-  | Readonly<{ status: 'feature_disabled' }>
+  | Readonly<{ status: 'not_ready' }>
   | Readonly<{ status: 'no_response' }>
-  | Readonly<{ status: 'feedback_unavailable' }>
   | Readonly<{ status: 'in_progress' }>
+  | Readonly<{ status: 'unavailable' }>
   | Readonly<{ status: 'scored'; assessment: MmiAssessment }>
   | ClaimedResponse;
 
@@ -271,10 +269,10 @@ function parseClaim(
   const claim = record(value);
   if (claim === null || typeof claim.status !== 'string') return null;
   if (
-    (claim.status === 'feature_disabled' ||
+    (claim.status === 'not_ready' ||
       claim.status === 'no_response' ||
-      claim.status === 'feedback_unavailable' ||
-      claim.status === 'in_progress') &&
+      claim.status === 'in_progress' ||
+      claim.status === 'unavailable') &&
     hasExactKeys(claim, ['status'])
   ) {
     return { status: claim.status };
@@ -295,8 +293,6 @@ function parseClaim(
       'promptOrder',
       'transcript',
       'promptText',
-      'rubric',
-      'scoringContract',
     ]) ||
     typeof claim.responseId !== 'string' ||
     !UUID_PATTERN.test(claim.responseId) ||
@@ -318,42 +314,7 @@ function parseClaim(
     promptOrder: request.promptOrder,
     transcript: claim.transcript,
     promptText: claim.promptText,
-    rubric: claim.rubric,
-    scoringContract: claim.scoringContract,
   };
-}
-
-function canonicalJson(value: unknown): string {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean'
-  ) {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('Invalid JSON value');
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const object = record(value);
-  if (object === null) throw new Error('Invalid JSON value');
-  return `{${Object.keys(object)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-    .join(',')}}`;
-}
-
-function parsePinnedContract(value: unknown): MmiScoringContract {
-  const snapshot = record(value);
-  if (snapshot === null || typeof snapshot.version !== 'string') {
-    throw new Error('Invalid scoring contract snapshot');
-  }
-  const pinned = getMmiScoringContract(snapshot.version);
-  if (canonicalJson(snapshot) !== canonicalJson(pinned)) {
-    throw new Error('Invalid scoring contract snapshot');
-  }
-  return pinned;
 }
 
 function parseProviderJson(value: unknown): unknown {
@@ -481,14 +442,17 @@ export function createCandidateMmiScoringHandler(
     const claim = parseClaim(claimResult.data, input);
     if (claim === null) return http.json({ code: 'unavailable' }, 500);
 
-    if (claim.status === 'feature_disabled') {
-      return http.json({ code: 'feature_disabled' }, 503);
+    if (claim.status === 'not_ready') {
+      return http.json({ code: 'not_ready' }, 409, { 'Retry-After': '3' });
     }
-    if (claim.status === 'no_response' || claim.status === 'feedback_unavailable') {
-      return http.json({ status: claim.status });
+    if (claim.status === 'no_response') {
+      return http.json({ status: 'no_response' });
     }
     if (claim.status === 'in_progress') {
       return http.json({ code: 'in_progress' }, 409, { 'Retry-After': '3' });
+    }
+    if (claim.status === 'unavailable') {
+      return http.json({ code: 'unavailable' }, 503);
     }
     if (claim.status === 'scored') {
       return http.json({ status: 'scored', assessment: claim.assessment });
@@ -497,11 +461,8 @@ export function createCandidateMmiScoringHandler(
     let rubric: MmiRubric;
     let scoringContract: MmiScoringContract;
     try {
-      scoringContract = parsePinnedContract(claim.scoringContract);
-      rubric = parseMmiRubric(
-        claim.rubric,
-        scoringContract.studentFeedbackCatalog,
-      );
+      scoringContract = getCurrentMmiScoringContract();
+      rubric = getCurrentMmiRubric();
     } catch {
       await failClaimSafely(repository, claim, leaseToken, 'persistence_failed');
       return http.json({ code: 'unavailable' }, 500);

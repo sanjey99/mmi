@@ -7,8 +7,8 @@ import {
   type AiProviderRequest,
 } from '../supabase/functions/_shared/aiProvider.ts';
 import {
-  CURRENT_MMI_SCORING_CONTRACT_VERSION,
-  createMmiScoringContractSnapshot,
+  getCurrentMmiRubric,
+  getCurrentMmiScoringContract,
 } from '../supabase/functions/_shared/mmiScoringContract.ts';
 import {
   createCandidateMmiScoringHandler,
@@ -28,35 +28,8 @@ const leaseToken = '33333333-3333-4333-8333-333333333333';
 const transcript = 'I would prioritise patient safety, explain the options, and escalate any immediate risk.';
 const promptText = 'How would you respond to this situation?';
 
-const rubric = Object.freeze({
-  version: 1,
-  criteria: {
-    'clear-priorities-code': {
-      dimension: 'structure',
-      kind: 'strength',
-      assessorCriterion: 'The response identifies and orders the immediate priorities.',
-      studentFeedback: 'clear-priorities',
-    },
-    'safety-net-code': {
-      dimension: 'ethics',
-      kind: 'improvement',
-      assessorCriterion: 'The response states when and how immediate risk is escalated.',
-      studentFeedback: 'explicit-safety-netting',
-    },
-  },
-  dimensionWeights: {
-    structure: 0.2,
-    ethics: 0.2,
-    communication: 0.2,
-    reflection: 0.2,
-    nhs_awareness: 0.2,
-  },
-  safetyCriticalItems: [],
-});
-
-const scoringContract = createMmiScoringContractSnapshot(
-  CURRENT_MMI_SCORING_CONTRACT_VERSION,
-);
+const rubric = getCurrentMmiRubric();
+const scoringContract = getCurrentMmiScoringContract();
 
 const providerAssessment = Object.freeze({
   dimensions: {
@@ -66,21 +39,21 @@ const providerAssessment = Object.freeze({
     reflection: { score: 4, evidenceReference: { start: 0, end: 1 } },
     nhs_awareness: { score: 4, evidenceReference: { start: 0, end: 1 } },
   },
-  rubricStrengthCodes: ['clear-priorities-code'],
-  rubricImprovementCodes: ['safety-net-code'],
+  rubricStrengthCodes: ['clear-priorities'],
+  rubricImprovementCodes: ['explicit-plan'],
   safetyCriticalOmissionCodes: [],
   improvementFramework: 'sbar',
 });
 
 const publicAssessment = Object.freeze({
   dimensions: {
-    structure: { score: 4, applicable: true, evidence: 'I', improvement: null },
-    ethics: {
+    structure: {
       score: 4,
       applicable: true,
       evidence: 'I',
       improvement: 'Make the safety-netting steps explicit, including when and how you would escalate.',
     },
+    ethics: { score: 4, applicable: true, evidence: 'I', improvement: null },
     communication: { score: 4, applicable: true, evidence: 'I', improvement: null },
     reflection: { score: 4, applicable: true, evidence: 'I', improvement: null },
     nhs_awareness: { score: 4, applicable: true, evidence: 'I', improvement: null },
@@ -89,7 +62,7 @@ const publicAssessment = Object.freeze({
   strengths: ['You set out the main priorities in a clear and logical order.'],
   improvements: ['Make the safety-netting steps explicit, including when and how you would escalate.'],
   improvementTip: 'Use SBAR to organise a concise escalation: situation, background, assessment, then recommendation.',
-  rubricVersion: 1,
+  rubricVersion: 2,
 });
 
 const providerConfig: AiConfig = Object.freeze({
@@ -106,8 +79,6 @@ const claimed = Object.freeze({
   promptOrder: 1,
   transcript,
   promptText,
-  rubric,
-  scoringContract,
 });
 
 function repository(
@@ -213,7 +184,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     });
   });
 
-  it.each(['no_response', 'feedback_unavailable'] as const)(
+  it.each(['no_response'] as const)(
     'returns terminal %s without loading config or calling a provider',
     async (status) => {
       const repo = repository({ claim: vi.fn(async () => ({ data: { status } })) });
@@ -229,17 +200,18 @@ describe('candidate MMI scoring handler security boundary', () => {
     },
   );
 
-  it('honors the server kill switch before configuration or provider work', async () => {
-    const repo = repository({
-      claim: vi.fn(async () => ({ data: { status: 'feature_disabled' } })),
-    });
+  it.each([
+    ['not_ready', 409],
+    ['unavailable', 503],
+  ] as const)('returns safe %s state before configuration or provider work', async (status, httpStatus) => {
+    const repo = repository({ claim: vi.fn(async () => ({ data: { status } })) });
     const callProvider = vi.fn();
     const response = await createCandidateMmiScoringHandler(
       dependencies({ repository: repo, callProvider }),
     )(scoringRequest());
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ code: 'feature_disabled' });
+    expect(response.status).toBe(httpStatus);
+    expect(await response.json()).toEqual({ code: status });
     expect(repo.loadProviderConfig).not.toHaveBeenCalled();
     expect(repo.complete).not.toHaveBeenCalled();
     expect(repo.fail).not.toHaveBeenCalled();
@@ -291,7 +263,24 @@ describe('candidate MMI scoring handler security boundary', () => {
     expect(await invalid.json()).toEqual({ code: 'unavailable' });
   });
 
-  it('scores only server-claimed snapshots through the pinned contract and completes the matching lease', async () => {
+  it('rejects database-supplied grading rules so only built-in criteria can reach the provider', async () => {
+    const repo = repository({
+      claim: vi.fn(async () => ({
+        data: { ...claimed, rubric: { version: 999 } },
+      })),
+    });
+    const callProvider = vi.fn();
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({ repository: repo, callProvider }),
+    )(scoringRequest());
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ code: 'unavailable' });
+    expect(callProvider).not.toHaveBeenCalled();
+    expect(repo.complete).not.toHaveBeenCalled();
+  });
+
+  it('scores server-claimed text through built-in criteria and completes the matching lease', async () => {
     const repo = repository();
     const callProvider = vi.fn(
       async (_config: AiConfig, _request: AiProviderRequest) =>
@@ -454,14 +443,13 @@ describe('candidate MMI browser scoring boundary', () => {
   });
 
   it.each([
-    ['feature_disabled', 'Candidate MMI scoring is disabled.'],
+    ['not_ready', 'AI scoring starts after the station is complete.'],
     ['in_progress', 'This response is already being scored.'],
-    ['feedback_unavailable', 'Feedback is unavailable for this response.'],
-    ['provider_not_configured', 'Scoring is not configured yet.'],
-    ['provider_failed', 'The scoring provider is temporarily unavailable.'],
-    ['invalid_provider_response', 'The scorer returned an invalid response. Please retry.'],
+    ['provider_not_configured', 'AI scoring is not configured yet.'],
+    ['provider_failed', 'AI scoring is temporarily unavailable. Try again.'],
+    ['invalid_provider_response', 'The AI scorer returned an invalid result. Try again.'],
     ['unauthorized', 'Sign in again before requesting feedback.'],
-    ['unavailable', 'Candidate MMI scoring is unavailable.'],
+    ['unavailable', 'AI scoring is unavailable. Try again.'],
   ] as const)('maps allowlisted code %s to fixed copy', async (code, message) => {
     const context = new Response(JSON.stringify({ code, detail: transcript }), {
       status: 500,
@@ -489,7 +477,7 @@ describe('candidate MMI browser scoring boundary', () => {
 
     await expect(api.scoreCandidateResponse(sessionId, 1)).rejects.toMatchObject({
       code: 'unavailable',
-      message: 'Candidate MMI scoring is unavailable.',
+      message: 'AI scoring is unavailable. Try again.',
     } as CandidateMmiScoringError);
   });
 

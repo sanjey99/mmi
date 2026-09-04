@@ -1,355 +1,118 @@
 # Pre-Closed-Round Deployment
 
-**Goal:** Evolve the approved cofounder preview into a sustainable, secure invite-only round of approximately 100 people without exposing unfinished MMI functionality or trusting client-owned scoring state.
+This is the deployment and QA runbook for moving the single MMI station from local verification to a hosted, invitation-only review. It follows the product contract in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md).
 
-**Entry condition:** Every release gate in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md) is complete and evidenced.
+## Fixed targets
 
-## Production infrastructure decision — blocks user onboarding
+- Git branch: `feat/cofounder-ui-reliability`
+- Frontend: protected Vercel Preview built from an exact commit SHA
+- Backend: isolated Supabase project `obfwfoykalvoxqdnosus` (`mmi-cofounder-preview`)
+- Forbidden target: shared Supabase project `tliwifhnsytxpcynuwsy`
+- Access: invited, signed-in accounts only; public signup remains disabled
 
-> Before onboarding any production users, migrate the application from Vercel and Supabase to an approved production infrastructure stack. Vercel and Supabase are limited to development and isolated preview use. Production deployment is blocked until the replacement passes security, backup/restore, rollback, and 500-concurrent-station load tests.
+Reviewable work is deployed to Vercel and isolated Supabase unless the product owner explicitly says otherwise.
 
-- The replacement provider and implementation are **TBD**. Selection, provisioning, migration, cutover, and public launch each require explicit approval; this document does not authorize a vendor or implementation.
-- Vercel and Supabase may support development and isolated preview only. They must not be used to onboard production users or as the public production runtime, database, Auth/session service, storage, or function platform.
-- Any historical reference below to a Vercel or Supabase “production” alias or operation is retained as prior evidence only; it is not authorization for production-user traffic under this decision.
-- No production users may be onboarded until the approved replacement has completed every migration and launch gate in this guide.
+## Release behavior
 
-## Current checkpoint — 25–26 August 2026
-
-- The import-idempotency database capability and all 785 active candidate-visible workbook rows are hosted. Its client workflow is present only in protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`, not the stable alias. During this current phase, the separately approved `040`, `050`, exact part-1/part-2 workbook RPC imports, and exact publication transaction were applied as recorded below; every next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain separately approval-gated and forward-only. This is not overall hosted deployment/readiness completion.
-- Earlier separately approved operations applied the hosted-only reconciliation, additive migrations `20260825000000`, `20260825001000`, and `20260825002000`, final cutover `20260825004000`, import-capability migration `20260825005000`, and both workbook imports on 26 August 2026; `score-answer` is v4 ACTIVE and `manage-ai-key` remains v3. The stable Vercel production alias is live at `https://mmi-hazel.vercel.app` from commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; it does not include the client import workflow.
-- Latest local preview verification passes: 35 Node tests; 213 Vitest tests; Node coverage 98.52% lines, 84.63% branches, 98.82% functions; Vitest coverage 95.95% lines, 87.24% branches, 97.27% functions; TypeScript including the Edge handler; Expo web export; and 4/4 fully intercepted local Playwright tests, including station-overlap geometry and Profile → `/admin/questions` direct routing.
-- Cross-account feedback restoration renders a privacy-minimal unavailable state without prior answer/feedback text; its complete partner journey passed 10/10 under three concurrent workers before the final 2/2 suite passed sequentially.
-- Default test and coverage commands exclude all integration paths even when credential-shaped environment variables are present. The dedicated mutating command requires an explicit acknowledgement, an HTTP loopback Supabase URL, and local credentials, and otherwise fails before test collection.
-- Account-switch isolation clears cached practice and profile data and epoch-binds every asynchronous session, restoration, scoring, progress, profile read/write, and auth-loading completion. The auth subscription returns synchronously and defers profile API calls outside auth-js's exclusive lock. The browser harness rejects non-local app hosts and every real Supabase project hostname.
-- The prior independent readiness audit and the follow-up independent read-only audit of this diff are closed with no unresolved Critical or High finding in their respective reviewed scopes. Hosted `040`, `050`, and exact part-1/part-2 content imports are complete; any next content operation remains hard-gated and forward-only.
-- Residuals are not fixed by this diff: Medium — the existing 10 Expo configuration-chain advisories and the CI/CD/analytics wider-release operational gate; Low — malformed CSV structural quoting/extra cells, distinct concurrent source-correction last-writer-wins behavior requiring operator serialization, and optional function-body hash pinning against privileged out-of-band replacement. Function signatures, uniqueness, owner, language, security-definer state, search path, and grants are already checked.
-- The one-time Impeccable detector returned no findings and the `$un-vibecode` audit passes R01–R22. Mobile login Lighthouse scores 100 for accessibility and best practices.
-- Before SDK-55 patch alignment, `npm audit --omit=dev` reported 27 findings, including 17 high. After alignment and a non-force audit fix, it reports 10 moderate, 0 high, and 0 critical; Expo dependency checking and `npm ls` are clean. `npm audit fix --force` was not used and is not advised. The remaining Expo config/xcode/uuid chain has no safe non-breaking audit remedy.
-- Hosted public signup is disabled and verified (`disable_signup=true`); email sign-in remains enabled, anonymous sign-ins remain disabled, and email confirmation remains enabled. The approximately 100-person round still requires an operational invite/allowlist workflow.
-- The versioned migration chain applies cleanly from an empty disposable local database and its effective ACL/RLS state is verified, including canonical authenticated non-secret `app_config` access and minimal service-role column grants. The authenticated local Edge-runtime smoke passed every HTTP boundary and the expected safe provider-failure path.
-- A fresh unlinked contract-level clone reproduced every observed hosted fact consumed by the scripts. Hosted-only reconciliation, additive migrations `000`/`010`/`020`, and revised cutover `040` passed without row-count changes. Effective service privilege on `questions`/`answers`/`scores`/`mock_sessions` moved from 16/44 checks to 0/44, while exact scoring RPC execution and minimal profile/config columns remained.
-- The fresh hosted SELECT-only snapshot completed at `2026-08-25 05:59:23.339506 UTC` with catalog MD5 `0811d9d73c003ea1daba2efd2058c136`. It confirmed the staged legacy schema/policy/grant assumptions and absent preview objects; `migration_relation` and `cron_relation` were both `null`, so no conditional follow-up was required or run. No hosted mutation occurred.
-- Hosted public-schema default ACLs are broad. The reconciliation removes current browser and service-role assessor access at table and column scope, but every future hosted object must receive an explicit ACL review; changing default ACLs is a separately approved hardening decision.
-- The direct-provider scoring fix lets pinned OpenAI/Anthropic endpoints run without `Deno.resolveDns`; custom `openai_compatible` endpoints retain exact allowlisting and dual DNS revalidation, and server logs retain only safe stages. It is live in `score-answer` v4 ACTIVE. A post-v4 hosted scoring-success smoke remains unverified; the previously recorded `openai`/`gpt-4o-mini` smoke returned `provider_failed` and is not post-v4 success evidence.
-- The final unlinked runtime fixture created one local smoke user/admin/session, one failed claim, and one failed attempt; it persisted zero answers and scores, released the claim lease, stopped both disposable stacks with volumes preserved, and never contacted hosted Supabase.
-- The preview SQL is split into a hosted-only reconciliation artifact, three additive migrations, final privilege cutover `040`, and import-capability migration `050`. The reconciliation, additive migrations `000`/`010`/`020`, `040`, `050`, exact part-1/part-2 workbook imports, and exact publication transaction were applied under exact approvals. Any next content operation, secrets/configuration changes, Cron, migration-history, and role mutation remain unperformed in this phase.
-- **Hosted `040` execution evidence:** `supabase/migrations/20260825004000_cofounder_preview_privilege_cutover.sql` (SHA-256 `123406ce32d2f211d90095ff57d56d80e7efa9dad5c6413481e9898d4049f493`) was applied on `2026-08-26` to PostgreSQL 17.6 through Supabase Management API `database/query`, with no migration-history, Cron, or role change. Preflight/postflight rows were unchanged: `questions` 2, `profiles` 1, `answers` 1, `scores` 1, `mock_sessions` 11. All `handle_new_user()`, `is_admin()`, and `update_streak(uuid)` EXECUTE checks were false for PUBLIC, `anon`, `authenticated`, and `service_role`; fixed search paths count 3; enabled `auth.users` triggers count 1; assessor service table/column grants 0; exact scoring RPCs remained service-only and question RPCs authenticated-only. `migration_relation` and `cron_relation` remained `null`; broad default ACLs are unchanged.
-- An initial `supabase db query --linked` SELECT preflight path attempted a temporary `cli_login_postgres` ALTER and received permission denied before the requested SELECT or `040` SQL ran; it was abandoned and made no role change. Direct Management API read-only preflight, exact-file apply (response `[]`), and read-only postflight then succeeded.
-- **Hosted `050` execution evidence:** `supabase/migrations/20260825005000_cofounder_question_import_idempotency.sql` (SHA-256 `f9f0c7bd5256327e447998d3549093febcdb60cc32e7ee34b56c9ff7d06596c8`) was applied on `2026-08-26` to PostgreSQL 17.6 through direct Supabase Management API `database/query`; the exact-file response was `[]`. Preflight confirmed source columns, ledger, and import RPC absent; `040` question runtime table/column grants and helper EXECUTE grants were 0; baseline rows were `questions` 2, `profiles` 1, `answers` 1, `scores` 1, `mock_sessions` 11; and `migration_relation`/`cron_relation` were `null`. Postflight found two nullable source columns with zero existing source rows; the provenance constraint present and validated; the unique valid index with predicate requiring both source fields non-null; a zero-row private ledger owned by `postgres`, RLS enabled, zero policies, zero runtime table/column grants, and zero PUBLIC ACL; and the import RPC owned by `postgres`, `plpgsql`, `SECURITY DEFINER`, fixed-path, executable only by `authenticated` (not PUBLIC/`anon`/`service_role`). The manual RPC retained the same grant matrix; question runtime table/column grants and helper grants remained 0; rows were unchanged and import batches 0. `migration_relation`/`cron_relation` remained `null`; broad default ACLs are unchanged. No workbook import, row DML, secret/configuration, Cron, migration-history, or role operation occurred; the Vercel client import workflow was not deployed.
-- **Hosted workbook part-1 execution evidence:** The exact approved artifact `supabase/imports/20260825_med_interview_question_bank/questions-part-1.csv` (SHA-256 `33769d18edf3872fc0b2b43fa957ed309715067a777607388d6c92f851f77c30`) was imported on `2026-08-26` in one authenticated-admin RPC transaction under namespace `med_interview_question_bank`, source-manifest/workbook SHA `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`, and batch ID `questions-part-1`. The transaction inserted 500 provenance-bearing, inactive questions and recorded the private-ledger payload fingerprint `129b136a6549abdea2cfd09be9fe1f565563bf1098f598903903dbcacceeb0e5`. Its read-only postflight found `questions` 502, `profiles` 1, `answers` 1, `scores` 1, `mock_sessions` 11, and `import_batches` 1; the original two questions were unchanged (fingerprint `778a7743a3961d04019c9c77c93fa3ef`); and the exact comparison was 500 matched, 0 missing, 0 mismatched, and 0 unexpected. At that point the part-2 batch was absent. The final full-staging state is recorded below.
-- **Hosted workbook part-2 and full-staging execution evidence:** The exact approved artifact `supabase/imports/20260825_med_interview_question_bank/questions-part-2.csv` (SHA-256 `738ba2beca271c1c44f751446c02be930b79e304369a16a81b6e37d937857f0e`) was imported on `2026-08-26` in one authenticated-admin RPC transaction under namespace `med_interview_question_bank`, source-manifest/workbook SHA `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`, and batch ID `questions-part-2`. The transaction inserted 285 inactive provenance-bearing questions and recorded private-ledger payload fingerprint `b3a60ebe44c2bc05dd34496c62558daa65a8d4091ea083c9358ff15c39e8d3c9`. Its staging postflight found `questions` 787, `profiles` 1, `answers` 1, `scores` 1, `mock_sessions` 11, and `import_batches` 2; total source rows 785 with 785 distinct IDs, 785 inactive, and 0 active; and the exact part-2 comparison was 285 matched, 0 missing, 0 mismatched, and 285 distinct IDs. Part 1 remains 500 rows (question fingerprint `fcea2c17fbdcfe28cec421975df80c7d`; ledger fingerprint `129b136a6549abdea2cfd09be9fe1f565563bf1098f598903903dbcacceeb0e5`), while the two legacy rows remained unchanged at that stage (fingerprint `778a7743a3961d04019c9c77c93fa3ef`).
-- **Hosted publication execution evidence:** The separately approved transaction on `2026-08-26` physically deleted no rows, deactivated legacy IDs `8ca92227-308f-4930-a742-90b4e0cdc955` and `e5ad4c69-4a26-40e9-87b6-fe81a09ca245`, and activated exactly 785 rows with source namespace `med_interview_question_bank`. Immediate committed proof was `questions` 787; imported active 785/inactive 0; legacy active 0/inactive 2; `answers` 1; and `scores` 1. Later read-only postflight observed concurrent app activity (`profiles` 1, `answers` 2, `scores` 2, `mock_sessions` 12, `import_batches` 2) while proving candidate-visible active total 785; imported count/active/distinct IDs 785; imported content fingerprint excluding `is_active`/`updated_at` `34d702bf767a66af2fca1d78487bb63bc006b238f985b8b4614b77ec5ef925a6`; both exact legacy IDs inactive; legacy answer/score references still 1/1; and both batch ledgers/hashes unchanged. An aggregate-only trace captured `2026-08-26 03:23:14.431763 UTC` confirmed the delta: two answers total, exactly one legacy-question reference and one imported-question reference; two scores; 12 mock sessions; latest new session `03:20:03.247536 UTC` and latest answer/score `03:20:30.5307 UTC`; no answer text or other content was read. Direct question and ledger effective table/column privileges remained false for `anon`, `authenticated`, and `service_role`; `migration_relation` and `cron_relation` remained `null`. Deactivation preserved historical answer/score integrity and was not physical deletion. This records completed candidate-visible publication, but not Vercel import-client deployment or overall hosted deployment/readiness; the next content operation remains separately approval-gated and forward-only.
-- A local-only workbook artifact v2 staged 785 compatible drafts (500/285) from the approved workbook/source-revision SHA `903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71`; criteria, model answers, and panel notes are excluded. That value is the RPC/CSV `source_manifest_sha256`, despite its historical field name. Each ignored CSV also carries source namespace `med_interview_question_bank`, a stable source ID, and a stable batch ID. Operator artifact verification is separate: part CSV SHA-256 values are `33769d18edf3872fc0b2b43fa957ed309715067a777607388d6c92f851f77c30` and `738ba2beca271c1c44f751446c02be930b79e304369a16a81b6e37d937857f0e`; the `manifest.json` artifact SHA is `959cbefcd557fe8833cc4e913241f45043a956cdd1b2884a24ab788e78478e98`. Migration hashes are applied `040` `123406ce32d2f211d90095ff57d56d80e7efa9dad5c6413481e9898d4049f493` and `050` `f9f0c7bd5256327e447998d3549093febcdb60cc32e7ee34b56c9ff7d06596c8`. Its private RLS ledger records a server-computed SHA-256 payload fingerprint; an exact retry returns existing IDs, altered reuse fails closed, and later corrections retain question UUID/performance/publication state. Fresh preserved container `mmi_question_import_proof_20260825_e` passed fixture → reconciliation → `000`/`010`/`020` → `040` → `050` plus full runtime proof, including 64-hex fingerprints and PostgreSQL 17 `MAINTAIN` ACL closure. Both exact batches are now active candidate-visible content; the next hosted content operation remains separately approval-gated and forward-only.
-- Terms and Privacy operational drafts exist, but controller identity, contact, legal bases, transfers, retention, and final wording require qualified review before the approximately 100-person round.
-
-## Product boundary for the 100-person round
-
-- Invite/allowlist enrollment only; no public account creation.
-- Until a replacement is approved and migrated, Vercel and Supabase are development/isolated-preview dependencies only; the production web runtime, PostgreSQL, Auth/session service, storage, and functions are explicitly TBD and approval-gated.
-- Legacy free/timed practice is the default student experience until Phase 4 passes its own gates.
-- Founder/system admin, content editor, and tester/student are separate roles.
-- Content editors can manage questions but cannot change roles, AI credentials, providers, allowlists, retention, or deployments.
-- Tutor, MMI Circuit, and unfinished Phase 4 station UI remain hidden.
-- AI output is formative practice feedback, not clinical, admissions, or professional advice.
-
-## Capacity assumptions to record before launch
-
-Replace each planning bound with a measured/approved value before go-live:
-
-- Invited accounts: approximately 100.
-- Expected daily active users and peak concurrent users.
-- Answers per active user per day.
-- Average and p95 answer length.
-- AI model cost per accepted answer and maximum monthly spend.
-- Supabase database, Auth, Edge invocation, and egress quotas.
-- Vercel bandwidth/function assumptions; this application uses static hosting, not Render.
-- Support hours and target response time by severity.
-- Data-retention volume, backup frequency, restore target, and deletion turnaround.
-- Named incident commander, deployment owner, security owner, and rollback authority.
-
-## Security and privacy gates
-
-### Identity and roles
-
-- [ ] Implement invite/allowlist enrollment and disable public signup.
-- [ ] Configure production-grade custom SMTP; verify invite, confirmation, password reset, expiry, and abuse limits.
-- [ ] Add founder/system-admin, content-editor, and tester roles with least-privilege RLS/RPC checks.
-- [ ] Require MFA or an equivalent stronger control for founder/system-admin accounts.
-- [ ] Audit role grants and role changes; no self-promotion path.
-- [ ] Review all Supabase Auth redirect and Site URL settings for the stable domain only.
-
-### Data authorization
-
-- [ ] Reconcile migration history without pretending unapplied effects exist.
-- [ ] Remove authenticated direct reads from all assessor-bearing MMI tables, including auxiliary marking/end/domain/response-rule tables.
-- [ ] Expose active student questions through a safe projection that excludes guidance/assessor fields.
-- [ ] Prevent direct authenticated score insertion and cross-user streak mutation.
-- [ ] Move direct authenticated `mock_sessions` insertion behind a bounded, rate-limited creation RPC with strict legacy-session fields; self-ownership RLS alone does not prevent storage abuse.
-- [ ] Keep attempt/results owner-readable and client-write-denied.
-- [ ] Review every `SECURITY DEFINER` function for fixed `search_path`, exact signature revokes, least-privilege grants, caller binding, and row locking.
-- [ ] Run adversarial RLS tests with anonymous, ordinary tester, content editor, founder, and service roles in an isolated project.
-
-### Privacy and governance
-
-- [ ] Approve privacy notice, terms, processor disclosure, AI-provider disclosure, retention period, account deletion, data export, and support contact.
-- [ ] State clearly what answer/transcript content is sent to the configured AI provider.
-- [ ] **Current retained Phase 4 boundary:** do not persist raw audio; only a user-reviewed transcript may enter scoring/persistence, and the pinned scoring contract is text/rubric based and explicitly forbids inference of vocal confidence, hesitation, or delivery. This is the retained Phase 4 contract; this plan does not change it or claim it is hosted/deployed.
-- [ ] **Future automated-media proposal only:** the planned cofounder media experience is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). It is not implemented, deployed, or deployment authorization, and cannot launch or alter the current contract until its retention/audit tradeoff and a separately reviewed media-scoring contract are explicitly approved.
-- [ ] Define account-deletion and fixed-retention behavior before enabling any Cron/purge job.
-- [ ] Validate deletion/retention against an isolated fixture database before any hosted schedule is approved.
-- [ ] Keep screenshots, access tokens, answer text, transcripts, rubric text, provider bodies, and secrets out of analytics/error logs.
-
-### AI and cost controls
-
-- [ ] Persist scoring through an authenticated, atomic, idempotent server workflow.
-- [ ] Rate-limit durable provider attempts per user and per rolling time window.
-- [ ] Add daily per-user quota, project budget alert, and a global scoring kill switch.
-- [ ] Keep provider hostnames exact-allowlisted, HTTPS-only, DNS-checked, private-network rejected, redirect-rejected, and time-bounded.
-- [ ] Keep provider/key configuration server-side and `ai_api_key` unreadable to every client.
-- [ ] Add a clinician-reviewed evaluation set for unsafe advice, alternative valid answers, missing critical actions, and prompt injection.
-- [ ] Require strict output-schema success, safety-critical omission detection, acceptable score ranges, and an approved drift threshold before treating scores as trustworthy.
-
-## Content operations
-
-- [ ] Single-question create/edit/preview/publish/deactivate flow.
-- [ ] Bulk CSV validation before mutation with exact headers, RFC 4180 behavior, field/file/row bounds, enums, duplicate policy, and row-level errors.
-- [x] The separately approved publication transaction activated the 785 imported rows and deactivated—not deleted—the two legacy rows; importing itself did not make content instantly student-visible.
-- [ ] Creator/updater identity, timestamps, and publication audit history.
-- [x] Added a durable source-key batch ledger and exact-payload retry boundary for workbook imports; source IDs are unique while manual/seed questions remain unkeyed.
-- [x] Imported and separately published the provenance-bearing batches: `questions-part-1` (500) and `questions-part-2` (285), for 785 active candidate-visible rows with exact private-ledger fingerprints and verified postflight; the two legacy rows were deactivated without deletion.
-- [ ] Keep every next workbook-derived hosted content operation separately exact-approval-gated and forward-only. The Question Desk accepts only provenance-bearing source batches; manual one-question authoring remains on its separate RPC; never delete imported rows.
-- [ ] Content editor cannot access AI credentials or security configuration.
-- [ ] Student-safe projections exclude `guidance_notes`, cached model answers, actor details, rubrics, drafts, inactive rows, and future prompts.
-- [ ] Clinician/content review owner and documented publication checklist.
-
-## Reliability and operations
-
-- [ ] Client/server error monitoring with aggressive sensitive-field scrubbing.
-- [ ] Dashboard/alerts for authentication failures, Edge error rate and latency, database saturation, rate limits, provider failures, and AI spend.
-- [ ] Synthetic uptime check for login and a non-mutating authenticated health path.
-- [ ] Support triage, severity definitions, incident response, status communication, and rapid-disable runbook.
-- [ ] Backup/restore and forward-fix rollback procedures; rehearse on an isolated project.
-- [ ] Preserve prior Vercel releases and document instant rollback.
-- [ ] Define feature flags/kill switches for scoring, authoring, feedback, and Phase 4.
-- [ ] Run a 100-account synthetic load/concurrency exercise using isolated synthetic users and content only.
-- [ ] Verify rate limits and idempotency under concurrency, provider timeout, retry, and partial failure.
-
-## Quality gates
-
-- [ ] Unit tests for pure validation, parsing, lifecycle, aggregation, navigation, storage, and state transitions.
-- [ ] Integration tests against a local/disposable Supabase stack only.
-- [ ] Browser E2E for invite/login/reset, onboarding, practice, scoring, progress, question authoring, feedback, role denial, deep links, refresh, and sign-out.
-- [ ] Re-run the local Edge-runtime smoke for the closed-round release commit. The cofounder-preview baseline passed on 25 August 2026 for JWT, CORS preflight, allowed/disallowed origins, method/content-type/body limits, safe errors, and terminal provider-failure persistence.
-- [ ] At least 80% lines, functions, branches, and statements for changed/new logic.
-- [ ] Typecheck and static web export pass.
-- [ ] Chrome, Safari, Firefox, iOS-width, Android-width, keyboard-only, screen-reader, contrast, reduced-motion, and slow-network QA pass.
-- [ ] `$un-vibecode` and the one-time Impeccable final detector pass against real copy and all empty/error/loading states.
-- [x] The follow-up independent read-only audit of this diff is closed with no unresolved Critical/High finding; the prior independent readiness audit remains closed for its reviewed scope. Residual Medium/Low release follow-ups remain documented above; hosted `040`, `050`, and exact part-1/part-2 content imports are complete, while every next exact content operation remains hard-gated and forward-only.
-- [x] `npm audit --omit=dev` findings are classified by direct dependency, transitive path, runtime reachability, compatible mitigation, and owner: 10 Expo configuration dependency advisories remain a Medium follow-up. Never use `npm audit fix --force`.
-
-## CI/CD and analytics plan — planned, not implemented
-
-No tracked CI workflow or analytics integration exists at this checkpoint. Neither is authorized for deployment until this plan has an approved implementation and dated evidence.
-
-### CI/CD release controls
-
-- [ ] Add a required CI workflow for every pull request and the production branch. It must use the locked dependencies (`npm ci`) and pass `npm test`, `npm run test:coverage`, `npm run typecheck`, `npm run build`, and `npm run test:e2e` before a release candidate can advance.
-- [ ] Require CI to check the committed pull-request range with `git diff --check "$(git merge-base origin/<protected-branch> HEAD)" HEAD` (or `git show --check <commit>` for a single-commit release), plus a reviewed secret scan and security review. A developer may separately run `git diff --check` for uncommitted work. Classify the output of `npm audit --omit=dev`; do not auto-remediate and never use `npm audit fix --force`.
-- [ ] Protect the production branch: require the named checks and an approving reviewer, disallow direct pushes and force-pushes, and record any administrator bypass with a release reason.
-- [ ] Keep Vercel Preview and Production deployments distinct. Preview must use non-production Supabase, provider, and analytics credentials; no production secret, user data, or hosted mutation may be reachable from Preview.
-- [ ] Retain release evidence for each promoted commit: commit SHA, lockfile digest, CI logs/results, scanned artifact or `dist/` digest, Vercel deployment URL, and the known-good hardened-compatible rollback deployment.
-- [ ] CI may validate and create Preview artifacts only. Every hosted Supabase mutation and every Vercel Production mutation remains a separate manual approval: show the exact target, command or console change, reviewed diff, expected effect, rollback, and read-only post-check before executing it. This includes reconciliation, migrations, Edge deployments, secret/Auth/role changes, and Production promotion.
-
-### Privacy-safe analytics plan
-
-- [ ] Select an analytics provider only after legal/privacy, data-processing, transfer, consent, retention, and access reviews are approved. Provider choice is intentionally undecided; do not add an SDK, provider environment variable, or collection endpoint before explicit approval.
-- [ ] Use an allowlist of exactly these low-cardinality product events: `page_view`, `onboarding_completed`, `practice_started`, `practice_completed`, `feedback_submitted`, and `scoring_outcome`. Each event may contain only its event name, timestamp, deployment environment, canonical route identifier (for `page_view`), a documented enum/boolean outcome where applicable, and optional ephemeral `analytics_session_id`; additions require renewed approval.
-- [ ] If used, `analytics_session_id` must be a random analytics-only value, rotate on sign-out and browser-session expiry, never persist in Supabase, and never be joined to an account ID or other identifier. Never send answers, prompts/question text, rubrics, feedback text, emails, names, Supabase user IDs, free-form fields, URLs/query strings, screenshots, transcripts, provider payloads, access tokens, API keys, or other secrets to analytics. Disable autocapture, session replay, DOM/text capture, and IP/geolocation enrichment; require provider-level raw-IP truncation or non-retention unless a separately approved review changes this rule.
-- [ ] Set and approve a finite provider retention period, least-privilege analytics access roles, and a periodic access review before collection begins.
-- [ ] Keep Preview and Production analytics data, projects/collections, credentials, and retention policies separate. Any browser-visible analytics write key must be environment-specific, treated as non-secret only after review, and introduced through the approved build environment; no server-side analytics secret may enter an `EXPO_PUBLIC_*` variable.
-- [ ] Before enabling analytics, approve the provider domain in CSP/`connect-src`, test the consent and opt-out path, inspect captured events in a non-production collection, and verify the network payload contains only the allowlisted schema. Preserve this verification evidence with the release.
-- [ ] Provide an owner-operated analytics kill switch that disables client initialization/collection, document provider-side collection disablement and deletion/retention handling, and rehearse rollback by disabling collection and restoring the prior hardened-compatible deployment. Analytics must remain disabled until these controls and explicit approval are complete.
-
-## Phase 4 MMI roadmap
-
-The candidate browser-speech station is specified and gated in [Before Cofounder Viewing](./BEFORE-COFOUNDER-VIEWING.md). Its transcript-only client implementation is hosted only as the protected exact-SHA Vercel Preview recorded below; its candidate Supabase backend is not deployed, it is not feature-enabled, and it is not authorized for cofounder viewing. Browser speech is optional and the editable typed/dictation path is the required baseline. Webcam capture and webcam-derived assessment are a separate next workstream and are not part of this release contract.
-
-### Completed locally and merged
-
-1. Canonical MMI content schema capture.
-2. Student-safe station discovery/current-prompt APIs.
-3. Versioned rubrics, attempts, prompt results, scoring claims, and retention model.
-4. Pure MMI contracts, rubric validation, aggregation, and lifecycle transitions.
-5. Hardened reusable scoring-provider and CORS/HTTP boundary.
-6. Authenticated attempt creation, safe restoration, prompt reveal, and abandonment.
-
-These migrations/functions are not thereby authorized for hosted deployment. The live schema is partially/manual and must be reconciled first.
-
-### Remaining before Phase 4 can be exposed
-
-7. Idempotent rubric-driven scoring and atomic progression.
-8. Browser/platform speech-processing disclosure and raw-audio non-retention validation for the optional speech-to-text path; webcam or other automated-media work follows a separate future specification.
-9. Typed station-library data layer and filters.
-10. Dedicated MMI client state engine.
-11. Student station library replacing the hidden Questions placeholder.
-12. Retained editable-transcript review with typing/dictation fallback and accessibility accommodations; webcam work follows its own future approval gates.
-13. Immediate feedback, explicit sole forward progression, deterministic summary, and single-turn role-play.
-14. Separate completed MMI history in Progress without changing legacy aggregates.
-15. Full security, integration, coverage, export, Edge-runtime, browser, device, privacy, and clinician-evaluation release gates.
-
-### Candidate browser-speech station release gate — local backend evidence; protected client preview
-
-The 11-minute candidate station client at exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` is deployed only as protected Vercel Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. Its reviewed database chain and normalized content are now deployed to separate hosted Supabase project `obfwfoykalvoxqdnosus`, not shared project `tliwifhnsytxpcynuwsy`; the server feature flag remains `false`. The candidate scoring function/provider configuration, approved privacy notice, and clinician-reviewed rubrics are not deployed, so the candidate flow is not authorized for cofounder use. Browser speech recognition is an optional enhancement only when the runtime capability probe succeeds. Manual typing, including operating-system/browser dictation through the editable field, is the required compatibility baseline everywhere.
-
-| Browser/runtime | Speech enhancement gate | Required baseline |
-| --- | --- | --- |
-| Current stable Chrome desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
-| Current stable Edge desktop | [ ] Real-microphone allow/deny and restart evidence | Manual typing |
-| Current stable Safari desktop | [ ] Capability-probe and fallback evidence | Manual typing |
-| Current stable Chrome Android | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
-| Current stable Safari iOS | [ ] Capability-probe, permission, and mobile-viewport evidence | Manual typing |
-
-Privacy and scope are fixed for this release candidate:
-
-- The browser or platform may send microphone audio to its own speech provider for transcription. This app does not record, upload, or store audio.
-- The editable transcript text is held in UI memory while editing, checkpointed privately to server-owned session state for recovery, finalized at the trusted deadline, and used for transcript-only feedback. It is not persisted as app-managed audio, logged, or sent in finalization/scoring request bodies; the scoring function loads the finalized transcript from server-owned state.
-- No delivery-quality inference is permitted. Accent, vocal delivery, posture, movement, and camera engagement are outside scoring.
-- Camera/video capture remains excluded from this station. It is the next product workstream and requires a separate design, privacy, security, accessibility, validity, bias, clinician-review, retention, and approval process before implementation or testing.
-
-Automated local evidence:
-
-- [x] Synthetic `SpeechRecognition` covers start, interim/final results, unexpected end/restart, permission denial, refresh-paused recovery, and abort without requesting a real microphone.
-- [x] The preflight performs no candidate session RPC and starts no timer until **Start station**.
-- [x] Deadline proof freezes editing, stops recognition, saves eligible pre-deadline text, and sends only session ID, prompt order, and an idempotency UUID to finalization.
-- [x] Completion proof launches identity-only scoring and renders five ordered transcript-only feedback states.
-- [x] Local verification passed after the security hardening: 37 Node tests, 300 Vitest tests, 13/13 isolated candidate database integration tests, 10/10 Playwright flows, TypeScript, production web export, and coverage above 80% in every enforced category.
-
-Manual evidence required before enabling the feature for cofounders:
-
-These checks mean a person must use real browsers and devices rather than relying only on simulated Playwright events. Native microphone permission prompts, browser/OS speech-provider behavior, mobile keyboards, VoiceOver/TalkBack or other screen readers, focus order, and reduced-motion rendering are controlled outside the JavaScript test harness. Record the browser/device/version, result, and date for each applicable check; an unsupported speech API passes only when the typed/dictation fallback remains fully usable.
-
-- [ ] Permission allow and deny on each supported desktop/mobile target; unsupported API remains fully usable by typing.
-- [ ] Operating-system/browser dictation fallback, recognition restart, refresh restore, and **Resume microphone** behavior.
-- [ ] All five deadline transitions, a transient finalization retry, and the ordered completion-feedback states.
-- [ ] Keyboard-only editing, screen-reader labels/status announcements, mobile viewport/keyboard behavior, and reduced-motion behavior.
-- [ ] Confirm browser bundles and monitoring contain no transcript, prompt, provider payload, credential, audio, or other sensitive logging.
-
-Approval-gated deployment status:
-
-- [x] Applied candidate migrations through `20260901001000` to the isolated loopback worktree database on 1 September 2026; 13/13 candidate database integration tests passed, including expired finalized transcript and unfinished-draft deletion through the hourly operator path. That local proof did not mutate hosted Supabase; the later, separately approved hosted deployment is recorded below.
-- [x] Served `score-candidate-mmi-response` in the local Supabase Edge runtime with JWT verification enabled and confirmed a missing-authentication request is rejected with HTTP 401 before handler/provider work. The temporary local server was stopped; no provider credential was configured or contacted.
-- [x] Provisioned separate hosted Supabase project `obfwfoykalvoxqdnosus` (`mmi-cofounder-preview`, `ap-southeast-1`, `ACTIVE_HEALTHY`) after Preview Branch creation returned HTTP 402 on the Free plan. It contains no copied production data and has no Git auto-deployment link.
-- [x] Applied the reviewed 17-version chain through `20260901001000` to `obfwfoykalvoxqdnosus`. A schema-only read-only parent catalog capture supplied the four hosted-preexisting assessor table definitions; the unchanged hosted reconciliation and remaining migrations then passed. Seeds, roles, vault secrets, and production rows were excluded.
-- [x] Imported the exact 500/285 flat batches, activated 785 provenance-bearing rows, imported exact normalized 80/400 and 75/375 batches, and finalized 155 published stations/775 ordered prompts. Independent postflight at `2026-09-01 02:53:31 UTC` found five 120-second prompts per station, 10 panel rows excluded, feature flag `false`, zero runtime rows, and zero residual preview operators.
-- [ ] Publish exactly one approved active fixed-days privacy notice and active clinician-reviewed rubrics for all 775 prompts. Current isolated-preview counts are `0` notices and `0/775` rubrics; placeholder legal or clinician approval data is forbidden.
-- [x] Verified exactly one active `candidate-mmi-purge-expired-free-text` Cron job is configured at minute 23 hourly on `obfwfoykalvoxqdnosus`, and runtime roles cannot execute its internal wrapper.
-- [ ] Monitor for a successful aggregate-only `cron.job_run_details` entry within two hours, alert on two consecutive failures, disable on failure, repair forward, run approved operator maintenance, and verify only aggregate purge/run evidence before re-enabling.
-- [ ] Configure and deploy the JWT-verified candidate scoring function and its server-only provider settings.
-- [x] GitHub's Vercel integration deployed exact commit `b0b2741d24749ca6c037309d885b497cc7082dce` as protected Preview `dpl_Dii7RhSjfNoS35mszaa2R2co7QgD`. An authenticated HTTP smoke returned `200` for the `Interview Station` app shell and its JavaScript bundle. The worktree itself remains unlinked from a Vercel project, and no interactive/device or candidate-backend smoke is claimed.
-- [ ] After the privacy/rubric, scoring-function, configuration, Cron-run, and manual QA gates pass, run the bounded named-account end-to-end smoke while disabled and deliberately enable the server feature flag only after acceptance.
-
-### Preserved Phase 4 contracts
-
-- Legacy questions and MMI content remain separate domains.
-- One station per Phase 4 attempt; Circuit is deferred.
-- Standard stations use ordered sub-questions; role-play uses one recorded response, not a live AI actor.
-- The server pins station content, rubric version, scoring contract, privacy-notice version, and timing at attempt creation.
-- Preparation reveals no prompt until trusted server time allows it.
-- The client receives only the current prompt and never future prompts or hidden assessor context.
-- **Current retained scoring contract:** the user reviews the transcript before scoring; raw audio is transient and never persisted. It assesses transcript/rubric dimensions only and forbids vocal-confidence, hesitation, delivery, posture, movement, or camera-engagement inference.
-- Applicable current transcript/rubric dimensions are structure, ethics, communication, reflection, and NHS awareness; zero-weight dimensions are N/A.
-- Server code computes overall percentage. Provider output cannot supply it authoritatively.
-- Successful scoring is idempotent and cannot be pedagogically retried; technical retries reuse the same logical request.
-- Feedback is restored after refresh. The next prompt appears only after explicit **Continue to next prompt**.
-- Final summaries are deterministic from persisted prompt results and make no extra AI call.
-- Hidden model answers, rubric instructions, criteria, actor persona/background, prompts, provider bodies, and credentials stay server-only.
-
-## Hosted Supabase drift and reconciliation
-
-### Observed prior hosted snapshot classification
-
-- This classification records what the prior SELECT-only snapshot showed; it does not describe the current state after separately approved operations.
-- The prior snapshot showed an early legacy schema and initial RLS substantially present but migration history empty.
-- The prior snapshot showed AI-key read protection, but function-only write hardening was not fully represented.
-- The prior snapshot showed base MMI content tables without the complete local reconciliation constraints/indexes/role-play additions.
-- The prior snapshot showed student-safe MMI projection RPCs and later attempt persistence/RPCs absent.
-- The prior snapshot showed additional assessor-bearing tables outside the migration chain.
-- The prior snapshot showed hosted policies exposing hidden MMI/role-play/auxiliary assessor content to authenticated users.
-- The prior snapshot showed `update_streak` invocable without adequate caller binding.
-- The prior snapshot showed authenticated users able to insert scores for their own answers.
-- The prior snapshot showed legacy question reads including inactive rows and `guidance_notes`.
-
-### Safe reconciliation method
-
-1. Complete the fresh snapshot gate: `supabase/reconciliation/20260825_hosted_catalog_snapshot.sql` returned at `2026-08-25 05:59:23.339506 UTC` with catalog MD5 `0811d9d73c003ea1daba2efd2058c136`. `migration_relation` and `cron_relation` were `null`, so no conditional follow-up ran; compare this retained SELECT-only evidence with every fail-closed script precondition.
-2. The hosted-only reconciliation was earlier applied under an exact approval, outside `db push`. Re-audit before any additional hosted operation.
-3. Additive migrations `20260825000000`, `20260825001000`, and `20260825002000` and final cutover `20260825004000` were applied under exact approvals. Retain the recorded `040` Management API postflight evidence and re-prove changed release commits locally.
-4. Verify the created tables/RPCs, security-definer ownership/search paths, service-only storage, RLS, and exact function grants.
-5. `score-answer` is v4 ACTIVE, `manage-ai-key` remains v3, and the stable Vercel production alias is live at commit `dd0c60b2e6a18bac3494a26a494b1d06a88b2249`; the client import workflow is not deployed to that stable alias and exists only in the protected exact-SHA Preview. Complete a bounded hosted smoke before any further promotion.
-6. Final cutover `20260825004000` is complete; it rewrote exact ownership policies, removed table/column grant drift, disabled direct score/streak/question access, and restored only the minimum safe browser grants. Retain the recorded preflight/apply/postflight evidence.
-7. Import-capability migration `20260825005000_cofounder_question_import_idempotency.sql` is complete after `040`. It added nullable source identity, a private RLS ledger, and a fixed-path authenticated-admin RPC, and performed no workbook import at migration time. Retain its recorded unique-index, ledger ACL/RLS, owner/security-definer/search-path, and direct-table-denial postflight evidence.
-8. Workbook staging and publication are complete as separately approved and recorded above: part 1 (500) and part 2 (285) are active candidate-visible content, while the two legacy rows are deactivated without deletion. Present any next content operation as its own exact, forward-only approval with the appropriate source-manifest SHA, batch ID, row count, and expected result. Separately verify the operator artifacts: `manifest.json` SHA and the corresponding part CSV SHA-256. Do not alter or rename an ambiguous retry, and never delete imported rows: use a separately approved correction or deactivation batch.
-9. Rollback is forward-only: do not delete imported rows to undo a batch. Preserve records and use a separately approved source correction/deactivation operation if review finds an error. Broad default ACLs remain a future-object hazard and are unchanged by this work.
-10. Run independent database/security review and retain its findings with the release evidence.
-11. Re-audit hosted state after each approved operation before moving to the next.
-
-Never mark a migration applied until its complete reviewed effect exists. Never run the current `db push`, broad `migration repair`, or any Cron/purge operation against hosted Supabase without exact approval.
+- One 11-minute station: 60 seconds of `mmi_stations.scenario_text`, then five 120-second `mmi_sub_questions.question_text` records ordered by `order_num`.
+- Browser speech transcription is optional and editable; typing is the fallback.
+- Transcript text is stored privately for recovery and scoring. Raw audio is not stored by the app.
+- Server timing controls every transition and hides future questions.
+- AI scoring starts only after the full station completes.
+- The scoring function loads the finalized prompt/transcript and versioned scoring criteria from server-owned code/state.
+- Provider or validation failure preserves completion and exposes retry without fabricating a score.
+- Camera/webcam behavior is outside this release.
 
 ## Deployment sequence
 
-### Local and disposable verification — no hosted mutation
+### 1. Prepare and verify the exact Git revision
 
-1. Freeze the release commit and dependency lockfile.
-2. Run unit, coverage, typecheck, build, local Edge-runtime smoke, isolated Supabase integration, E2E, browser/accessibility, load, audit, and independent security gates.
-3. Produce exact reviewed SQL diffs, function list, secret names (never values), allowed origins, and rollback plan.
-4. Confirm the preview and Phase 4 deployment scopes are not mixed.
+- [ ] Fetch current `origin/main` and integrate it without discarding unrelated local work.
+- [ ] Run unit, integration, Edge-handler, type, build, and relevant browser tests.
+- [ ] Run dependency/security checks and inspect the final diff for secrets or unintended files.
+- [ ] Record `git rev-parse HEAD` as the release SHA.
+- [ ] Push `feat/cofounder-ui-reliability` and create or update its pull request.
 
-### Approval-gated production migration and launch
+### 2. Deploy the isolated Supabase backend
 
-This sequence supersedes any earlier implication that Vercel or Supabase can be promoted to public production. The replacement provider remains **TBD** and no stage may proceed without its own explicit approval.
+- [ ] Confirm the CLI target is exactly `obfwfoykalvoxqdnosus` before any write.
+- [ ] Compare local and remote migration history.
+- [ ] Dry-run the pending database migration.
+- [ ] Apply `20260904000000_single_mmi_station.sql` forward-only.
+- [ ] Verify exactly 155 published stations, 775 ordered questions, and five questions per station.
+- [ ] Verify `scenario_text` is the station brief and `question_text` is the ordered response question.
+- [ ] Verify all station RPCs require authentication and enforce session ownership.
+- [ ] Verify transcript tables remain private and raw-audio storage objects do not exist.
+- [ ] Deploy `score-candidate-mmi-response` with JWT verification to this project.
+- [ ] Confirm server-only provider/model/key configuration exists without printing secret values.
+- [ ] Request one completed response score and verify a real schema-valid assessment is persisted and returned.
 
-1. Select and provision the approved replacement production stack, with separately reviewed ownership, region, contractual/security posture, capacity, and operating model.
-2. Complete and evidence the following migration gates before public launch:
-   - [ ] Application hosting and server/runtime migration, including a reviewed deployment artifact and hardened-compatible rollback release.
-   - [ ] PostgreSQL schema and required data migration, integrity verification, access-control review, and a forward-fix plan.
-   - [ ] Auth, users, sessions, invite/allowlist, confirmation, reset, redirect, and abuse-control migration as applicable.
-   - [ ] Storage and function/workload migration as applicable, with least privilege and no unapproved media, upload, scoring, or analytics scope expansion.
-   - [ ] Environment configuration and secrets migration, using approved secret management; inventory names and access boundaries only—never values.
-   - [ ] DNS, domain, origin/CORS, and traffic-cutover plan, including an isolated rehearsal and a tested return path.
-   - [ ] Independent security review of the replacement and migration, resolving all Critical and High findings.
-   - [ ] Backup and restore exercise proving the required recovery objectives, plus a rehearsed application/data rollback or forward-fix procedure.
-   - [ ] A 500-concurrent-station load test on the approved replacement using isolated synthetic users and content only, with approved capacity, latency, error-rate, and cost results.
-3. Perform the approved cutover only after every gate passes; monitor the agreed safety, reliability, and cost signals, and keep the tested rollback path ready.
-4. Onboard production users only after the migration, security, backup/restore, rollback, and 500-concurrent-station evidence is complete and explicitly accepted.
+### 3. Deploy the exact Vercel Preview
 
-## Rollback and stop conditions
+- [ ] Set Preview-only `EXPO_PUBLIC_SUPABASE_URL` to the isolated project URL.
+- [ ] Set Preview-only `EXPO_PUBLIC_SUPABASE_ANON_KEY` to the isolated project's public anon key.
+- [ ] Never place a service-role key or AI provider key in Vercel public variables.
+- [ ] Build and deploy the recorded Git SHA.
+- [ ] Record the protected Preview URL and deployment ID.
+- [ ] Confirm the deployment reports the same Git SHA used for verification.
 
-Stop or disable the affected feature on any of these:
+### 4. Hosted smoke test
 
-- Cross-user data access or mutation.
-- Hidden assessor, rubric, future-prompt, credential, provider-body, or token exposure.
-- Duplicate paid scoring under replay/concurrency.
-- Unsafe advice escaping clinician-set evaluation bounds.
-- Unbounded provider cost or persistent rate-limit failure.
-- Migration drift, failed forward-only schema change, or inability to restore service.
-- Error monitoring captures sensitive answer/transcript/auth material.
-- Critical/High security finding without a verified fix.
+- [ ] Sign in with an invited test account; public signup remains unavailable.
+- [ ] Start a station and confirm the 60-second brief has no response control.
+- [ ] Complete Q1–Q5 in order, each with a visible 120-second timer.
+- [ ] Confirm browser speech writes only transcript text and manual typing remains usable.
+- [ ] Refresh during a timed phase and confirm the server-owned session resumes safely.
+- [ ] Confirm the completed screen begins AI evaluation only after Q5 closes.
+- [ ] Confirm all five feedback records remain in station order.
+- [ ] Cause or simulate a scoring failure, confirm no fake score appears, then use **Retry AI scoring** successfully.
+- [ ] Sign out and confirm another account cannot restore or read the prior session.
 
-Rollback uses a previously verified **hardened-compatible** deployment on the approved replacement stack plus server-side feature/kill switches. The archival pre-redesign client is not a safe rollback after backend privilege revocation unless it has separately passed compatibility testing. Database rollback is forward-fix only unless a separately reviewed reversible operation exists; never delete user data as an improvised rollback. Do not fall back to Vercel or Supabase for production users.
+### 5. Manual device, accessibility, and privacy QA
 
-## Authoritative external references
+Record tester, date, device/OS, browser/version, result, and issue link for each row.
 
-- Expo web deployment: <https://docs.expo.dev/distribution/publishing-websites/>
-- Expo Audio: <https://docs.expo.dev/versions/v55.0.0/sdk/audio/>
-- Supabase Auth production checklist: <https://supabase.com/docs/guides/auth/going-into-prod>
-- Supabase Edge Functions: <https://supabase.com/docs/guides/functions>
-- Supabase Row Level Security: <https://supabase.com/docs/guides/database/postgres/row-level-security>
-- Supabase Cron: <https://supabase.com/docs/guides/cron>
-- Vercel static deployment configuration: <https://vercel.com/docs/projects/project-configuration>
-- WCAG 2.2: <https://www.w3.org/TR/WCAG22/>
-- OWASP ASVS: <https://owasp.org/www-project-application-security-verification-standard/>
-- OpenAI audio transcription API: <https://platform.openai.com/docs/api-reference/audio/createTranscription>
+| Check | Required evidence | Status |
+| --- | --- | --- |
+| Microphone allowed | Permission prompt, live transcript, editable text | Pending |
+| Microphone denied | Typing remains available; station continues | Pending |
+| Unsupported browser speech | Clear fallback message and usable typing | Pending |
+| Speech interruption/restart | Committed words preserved | Pending |
+| Refresh/resume | Same session and trusted remaining time | Pending |
+| All deadline transitions | Brief, Q1–Q5, then completion in order | Pending |
+| Keyboard only | Every control reachable with visible focus | Pending |
+| Screen reader | Prompt, timer status, errors, and controls announced meaningfully | Pending |
+| Mobile keyboard/viewport | Timer, prompt, transcript, and actions remain visible/usable | Pending |
+| Reduced motion | No required information depends on motion | Pending |
+| Sensitive-data inspection | No raw audio, secrets, transcripts, or provider payloads in public logs/URLs/analytics | Pending |
 
-## Closed-round release gate
+These rows remain pending until someone performs them on real browsers/devices. Automated coverage supports them but does not replace them.
 
-Launch only after all applicable checkboxes have dated evidence, the approved replacement-stack migration is complete, capacity/cost/retention/ownership values are approved, security plus backup/restore and rollback exercises pass, the 500-concurrent-station load test passes, and the independent final review has no unresolved Critical or High finding. No production users may be onboarded before then.
+### 6. Review decision
+
+- [ ] All automated and manual evidence points to the same Git SHA, Vercel deployment, and Supabase project.
+- [ ] No unresolved severity-1 or severity-2 issue remains in the station, authentication, privacy, or scoring path.
+- [ ] Cofounder completes the hosted review and records signoff.
+
+## Rollback and failure behavior
+
+- If the frontend is unsuitable, restore the last known-good protected Vercel deployment.
+- Database changes are forward-only; do not delete stations, prompts, transcripts, or migration-history rows as an improvised rollback.
+- If AI scoring is unavailable, keep completed sessions intact, show the retry state, and repair the server-side provider configuration.
+- Never redirect the preview to the shared Supabase project.
+- Do not claim successful scoring unless a schema-valid hosted assessment was actually returned.
+
+## Evidence record
+
+Fill this in during deployment:
+
+- Release SHA:
+- Pull request:
+- Supabase project: `obfwfoykalvoxqdnosus`
+- Applied migration versions:
+- Edge function version:
+- Vercel Preview URL:
+- Vercel deployment ID:
+- Hosted smoke tester/date:
+- Manual QA evidence:
+- Cofounder decision/date:

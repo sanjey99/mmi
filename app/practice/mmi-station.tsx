@@ -17,7 +17,6 @@ import {
   type CandidateMmiFeedback,
   type CandidateMmiServerProjection,
 } from '../../src/features/candidateMmi/api';
-import { isNormalizedMmiStationEnabled } from '../../src/features/candidateMmi/featureFlag';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
 import { createBrowserSpeechPort } from '../../src/features/candidateMmi/speechPort';
@@ -55,6 +54,7 @@ type SpeechHost = typeof globalThis &
 const CHECKPOINT_DEBOUNCE_MS = 2_000;
 const FEEDBACK_POLL_MS = 3_000;
 const FEEDBACK_POLL_LIMIT_MS = 60_000;
+const MMI_PROMPT_ORDERS = Object.freeze([1, 2, 3, 4, 5] as const);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -189,11 +189,13 @@ export default function CandidateMmiStationScreen() {
   const checkpointInFlightRef = useRef<Promise<void> | null>(null);
   const checkpointQueuedRef = useRef(false);
   const volatileFinalizationKeysRef = useRef(new Map<string, string>());
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const completedScoringSessionRef = useRef<string | null>(null);
   const [projection, setProjection] = useState<CandidateMmiServerProjection | null>(null);
   const [transcript, setTranscript] = useState<CandidateMmiTranscriptState | null>(null);
   const [feedback, setFeedback] = useState<readonly CandidateMmiFeedback[] | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [scoringInProgress, setScoringInProgress] = useState(false);
+  const [scoringFailed, setScoringFailed] = useState(false);
   const [speechStatus, setSpeechStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [preflightStatus, setPreflightStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [testingMicrophone, setTestingMicrophone] = useState(false);
@@ -336,27 +338,7 @@ export default function CandidateMmiStationScreen() {
   }, [dispatchTranscript, runner]);
 
   useEffect(() => {
-    let active = true;
-    const readConfig = async (key: string): Promise<unknown> => {
-      const { data, error } = await supabase
-        .from('app_config').select('value').eq('key', key).maybeSingle();
-      if (error) throw error;
-      return data?.value;
-    };
-    void isNormalizedMmiStationEnabled(readConfig)
-      .then((flagEnabled) => {
-        if (!active) return;
-        setEnabled(flagEnabled);
-        if (!flagEnabled) router.replace('/(tabs)/practice');
-      })
-      .catch(() => {
-        if (active) setErrorMessage('The candidate station is unavailable.');
-      });
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if (enabled !== true || !sessionId || openedSessionRef.current === sessionId) return;
+    if (!sessionId || openedSessionRef.current === sessionId) return;
     let active = true;
     openedSessionRef.current = sessionId;
     void runner().restore(sessionId)
@@ -366,10 +348,10 @@ export default function CandidateMmiStationScreen() {
       .catch(() => {
         if (!active) return;
         openedSessionRef.current = null;
-        setErrorMessage('The candidate station is unavailable. Return to practice and try again.');
+        setErrorMessage('The MMI station is unavailable. Return to practice and try again.');
       });
     return () => { active = false; };
-  }, [acceptProjection, enabled, runner, sessionId]);
+  }, [acceptProjection, runner, sessionId]);
 
   useEffect(() => {
     if (projection?.phaseEndsAt === null || projection === null) return;
@@ -436,14 +418,10 @@ export default function CandidateMmiStationScreen() {
     expiringPhaseRef.current = key;
     setAdvanceFailed(false);
     setErrorMessage(null);
-    let promptToScore: CandidateMmiPromptOrder | null = null;
-    let hasCandidateResponse = false;
     let finalizationKey = '';
     let checkpointBarrier: Promise<void> = Promise.resolve();
     if (currentProjection.phase === 'response') {
       const identity = responseIdentity(currentProjection)!;
-      promptToScore = currentProjection.promptOrder;
-      hasCandidateResponse = !!transcriptRef.current?.committedText.trim();
       checkpointBarrier = checkpointInFlightRef.current ?? Promise.resolve();
       frozenResponseRef.current = identity;
       dispatchTranscript({ type: 'freeze', responseIdentity: identity });
@@ -465,22 +443,13 @@ export default function CandidateMmiStationScreen() {
     }
     void checkpointBarrier
       .then(() => runner().expireCurrentPhase(finalizationKey))
-      .then((nextProjection) => {
-        if (promptToScore && hasCandidateResponse) {
-          void scoringApi()
-            .scoreCandidateResponse(currentProjection.sessionId, promptToScore)
-            .catch(() => {
-              setFeedbackMessage('Feedback will keep processing after the station advances.');
-            });
-        }
-        acceptProjection(nextProjection, true);
-      })
+      .then((nextProjection) => acceptProjection(nextProjection, true))
       .catch(() => {
         if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
         setAdvanceFailed(true);
-        setErrorMessage('The candidate station could not advance safely.');
+        setErrorMessage('The MMI station could not advance safely.');
       });
-  }, [acceptProjection, dispatchTranscript, runner, scoringApi, speechPort]);
+  }, [acceptProjection, dispatchTranscript, runner, speechPort]);
 
   useEffect(() => {
     if (projection === null || remaining !== 0 || projection.phaseEndsAt === null) return;
@@ -488,6 +457,38 @@ export default function CandidateMmiStationScreen() {
   }, [advanceExpiredPhase, projection, remaining]);
 
   const completedSessionId = projection?.phase === 'completed' ? projection.sessionId : null;
+
+  const scoreCompletedStation = useCallback(async (completedId: string) => {
+    if (completedScoringSessionRef.current === completedId) return;
+    completedScoringSessionRef.current = completedId;
+    setScoringInProgress(true);
+    setScoringFailed(false);
+    setFeedbackMessage(null);
+
+    let failed = false;
+    try {
+      const outcomes = await Promise.allSettled(
+        MMI_PROMPT_ORDERS.map((promptOrder) =>
+          scoringApi().scoreCandidateResponse(completedId, promptOrder),
+        ),
+      );
+      failed = outcomes.some((outcome) => outcome.status === 'rejected');
+      try {
+        setFeedback(await api().feedback(completedId));
+      } catch {
+        failed = true;
+      }
+    } finally {
+      setScoringFailed(failed);
+      setScoringInProgress(false);
+    }
+  }, [api, scoringApi]);
+
+  useEffect(() => {
+    if (!completedSessionId) return;
+    void scoreCompletedStation(completedSessionId);
+  }, [completedSessionId, scoreCompletedStation]);
+
   useEffect(() => {
     if (!completedSessionId) return;
     let active = true;
@@ -518,6 +519,12 @@ export default function CandidateMmiStationScreen() {
     };
   }, [api, completedSessionId]);
 
+  const retryAiScoring = useCallback(() => {
+    if (!completedSessionId || scoringInProgress) return;
+    completedScoringSessionRef.current = null;
+    void scoreCompletedStation(completedSessionId);
+  }, [completedSessionId, scoreCompletedStation, scoringInProgress]);
+
   useEffect(() => () => {
     if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current);
     void speechPortRef.current?.abort();
@@ -546,7 +553,7 @@ export default function CandidateMmiStationScreen() {
         params: { sessionId: nextProjection.sessionId },
       });
     } catch {
-      setErrorMessage('The candidate station could not start. Try again.');
+      setErrorMessage('The MMI station could not start. Try again.');
       setStarting(false);
     }
   };
@@ -559,28 +566,17 @@ export default function CandidateMmiStationScreen() {
       await runner().leave();
       router.replace('/(tabs)/practice');
     } catch {
-      setErrorMessage('Leaving the candidate station was not completed. Try again.');
+      setErrorMessage('Leaving the MMI station was not completed. Try again.');
       setLeaving(false);
     }
   };
-
-  if (enabled !== true) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.centered}>
-          <Text style={styles.title}>Opening candidate station</Text>
-          {errorMessage ? <InlineNotice title="Station unavailable" message={errorMessage} tone="error" /> : null}
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   if (projection === null && !sessionId) {
     const supported = speechPort().getCapability().supported;
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.eyebrow}>11-MINUTE CANDIDATE STATION</Text>
+          <Text style={styles.eyebrow}>11-MINUTE MMI STATION</Text>
           <Text style={styles.title}>Check your setup</Text>
           <View style={styles.panel}>
             <Text style={styles.label}>Browser speech service</Text>
@@ -623,7 +619,7 @@ export default function CandidateMmiStationScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.centered}>
-          <Text style={styles.title}>Restoring candidate station</Text>
+          <Text style={styles.title}>Restoring MMI station</Text>
           {errorMessage ? <InlineNotice title="Station unavailable" message={errorMessage} tone="error" /> : null}
         </View>
       </SafeAreaView>
@@ -634,7 +630,7 @@ export default function CandidateMmiStationScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.eyebrow}>CANDIDATE STATION</Text>
+          <Text style={styles.eyebrow}>MMI STATION</Text>
           <Text style={styles.title}>
             {projection.phase === 'completed' ? 'Station complete' : 'Station closed'}
           </Text>
@@ -644,6 +640,27 @@ export default function CandidateMmiStationScreen() {
               {feedback?.map((item) => <FeedbackCard key={item.promptOrder} item={item} />) ?? (
                 <Text style={styles.reading}>Preparing feedback…</Text>
               )}
+              {scoringInProgress ? (
+                <InlineNotice
+                  title="AI evaluation in progress"
+                  message="Your completed station is being evaluated."
+                  tone="info"
+                />
+              ) : null}
+              {scoringFailed ? (
+                <>
+                  <InlineNotice
+                    title="AI scoring could not complete"
+                    message="Your station is saved. You can retry the evaluation without repeating it."
+                    tone="error"
+                  />
+                  <Button
+                    label="Retry AI scoring"
+                    onPress={retryAiScoring}
+                    variant="secondary"
+                  />
+                </>
+              ) : null}
               {feedbackMessage ? <InlineNotice title="Feedback update" message={feedbackMessage} tone="warning" /> : null}
             </>
           ) : null}
@@ -658,7 +675,7 @@ export default function CandidateMmiStationScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View>
-            <Text style={styles.eyebrow}>CANDIDATE STATION</Text>
+            <Text style={styles.eyebrow}>MMI STATION</Text>
             <Text style={styles.timer} accessibilityLabel={`${remaining} seconds remaining`}>
               {formatSeconds(remaining)}
             </Text>
@@ -732,7 +749,7 @@ export default function CandidateMmiStationScreen() {
         ) : null}
         {leaveOpen ? (
           <ConfirmAction
-            title="Leave candidate station?"
+            title="Leave MMI station?"
             message="The current station will close."
             confirmLabel="Leave station"
             busy={leaving}

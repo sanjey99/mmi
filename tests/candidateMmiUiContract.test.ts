@@ -4,9 +4,14 @@ import { describe, expect, it } from 'vitest';
 
 const practiceScreenPath = resolve(process.cwd(), 'app/(tabs)/practice.tsx');
 const candidateStationPath = resolve(process.cwd(), 'app/practice/mmi-station.tsx');
+const legacySessionPath = resolve(process.cwd(), 'app/practice/session.tsx');
 const browserSpeechMigrationPath = resolve(
   process.cwd(),
   'supabase/migrations/20260831000000_candidate_mmi_browser_speech.sql',
+);
+const singleStationMigrationPath = resolve(
+  process.cwd(),
+  'supabase/migrations/20260904000000_single_mmi_station.sql',
 );
 
 function readCandidateStationRoute(): string {
@@ -22,23 +27,26 @@ function readBrowserSpeechMigration(): string {
   return readFileSync(browserSpeechMigrationPath, 'utf8');
 }
 
-describe('candidate MMI chooser and station route contract', () => {
-  it('adds an 11-minute gated candidate station entry without replacing the flat-question chooser', () => {
+function readSingleStationMigration(): string {
+  return readFileSync(singleStationMigrationPath, 'utf8');
+}
+
+describe('single MMI station route contract', () => {
+  it('exposes one neutral 11-minute station instead of competing flat-question modes', () => {
     const practiceSource = readFileSync(practiceScreenPath, 'utf8');
 
-    expect(practiceSource).toMatch(/isNormalizedMmiStationEnabled/);
     expect(practiceSource).toContain('/practice/mmi-station');
-    expect(practiceSource).toMatch(/11[ -]minute/i);
-    expect(practiceSource).toContain('getRandomQuestion');
-    expect(practiceSource).toContain('startSession');
-    expect(practiceSource).toContain('/practice/session');
+    expect(practiceSource).toContain('11-minute MMI station');
+    expect(practiceSource).not.toMatch(/isNormalizedMmiStationEnabled|candidateEnabled|app_config/);
+    expect(practiceSource).not.toMatch(/Free practice|Timed practice|getRandomQuestion|startSession|\/practice\/session/);
   });
 
-  it('gates direct station access and falls back safely while disabled', () => {
+  it('opens the station without a product flag and retires the legacy response route', () => {
     const routeSource = readCandidateStationRoute();
+    const legacySessionSource = readFileSync(legacySessionPath, 'utf8');
 
-    expect(routeSource).toMatch(/isNormalizedMmiStationEnabled/);
-    expect(routeSource).toMatch(/router\.(?:replace|push)\('\/\(tabs\)\/practice'\)/);
+    expect(routeSource).not.toMatch(/isNormalizedMmiStationEnabled|feature_disabled|candidate station/i);
+    expect(legacySessionSource).toContain("router.replace('/(tabs)/practice')");
   });
 
   it('uses runner restore for a session URL and start only when the session ID is absent', () => {
@@ -103,11 +111,20 @@ describe('candidate MMI chooser and station route contract', () => {
     expect(routeSource).not.toMatch(/expireCurrentPhase\([^)]*transcript/);
   });
 
-  it('scores asynchronously and renders ordered transcript-only feedback after completion', () => {
+  it('starts all AI scoring only after the full station and offers a retry', () => {
     const routeSource = readCandidateStationRoute();
+    const advanceExpiredPhaseSource = routeSource.match(
+      /const advanceExpiredPhase[\s\S]*?\n  }, \[[^\]]*\]\);/,
+    )?.[0];
 
     expect(routeSource).toMatch(/createCandidateMmiScoringApi/);
-    expect(routeSource).toMatch(/scoreCandidateResponse/);
+    expect(advanceExpiredPhaseSource).toBeTruthy();
+    expect(advanceExpiredPhaseSource).not.toContain('scoreCandidateResponse');
+    expect(routeSource).toMatch(/scoreCompletedStation/);
+    expect(routeSource).toMatch(/\[1, 2, 3, 4, 5\]/);
+    expect(routeSource).toMatch(/Retry AI scoring/);
+    expect(routeSource).toMatch(/AI evaluation in progress/);
+    expect(routeSource).toMatch(/AI scoring could not complete/);
     expect(routeSource).toMatch(/\.feedback\(/);
     expect(routeSource).toMatch(/3_000/);
     expect(routeSource).toMatch(/60_000/);
@@ -198,5 +215,22 @@ describe('candidate MMI chooser and station route contract', () => {
     ]) {
       expect(sql).toMatch(new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY;`, 'i'));
     }
+  });
+
+  it('removes database release and approval gates without weakening RPC security', () => {
+    const sql = readSingleStationMigration();
+
+    expect(sql).toMatch(/DELETE FROM public\.app_config\s+WHERE key = 'normalized_mmi_station_enabled'/i);
+    expect(sql).not.toMatch(/feature_disabled|clinician_reviewed|JOIN public\.mmi_scoring_rubrics/i);
+    expect(sql).toMatch(/question\.question_text/i);
+    expect(sql).toMatch(/question\.order_num/i);
+    expect(sql.match(/SET search_path = public, pg_temp/g)?.length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(sql).toMatch(/auth\.uid\s*\(\s*\)/i);
+    expect(sql).toMatch(/auth\.role\s*\(\s*\) IS DISTINCT FROM 'service_role'/i);
+    expect(sql).toMatch(/candidate session is not owned by caller/i);
+    expect(sql).toMatch(/REVOKE ALL PRIVILEGES ON TABLE[\s\S]*FROM PUBLIC, anon, authenticated/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.start_candidate_mmi_station_session\(\)[\s\S]*TO authenticated/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.claim_candidate_mmi_response_scoring\(uuid, uuid, smallint, uuid\)[\s\S]*TO service_role/i);
+    expect(sql).toMatch(/interval '7 days'/i);
   });
 });

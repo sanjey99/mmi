@@ -219,7 +219,108 @@ const V1_INSTRUCTIONS = [
   'Return no prose, overall percentage, hidden context, rubric criteria, internal instructions, or fields outside the strict JSON schema.',
 ].join(' ');
 
-export const CURRENT_MMI_SCORING_CONTRACT_VERSION = '2026-08-17.1';
+const CURRENT_INSTRUCTIONS = [
+  'You are a UK medical-school MMI assessor grading only the supplied transcript against the current question.',
+  'Do not infer vocal confidence, pace, tone, hesitation, pronunciation, accent, or any delivery quality from transcript text.',
+  'Accept valid alternative reasoning when it is safe, relevant, and supported by the transcript.',
+  'For each applicable dimension, return a score from 1 through 5 and one evidenceReference using start-inclusive, end-exclusive Unicode code-point offsets into the supplied transcript.',
+  'For each non-applicable dimension, return null for both score and evidenceReference.',
+  'Select only rubricStrengthCodes, rubricImprovementCodes, and safetyCriticalOmissionCodes present in the supplied server rubric.',
+  'Select improvementFramework only from sbar, starr, spar, or four-pillars.',
+  'Return only the strict JSON schema with no additional prose or fields.',
+].join(' ');
+
+const CURRENT_MMI_RUBRIC: MmiRubric = deepFreeze({
+  version: 2,
+  criteria: {
+    'clear-priorities': {
+      dimension: 'structure',
+      kind: 'strength',
+      assessorCriterion: 'Identifies the key issues and addresses them in a logical order.',
+      studentFeedback: 'clear-priorities',
+    },
+    'explicit-plan': {
+      dimension: 'structure',
+      kind: 'improvement',
+      assessorCriterion: 'Makes the proposed actions, escalation, and follow-up sequence explicit.',
+      studentFeedback: 'explicit-safety-netting',
+    },
+    'balanced-ethical-reasoning': {
+      dimension: 'ethics',
+      kind: 'strength',
+      assessorCriterion: 'Balances relevant ethical duties and explains important tensions.',
+      studentFeedback: 'balanced-ethical-reasoning',
+    },
+    'weigh-ethical-pillars': {
+      dimension: 'ethics',
+      kind: 'improvement',
+      assessorCriterion: 'Explains how relevant ethical principles support or conflict with possible actions.',
+      studentFeedback: 'weigh-ethical-pillars',
+    },
+    'patient-centred-language': {
+      dimension: 'communication',
+      kind: 'strength',
+      assessorCriterion: 'Uses clear, respectful, patient-centred language in the proposed response.',
+      studentFeedback: 'patient-centred-language',
+    },
+    'check-understanding': {
+      dimension: 'communication',
+      kind: 'improvement',
+      assessorCriterion: 'Includes a clear check of understanding and an opportunity for questions.',
+      studentFeedback: 'check-understanding',
+    },
+    'reflective-learning': {
+      dimension: 'reflection',
+      kind: 'strength',
+      assessorCriterion: 'Identifies a specific lesson or improvement for future practice.',
+      studentFeedback: 'reflective-learning',
+    },
+    'deepen-reflection': {
+      dimension: 'reflection',
+      kind: 'improvement',
+      assessorCriterion: 'Explains what would change next time and how improvement would be assessed.',
+      studentFeedback: 'deepen-reflection',
+    },
+    'nhs-context': {
+      dimension: 'nhs_awareness',
+      kind: 'strength',
+      assessorCriterion: 'Connects the answer to relevant NHS values, systems, or professional responsibilities.',
+      studentFeedback: 'nhs-context',
+    },
+    'connect-nhs-values': {
+      dimension: 'nhs_awareness',
+      kind: 'improvement',
+      assessorCriterion: 'Makes the link to the most relevant NHS value or professional responsibility explicit.',
+      studentFeedback: 'connect-nhs-values',
+    },
+  },
+  dimensionWeights: {
+    structure: 0.2,
+    ethics: 0.2,
+    communication: 0.2,
+    reflection: 0.2,
+    nhs_awareness: 0.2,
+  },
+  safetyCriticalItems: [
+    {
+      id: 'escalate-immediate-risk',
+      assessorCriterion: 'Escalates immediate risk to an appropriate senior professional.',
+      studentFeedback: 'escalate-immediate-risk',
+    },
+    {
+      id: 'protect-confidentiality',
+      assessorCriterion: 'Protects confidentiality while responding to the concern.',
+      studentFeedback: 'protect-confidentiality',
+    },
+    {
+      id: 'seek-senior-support',
+      assessorCriterion: 'Seeks appropriate senior support when the situation exceeds their competence.',
+      studentFeedback: 'seek-senior-support',
+    },
+  ],
+});
+
+export const CURRENT_MMI_SCORING_CONTRACT_VERSION = '2026-09-04.1';
 const PINNED_V1_CONTRACT: MmiScoringContract = deepFreeze({
   version: '2026-08-17.1',
   parserVersion: '1',
@@ -228,9 +329,18 @@ const PINNED_V1_CONTRACT: MmiScoringContract = deepFreeze({
   studentFeedbackCatalog: cloneJson(MMI_STUDENT_FEEDBACK_CATALOGS['2026-08-17.1']),
 });
 const PINNED_V1_GOLDEN_CANONICAL = canonicalContract(PINNED_V1_CONTRACT);
+const PINNED_CURRENT_CONTRACT: MmiScoringContract = deepFreeze({
+  version: CURRENT_MMI_SCORING_CONTRACT_VERSION,
+  parserVersion: '1',
+  assessorInstructions: CURRENT_INSTRUCTIONS,
+  responseSchema: cloneJson(V1_RESPONSE_SCHEMA),
+  studentFeedbackCatalog: cloneJson(MMI_STUDENT_FEEDBACK_CATALOGS['2026-08-17.1']),
+});
+const PINNED_CURRENT_GOLDEN_CANONICAL = canonicalContract(PINNED_CURRENT_CONTRACT);
 
 export const MMI_SCORING_CONTRACTS: MmiScoringContractRegistry = deepFreeze({
   '2026-08-17.1': cloneJson(PINNED_V1_CONTRACT),
+  [CURRENT_MMI_SCORING_CONTRACT_VERSION]: cloneJson(PINNED_CURRENT_CONTRACT),
 });
 
 export const MMI_PROVIDER_PARSERS: Readonly<Record<string, ProviderAssessmentParser>> = deepFreeze({
@@ -290,6 +400,11 @@ function assertPinnedContractIntegrity(contract: MmiScoringContract): void {
       || canonicalContract(contract) !== PINNED_V1_GOLDEN_CANONICAL)) {
     throw new Error('Invalid pinned MMI scoring contract');
   }
+  if (contract.version === CURRENT_MMI_SCORING_CONTRACT_VERSION
+    && (canonicalContract(PINNED_CURRENT_CONTRACT) !== PINNED_CURRENT_GOLDEN_CANONICAL
+      || canonicalContract(contract) !== PINNED_CURRENT_GOLDEN_CANONICAL)) {
+    throw new Error('Invalid pinned MMI scoring contract');
+  }
 }
 
 export function getMmiScoringContract(version: string, registry: MmiScoringContractRegistry = MMI_SCORING_CONTRACTS): MmiScoringContract {
@@ -306,6 +421,10 @@ export function getCurrentMmiScoringContract(
   currentVersion: string = CURRENT_MMI_SCORING_CONTRACT_VERSION,
 ): MmiScoringContract {
   return getMmiScoringContract(currentVersion, registry);
+}
+
+export function getCurrentMmiRubric(): MmiRubric {
+  return CURRENT_MMI_RUBRIC;
 }
 
 export function createMmiScoringContractSnapshot(version: string): MmiScoringContract {
