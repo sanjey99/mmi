@@ -20,6 +20,7 @@ export interface AiProviderRequest {
   systemPrompt: string;
   userContent: string;
   maxTokens: number;
+  responseSchema?: Readonly<Record<string, unknown>>;
 }
 
 export interface LegacyScoreResponse {
@@ -145,6 +146,16 @@ function providerResponseContent(provider: string, payload: unknown): string | u
   return typeof content === 'string' ? content : undefined;
 }
 
+/** Converts the app's equivalent `oneOf` unions to OpenAI's supported `anyOf` subset. */
+function openAiStructuredOutputSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(openAiStructuredOutputSchema);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+    key === 'oneOf' ? 'anyOf' : key,
+    openAiStructuredOutputSchema(child),
+  ]));
+}
+
 /** Keeps untrusted content in a data-only, independently delimited prompt section. */
 export function formatScoringUserContent(questionText: string, answerText: string): string {
   return `QUESTION_JSON:\n${JSON.stringify(questionText)}\n\nSTUDENT_ANSWER_JSON:\n${JSON.stringify(answerText)}`;
@@ -258,6 +269,16 @@ export async function callConfiguredProvider(
         { role: 'system', content: request.systemPrompt },
         { role: 'user', content: request.userContent },
       ],
+      ...(request.responseSchema === undefined ? {} : {
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'mmi_assessment',
+            strict: true,
+            schema: openAiStructuredOutputSchema(request.responseSchema),
+          },
+        },
+      }),
     };
 
   let response: Response;

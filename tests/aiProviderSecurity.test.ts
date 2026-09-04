@@ -164,6 +164,61 @@ describe('callConfiguredProvider', () => {
     );
   });
 
+  it('sends a supplied JSON schema to OpenAI as a strict structured-output contract', async () => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"score":4}' } }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
+      {
+        systemPrompt: 'trusted',
+        userContent: 'untrusted',
+        maxTokens: 32,
+        responseSchema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            score: {
+              oneOf: [
+                { type: 'integer', enum: [1, 2, 3, 4, 5] },
+                { type: 'null' },
+              ],
+            },
+          },
+          required: ['score'],
+        },
+      },
+    );
+
+    const request = fetchSpy.mock.calls[0]?.[1];
+    if (request === undefined) throw new Error('Expected an OpenAI request');
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'mmi_assessment',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              score: {
+                anyOf: [
+                  { type: 'integer', enum: [1, 2, 3, 4, 5] },
+                  { type: 'null' },
+                ],
+              },
+            },
+            required: ['score'],
+          },
+        },
+      },
+    });
+  });
+
   it('uses the pinned Anthropic endpoint without DNS when the direct provider is selected', async () => {
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
       content: [{ text: 'provider response' }],
