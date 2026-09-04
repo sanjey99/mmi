@@ -3,7 +3,6 @@ import { MMI_DIMENSIONS, type MmiAssessment } from '../mmi/types';
 
 export type CandidateMmiApiErrorKind =
   | 'access_denied'
-  | 'feature_disabled'
   | 'invalid_request'
   | 'invalid_response'
   | 'response_closed'
@@ -13,7 +12,6 @@ export type CandidateMmiApiErrorKind =
 const errorMessages: Readonly<Record<CandidateMmiApiErrorKind, string>> =
   Object.freeze({
     access_denied: 'Candidate MMI access is denied.',
-    feature_disabled: 'Candidate MMI is disabled.',
     invalid_request: 'Candidate MMI request is invalid.',
     invalid_response: 'Candidate MMI response is invalid.',
     response_closed: 'Candidate MMI response is closed.',
@@ -492,8 +490,6 @@ function mapRpcError(
 ): CandidateMmiApiError {
   if (code === '42501') return new CandidateMmiApiError('access_denied');
   if (code === '22023') return new CandidateMmiApiError('invalid_request');
-  if (code === 'P0001' && message === 'feature_disabled')
-    return new CandidateMmiApiError('feature_disabled');
   if (code === 'P0001' && message === 'candidate_response_not_open')
     return new CandidateMmiApiError('response_closed');
   if (

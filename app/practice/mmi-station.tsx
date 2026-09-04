@@ -54,6 +54,7 @@ type SpeechHost = typeof globalThis &
 const CHECKPOINT_DEBOUNCE_MS = 2_000;
 const FEEDBACK_POLL_MS = 3_000;
 const FEEDBACK_POLL_LIMIT_MS = 60_000;
+const MMI_PROMPT_ORDERS = Object.freeze([1, 2, 3, 4, 5] as const);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -188,10 +189,13 @@ export default function CandidateMmiStationScreen() {
   const checkpointInFlightRef = useRef<Promise<void> | null>(null);
   const checkpointQueuedRef = useRef(false);
   const volatileFinalizationKeysRef = useRef(new Map<string, string>());
+  const completedScoringSessionRef = useRef<string | null>(null);
   const [projection, setProjection] = useState<CandidateMmiServerProjection | null>(null);
   const [transcript, setTranscript] = useState<CandidateMmiTranscriptState | null>(null);
   const [feedback, setFeedback] = useState<readonly CandidateMmiFeedback[] | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [scoringInProgress, setScoringInProgress] = useState(false);
+  const [scoringFailed, setScoringFailed] = useState(false);
   const [speechStatus, setSpeechStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [preflightStatus, setPreflightStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [testingMicrophone, setTestingMicrophone] = useState(false);
@@ -414,14 +418,10 @@ export default function CandidateMmiStationScreen() {
     expiringPhaseRef.current = key;
     setAdvanceFailed(false);
     setErrorMessage(null);
-    let promptToScore: CandidateMmiPromptOrder | null = null;
-    let hasCandidateResponse = false;
     let finalizationKey = '';
     let checkpointBarrier: Promise<void> = Promise.resolve();
     if (currentProjection.phase === 'response') {
       const identity = responseIdentity(currentProjection)!;
-      promptToScore = currentProjection.promptOrder;
-      hasCandidateResponse = !!transcriptRef.current?.committedText.trim();
       checkpointBarrier = checkpointInFlightRef.current ?? Promise.resolve();
       frozenResponseRef.current = identity;
       dispatchTranscript({ type: 'freeze', responseIdentity: identity });
@@ -443,22 +443,13 @@ export default function CandidateMmiStationScreen() {
     }
     void checkpointBarrier
       .then(() => runner().expireCurrentPhase(finalizationKey))
-      .then((nextProjection) => {
-        if (promptToScore && hasCandidateResponse) {
-          void scoringApi()
-            .scoreCandidateResponse(currentProjection.sessionId, promptToScore)
-            .catch(() => {
-              setFeedbackMessage('Feedback will keep processing after the station advances.');
-            });
-        }
-        acceptProjection(nextProjection, true);
-      })
+      .then((nextProjection) => acceptProjection(nextProjection, true))
       .catch(() => {
         if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
         setAdvanceFailed(true);
         setErrorMessage('The MMI station could not advance safely.');
       });
-  }, [acceptProjection, dispatchTranscript, runner, scoringApi, speechPort]);
+  }, [acceptProjection, dispatchTranscript, runner, speechPort]);
 
   useEffect(() => {
     if (projection === null || remaining !== 0 || projection.phaseEndsAt === null) return;
@@ -466,6 +457,38 @@ export default function CandidateMmiStationScreen() {
   }, [advanceExpiredPhase, projection, remaining]);
 
   const completedSessionId = projection?.phase === 'completed' ? projection.sessionId : null;
+
+  const scoreCompletedStation = useCallback(async (completedId: string) => {
+    if (completedScoringSessionRef.current === completedId) return;
+    completedScoringSessionRef.current = completedId;
+    setScoringInProgress(true);
+    setScoringFailed(false);
+    setFeedbackMessage(null);
+
+    let failed = false;
+    try {
+      const outcomes = await Promise.allSettled(
+        MMI_PROMPT_ORDERS.map((promptOrder) =>
+          scoringApi().scoreCandidateResponse(completedId, promptOrder),
+        ),
+      );
+      failed = outcomes.some((outcome) => outcome.status === 'rejected');
+      try {
+        setFeedback(await api().feedback(completedId));
+      } catch {
+        failed = true;
+      }
+    } finally {
+      setScoringFailed(failed);
+      setScoringInProgress(false);
+    }
+  }, [api, scoringApi]);
+
+  useEffect(() => {
+    if (!completedSessionId) return;
+    void scoreCompletedStation(completedSessionId);
+  }, [completedSessionId, scoreCompletedStation]);
+
   useEffect(() => {
     if (!completedSessionId) return;
     let active = true;
@@ -495,6 +518,12 @@ export default function CandidateMmiStationScreen() {
       if (timer) clearTimeout(timer);
     };
   }, [api, completedSessionId]);
+
+  const retryAiScoring = useCallback(() => {
+    if (!completedSessionId || scoringInProgress) return;
+    completedScoringSessionRef.current = null;
+    void scoreCompletedStation(completedSessionId);
+  }, [completedSessionId, scoreCompletedStation, scoringInProgress]);
 
   useEffect(() => () => {
     if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current);
@@ -611,6 +640,27 @@ export default function CandidateMmiStationScreen() {
               {feedback?.map((item) => <FeedbackCard key={item.promptOrder} item={item} />) ?? (
                 <Text style={styles.reading}>Preparing feedback…</Text>
               )}
+              {scoringInProgress ? (
+                <InlineNotice
+                  title="AI evaluation in progress"
+                  message="Your completed station is being evaluated."
+                  tone="info"
+                />
+              ) : null}
+              {scoringFailed ? (
+                <>
+                  <InlineNotice
+                    title="AI scoring could not complete"
+                    message="Your station is saved. You can retry the evaluation without repeating it."
+                    tone="error"
+                  />
+                  <Button
+                    label="Retry AI scoring"
+                    onPress={retryAiScoring}
+                    variant="secondary"
+                  />
+                </>
+              ) : null}
               {feedbackMessage ? <InlineNotice title="Feedback update" message={feedbackMessage} tone="warning" /> : null}
             </>
           ) : null}

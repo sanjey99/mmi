@@ -111,11 +111,20 @@ describe('single MMI station route contract', () => {
     expect(routeSource).not.toMatch(/expireCurrentPhase\([^)]*transcript/);
   });
 
-  it('scores asynchronously and renders ordered transcript-only feedback after completion', () => {
+  it('starts all AI scoring only after the full station and offers a retry', () => {
     const routeSource = readCandidateStationRoute();
+    const advanceExpiredPhaseSource = routeSource.match(
+      /const advanceExpiredPhase[\s\S]*?\n  }, \[[^\]]*\]\);/,
+    )?.[0];
 
     expect(routeSource).toMatch(/createCandidateMmiScoringApi/);
-    expect(routeSource).toMatch(/scoreCandidateResponse/);
+    expect(advanceExpiredPhaseSource).toBeTruthy();
+    expect(advanceExpiredPhaseSource).not.toContain('scoreCandidateResponse');
+    expect(routeSource).toMatch(/scoreCompletedStation/);
+    expect(routeSource).toMatch(/\[1, 2, 3, 4, 5\]/);
+    expect(routeSource).toMatch(/Retry AI scoring/);
+    expect(routeSource).toMatch(/AI evaluation in progress/);
+    expect(routeSource).toMatch(/AI scoring could not complete/);
     expect(routeSource).toMatch(/\.feedback\(/);
     expect(routeSource).toMatch(/3_000/);
     expect(routeSource).toMatch(/60_000/);
