@@ -56,8 +56,9 @@ describe('server-owned legacy scoring edge contract', () => {
     expect(storeSource).not.toMatch(/from\('mock_sessions'\)[\s\S]{0,180}\.update\(\{ total_score_pct/);
   });
 
-  it('renders reviewed scoring errors instead of collapsing every failure into one message', () => {
-    expect(sessionSource).toContain('LegacyScoringError');
-    expect(sessionSource).toContain('error.message');
+  it('retires the legacy session UI and redirects every visit to the single MMI practice entry', () => {
+    expect(sessionSource).toContain("router.replace('/(tabs)/practice')");
+    expect(sessionSource).toContain('Opening MMI practice');
+    expect(sessionSource).not.toMatch(/LegacyScoringError|scoreAnswer|Submit answer|TextInput/);
   });
 });
