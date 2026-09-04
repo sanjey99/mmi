@@ -17,6 +17,7 @@ const migrations = {
   hardening: `${root}/supabase/migrations/20260901000000_candidate_mmi_browser_speech_hardening.sql`,
   retention: `${root}/supabase/migrations/20260901001000_candidate_mmi_retention_schedule.sql`,
   singleStation: `${root}/supabase/migrations/20260904000000_single_mmi_station.sql`,
+  responseControls: `${root}/supabase/migrations/20260905000000_candidate_mmi_response_controls.sql`,
 } as const;
 const importDirectory = `${root}/supabase/imports/20260825_med_interview_question_bank`;
 const flatCsvPaths = [
@@ -177,6 +178,14 @@ describe('single MMI station migration contract', () => {
     assert.match(sql, /question\.question_text/i);
     assert.match(sql, /question\.order_num/i);
     assert.match(sql, /interval '7 days'/i);
+  });
+
+  it('allows only the current response to finish early and advances the server timeline', () => {
+    const sql = readMigration(migrations.responseControls);
+    assert.match(sql, /CREATE OR REPLACE FUNCTION public\.finalize_candidate_mmi_station_response/i);
+    assert.match(sql, /p_prompt_order\s*<>\s*v_current_prompt/i);
+    assert.match(sql, /UPDATE public\.candidate_mmi_station_sessions/i);
+    assert.doesNotMatch(sql, /candidate_response_deadline_not_reached/i);
   });
 });
 
@@ -374,8 +383,14 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
           p_finalization_key: randomUUID(),
         },
       );
-      assert.equal(earlyFinalization, null);
-      assert.ok(earlyFinalizationError);
+      assert.equal(earlyFinalizationError, null, earlyFinalizationError?.message);
+      assert.equal((earlyFinalization as { scoringStatus: string }).scoringStatus, 'pending');
+      const { data: afterEarlySubmit, error: afterEarlySubmitError } = await owner.client.rpc(
+        'get_candidate_mmi_station_session',
+        { p_session_id: sessionId },
+      );
+      assert.equal(afterEarlySubmitError, null, afterEarlySubmitError?.message);
+      assertResponseProjection(afterEarlySubmit, 2, promptHashes[1]!);
 
       await setCandidateSessionStartedAt(sessionId, new Date(Date.now() - 180_000));
       const finalizationKey = randomUUID();
@@ -389,6 +404,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       );
       assert.equal(finalizeError, null, finalizeError?.message);
       assert.equal((finalized as { scoringStatus: string }).scoringStatus, 'pending');
+      assert.deepEqual(finalized, earlyFinalization);
 
       const { data: repeated, error: repeatedError } = await owner.client.rpc(
         'finalize_candidate_mmi_station_response',

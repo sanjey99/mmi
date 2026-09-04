@@ -31,6 +31,10 @@ type ResponseState = Readonly<{
   latestTranscript: string;
 }>;
 type CheckpointInput = Readonly<{ transcript: string; revision: number }>;
+type CompletionInput = Readonly<{
+  transcript: string;
+  finalizationKey: string;
+}>;
 
 function responseIdentity(
   projection: CandidateMmiServerProjection,
@@ -51,6 +55,10 @@ export function createCandidateMmiRunner(api: CandidateMmiApi) {
     Promise<CandidateMmiCheckpoint>
   > = new Map();
   let inFlightFinalizations: ReadonlyMap<
+    string,
+    Promise<CandidateMmiServerProjection>
+  > = new Map();
+  let inFlightCompletions: ReadonlyMap<
     string,
     Promise<CandidateMmiServerProjection>
   > = new Map();
@@ -184,6 +192,48 @@ export function createCandidateMmiRunner(api: CandidateMmiApi) {
     return promise;
   }
 
+  function completeCurrentResponse(
+    input: CompletionInput,
+  ): Promise<CandidateMmiServerProjection> {
+    if (projection?.phase !== 'response' || responseState === null)
+      return Promise.reject(new CandidateMmiApiError('response_closed'));
+    const currentProjection = projection;
+    const identity = responseIdentity(currentProjection)!;
+    const key = `${identity}:${input.finalizationKey}:${input.transcript}`;
+    const existing = inFlightCompletions.get(key);
+    if (existing !== undefined) return existing;
+
+    const promise = (async () => {
+      await Promise.all(inFlightCheckpoints.values());
+      if (
+        projection !== currentProjection ||
+        responseIdentity(projection) !== identity ||
+        responseState === null
+      ) {
+        throw new CandidateMmiApiError('response_closed');
+      }
+      if (responseState.transcript !== input.transcript) {
+        await checkpoint({
+          transcript: input.transcript,
+          revision: Math.max(
+            responseState.revision,
+            responseState.latestRevision,
+          ) + 1,
+        });
+      }
+      return expireCurrentPhase(input.finalizationKey);
+    })().finally(() => {
+      const current = inFlightCompletions.get(key);
+      if (current === promise) {
+        const next = new Map(inFlightCompletions);
+        next.delete(key);
+        inFlightCompletions = next;
+      }
+    });
+    inFlightCompletions = new Map(inFlightCompletions).set(key, promise);
+    return promise;
+  }
+
   return Object.freeze({
     start: async (): Promise<CandidateMmiServerProjection> =>
       acceptProjection(await api.start()),
@@ -192,6 +242,7 @@ export function createCandidateMmiRunner(api: CandidateMmiApi) {
     refresh,
     checkpoint,
     expireCurrentPhase,
+    completeCurrentResponse,
     leave: (): Promise<void> => {
       if (projection === null)
         return Promise.reject(new CandidateMmiApiError('invalid_request'));
