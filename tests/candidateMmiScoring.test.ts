@@ -301,7 +301,45 @@ describe('candidate MMI scoring handler security boundary', () => {
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/tone/);
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/hesitation/);
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/pronunciation/);
-    expect(providerRequest.responseSchema).toEqual(scoringContract.responseSchema);
+    const providerSchemaProperties = (
+      providerRequest.responseSchema as {
+        properties: Record<string, { items?: unknown }>;
+      }
+    ).properties;
+    expect(providerSchemaProperties.rubricStrengthCodes?.items).toEqual({
+      type: 'string',
+      enum: [
+        'clear-priorities',
+        'balanced-ethical-reasoning',
+        'patient-centred-language',
+        'reflective-learning',
+        'nhs-context',
+      ],
+    });
+    expect(providerSchemaProperties.rubricImprovementCodes?.items).toEqual({
+      type: 'string',
+      enum: [
+        'explicit-plan',
+        'weigh-ethical-pillars',
+        'check-understanding',
+        'deepen-reflection',
+        'connect-nhs-values',
+      ],
+    });
+    expect(providerSchemaProperties.safetyCriticalOmissionCodes?.items).toEqual({
+      type: 'string',
+      enum: [
+        'escalate-immediate-risk',
+        'protect-confidentiality',
+        'seek-senior-support',
+      ],
+    });
+    const storedSchemaProperties = (
+      scoringContract.responseSchema as {
+        properties: Record<string, { items?: unknown }>;
+      }
+    ).properties;
+    expect(storedSchemaProperties.rubricImprovementCodes?.items).not.toHaveProperty('enum');
     expect(JSON.parse(providerRequest.userContent)).toEqual({
       promptText,
       transcript,
@@ -316,7 +354,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     });
   });
 
-  it('fails invalid provider output under the same lease without logging private content', async () => {
+  it('logs only a safe schema-stage reason for invalid provider output', async () => {
     const repo = repository();
     const logProviderFailure = vi.fn();
     const response = await createCandidateMmiScoringHandler(
@@ -335,7 +373,54 @@ describe('candidate MMI scoring handler security boundary', () => {
       p_lease_token: leaseToken,
       p_error_code: 'invalid_provider_response',
     });
-    expect(logProviderFailure).not.toHaveBeenCalled();
+    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({
+      requestId: null,
+      provider: 'anthropic',
+      code: 'invalid_provider_response',
+      stage: 'response_schema',
+      reason: 'schema_mismatch',
+    });
+    const diagnostic = JSON.stringify(logProviderFailure.mock.calls);
+    for (const privateValue of [transcript, promptText, providerConfig.apiKey]) {
+      expect(diagnostic).not.toContain(privateValue);
+    }
+  });
+
+  it('logs a safe contract reason when evidence positions exceed the transcript', async () => {
+    const repo = repository();
+    const logProviderFailure = vi.fn();
+    const invalidEvidenceAssessment = {
+      ...providerAssessment,
+      dimensions: {
+        ...providerAssessment.dimensions,
+        structure: {
+          score: 4,
+          evidenceReference: { start: 0, end: 120 },
+        },
+      },
+    };
+
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({
+        repository: repo,
+        callProvider: vi.fn(async () => JSON.stringify(invalidEvidenceAssessment)),
+        logProviderFailure,
+      }),
+    )(scoringRequest());
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
+    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({
+      requestId: null,
+      provider: 'anthropic',
+      code: 'invalid_provider_response',
+      stage: 'contract_validation',
+      reason: 'evidence_reference',
+    });
+    const diagnostic = JSON.stringify(logProviderFailure.mock.calls);
+    for (const privateValue of [transcript, promptText, providerConfig.apiKey]) {
+      expect(diagnostic).not.toContain(privateValue);
+    }
   });
 
   it('emits only an allowlisted diagnostic for provider request failures', async () => {
