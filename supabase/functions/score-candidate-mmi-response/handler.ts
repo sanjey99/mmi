@@ -495,6 +495,7 @@ export function createCandidateMmiScoringHandler(
         systemPrompt: `${scoringContract.assessorInstructions} ${SCORING_SYSTEM_SUFFIX}`,
         userContent: formatProviderContent(claim, rubric, scoringContract),
         maxTokens: 768,
+        responseSchema: scoringContract.responseSchema,
       });
     } catch (error) {
       if (error instanceof ProviderRequestError) {

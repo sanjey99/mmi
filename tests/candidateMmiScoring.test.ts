@@ -301,6 +301,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/tone/);
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/hesitation/);
     expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/pronunciation/);
+    expect(providerRequest.responseSchema).toEqual(scoringContract.responseSchema);
     expect(JSON.parse(providerRequest.userContent)).toEqual({
       promptText,
       transcript,
