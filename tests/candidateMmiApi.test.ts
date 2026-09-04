@@ -494,6 +494,51 @@ describe('candidate MMI runner finalization boundary', () => {
     expect(failing.finalize).toHaveBeenCalledTimes(2);
   });
 
+  it('saves the exact early-submit transcript before finalizing and advancing', async () => {
+    const api = apiFixture();
+    api.refresh.mockResolvedValue(nextResponse);
+    const runner = createCandidateMmiRunner(api);
+    await runner.start();
+
+    await expect(runner.completeCurrentResponse({
+      transcript: 'Submitted before the timer ended',
+      finalizationKey,
+    })).resolves.toEqual(nextResponse);
+
+    expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(
+      sessionId,
+      1,
+      'Submitted before the timer ended',
+      4,
+    );
+    expect(api.finalize).toHaveBeenCalledExactlyOnceWith(sessionId, 1, finalizationKey);
+    expect(api.checkpoint.mock.invocationCallOrder[0]).toBeLessThan(
+      api.finalize.mock.invocationCallOrder[0],
+    );
+    expect(api.finalize.mock.invocationCallOrder[0]).toBeLessThan(
+      api.refresh.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('persists an intentional blank when skipping and shares duplicate completion work', async () => {
+    const api = apiFixture();
+    api.refresh.mockResolvedValue(nextResponse);
+    const runner = createCandidateMmiRunner(api);
+    await runner.start();
+
+    const first = runner.completeCurrentResponse({ transcript: '', finalizationKey });
+    const duplicate = runner.completeCurrentResponse({ transcript: '', finalizationKey });
+    expect(first).toBe(duplicate);
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      nextResponse,
+      nextResponse,
+    ]);
+
+    expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(sessionId, 1, '', 4);
+    expect(api.finalize).toHaveBeenCalledTimes(1);
+    expect(api.refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('refreshes scenario expiry without finalization and abandons once', async () => {
     const api = apiFixture();
     api.start.mockResolvedValue(scenarioProjection);

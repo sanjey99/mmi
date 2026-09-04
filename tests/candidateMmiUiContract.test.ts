@@ -100,15 +100,15 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/(?:speechPort\(\)|currentSpeechPort)\.stop/);
   });
 
-  it('uses retry-stable finalization identities and transcript-free finalization calls', () => {
+  it('uses retry-stable finalization identities and routes transcripts through the runner boundary', () => {
     const routeSource = readCandidateStationRoute();
 
     expect(routeSource).toMatch(/sessionStorage/);
     expect(routeSource).toMatch(/candidate-mmi-finalization:/);
     expect(routeSource).toMatch(/crypto/);
     expect(routeSource).toMatch(/randomUUID/);
-    expect(routeSource).toMatch(/expireCurrentPhase\(finalizationKey/);
-    expect(routeSource).not.toMatch(/expireCurrentPhase\([^)]*transcript/);
+    expect(routeSource).toMatch(/completeCurrentResponse\(\{ transcript: submittedTranscript, finalizationKey \}\)/);
+    expect(routeSource).not.toMatch(/api\(\)\.finalize\([^)]*transcript/);
   });
 
   it('starts all AI scoring only after the full station and offers a retry', () => {

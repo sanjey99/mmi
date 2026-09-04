@@ -315,6 +315,7 @@ async function installCandidateMmiController(page: Page) {
   let currentProjection: CandidateMmiProjection = candidateScenarioProjection;
   let nextAfterFinalization: CandidateMmiProjection = candidateResponseProjections[2];
   let abandonCount = 0;
+  let scoringFailureCode: string | null = null;
   const rpcCalls: string[] = [];
   const checkpoints: Array<Record<string, unknown>> = [];
   const finalizations: Array<Record<string, unknown>> = [];
@@ -411,6 +412,13 @@ async function installCandidateMmiController(page: Page) {
   await page.route('https://e2e.supabase.co/functions/v1/score-candidate-mmi-response', route => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     scoringRequests.push(body);
+    if (scoringFailureCode) {
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: scoringFailureCode }),
+      });
+    }
     return route.fulfill(json({ status: 'scored', assessment }));
   });
 
@@ -436,6 +444,7 @@ async function installCandidateMmiController(page: Page) {
       nextAfterFinalization = nextProjection;
     },
     selectCompleted: () => { currentProjection = candidateCompletedProjection; },
+    failScoringWith: (code: string) => { scoringFailureCode = code; },
     abandonCount: () => abandonCount,
     rpcCalls: () => [...rpcCalls],
     checkpoints: () => [...checkpoints],
@@ -640,6 +649,43 @@ test('MMI deadline stops speech and finalizes without early scoring or media', a
   expect(nativeStops).toBeGreaterThanOrEqual(1);
 });
 
+test('MMI responses can be submitted early or deliberately skipped with softer readable type', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectResponse(1);
+  controller.advanceTo(Object.freeze({
+    ...candidateResponseProjections[2],
+    draftTranscript: 'Draft to discard by skipping',
+    draftRevision: 2,
+  }));
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  const prompt = page.getByText('Synthetic prompt 1.', { exact: true });
+  const transcript = page.getByRole('textbox', { name: 'Your response transcript' });
+  const promptType = await prompt.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { family: computed.fontFamily, size: Number.parseFloat(computed.fontSize) };
+  });
+  expect(promptType.family).toContain('SourceSans3');
+  expect(promptType.size).toBeGreaterThanOrEqual(20);
+  await transcript.fill('A complete early response');
+  await page.getByText('Submit answer now', { exact: true }).click();
+  await expect(page.getByText('Synthetic prompt 2.', { exact: true })).toBeVisible();
+  expect(controller.checkpoints()[0]).toMatchObject({
+    p_prompt_order: 1,
+    p_transcript: 'A complete early response',
+  });
+
+  await expect(page.getByRole('textbox', { name: 'Your response transcript' }))
+    .toHaveValue('Draft to discard by skipping');
+  controller.advanceTo(candidateResponseProjections[3]);
+  await page.getByText('Skip question', { exact: true }).click();
+  await expect(page.getByText('Synthetic prompt 3.', { exact: true })).toBeVisible();
+  expect(controller.checkpoints()[1]).toMatchObject({
+    p_prompt_order: 2,
+    p_transcript: '',
+  });
+});
+
 test('MMI completion starts all five scores and renders ordered transcript-only feedback', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectCompleted();
@@ -663,6 +709,17 @@ test('MMI completion starts all five scores and renders ordered transcript-only 
       promptOrder,
     })),
   );
+});
+
+test('MMI completion explains when AI scoring is not configured', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.failScoringWith('provider_not_configured');
+  controller.selectCompleted();
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  await expect(page.getByText('AI scoring is not configured yet.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Your station is saved. You can retry the evaluation without repeating it.'))
+    .toHaveCount(0);
 });
 
 test('MMI leave abandons exactly once from a current response and returns to practice', async ({ page }) => {

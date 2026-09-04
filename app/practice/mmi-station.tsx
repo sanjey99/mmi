@@ -19,6 +19,7 @@ import {
 } from '../../src/features/candidateMmi/api';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
+import { candidateMmiScoringFailureMessage } from '../../src/features/candidateMmi/scoringSummary';
 import { createBrowserSpeechPort } from '../../src/features/candidateMmi/speechPort';
 import {
   CANDIDATE_MMI_TRANSCRIPT_MAX_CODE_POINTS,
@@ -34,7 +35,7 @@ import type {
   CandidateMmiSpeechStatus,
 } from '../../src/features/candidateMmi/types';
 import { supabase } from '../../src/lib/supabase';
-import { colors, text } from '../../src/theme';
+import { colors, corridorTypography } from '../../src/theme';
 
 type CandidateApi = ReturnType<typeof createCandidateMmiApi>;
 type CandidateRunner = ReturnType<typeof createCandidateMmiRunner>;
@@ -195,7 +196,7 @@ export default function CandidateMmiStationScreen() {
   const [feedback, setFeedback] = useState<readonly CandidateMmiFeedback[] | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [scoringInProgress, setScoringInProgress] = useState(false);
-  const [scoringFailed, setScoringFailed] = useState(false);
+  const [scoringFailureMessage, setScoringFailureMessage] = useState<string | null>(null);
   const [speechStatus, setSpeechStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [preflightStatus, setPreflightStatus] = useState<CandidateMmiSpeechStatus>('idle');
   const [testingMicrophone, setTestingMicrophone] = useState(false);
@@ -203,6 +204,7 @@ export default function CandidateMmiStationScreen() {
   const [tick, setTick] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [advanceFailed, setAdvanceFailed] = useState(false);
+  const [responseAction, setResponseAction] = useState<'submit' | 'skip' | 'timer' | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
@@ -410,46 +412,68 @@ export default function CandidateMmiStationScreen() {
     };
   }, [flushCheckpoint]);
 
-  const advanceExpiredPhase = useCallback(() => {
+  const completeCurrentResponse = useCallback((submittedTranscript: string, action: 'submit' | 'skip' | 'timer') => {
     const currentProjection = projectionRef.current;
-    if (currentProjection === null || currentProjection.phaseEndsAt === null) return;
+    if (currentProjection?.phase !== 'response') return;
     const key = phaseKey(currentProjection);
     if (expiringPhaseRef.current === key) return;
     expiringPhaseRef.current = key;
     setAdvanceFailed(false);
     setErrorMessage(null);
-    let finalizationKey = '';
-    let checkpointBarrier: Promise<void> = Promise.resolve();
-    if (currentProjection.phase === 'response') {
-      const identity = responseIdentity(currentProjection)!;
-      checkpointBarrier = checkpointInFlightRef.current ?? Promise.resolve();
-      frozenResponseRef.current = identity;
-      dispatchTranscript({ type: 'freeze', responseIdentity: identity });
-      if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current);
-      const currentSpeechPort = speechPort();
-      void currentSpeechPort.stop({ responseIdentity: identity });
-      try {
-        finalizationKey = finalizationKeyForResponse(
-          currentProjection.sessionId,
-          currentProjection.promptOrder,
-          volatileFinalizationKeysRef.current,
-        );
-      } catch {
-        expiringPhaseRef.current = null;
-        setAdvanceFailed(true);
-        setErrorMessage('This browser cannot create a secure response identity.');
-        return;
-      }
+    setResponseAction(action);
+    const identity = responseIdentity(currentProjection)!;
+    frozenResponseRef.current = identity;
+    dispatchTranscript({ type: 'freeze', responseIdentity: identity });
+    if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current);
+    void speechPort().stop({ responseIdentity: identity });
+    let finalizationKey: string;
+    try {
+      finalizationKey = finalizationKeyForResponse(
+        currentProjection.sessionId,
+        currentProjection.promptOrder,
+        volatileFinalizationKeysRef.current,
+      );
+    } catch {
+      expiringPhaseRef.current = null;
+      setResponseAction(null);
+      setAdvanceFailed(true);
+      setErrorMessage('This browser cannot create a secure response identity.');
+      return;
     }
-    void checkpointBarrier
-      .then(() => runner().expireCurrentPhase(finalizationKey))
+    const completion = action === 'timer'
+      ? (checkpointInFlightRef.current ?? Promise.resolve())
+          .then(() => runner().expireCurrentPhase(finalizationKey))
+      : runner().completeCurrentResponse({ transcript: submittedTranscript, finalizationKey });
+    void completion
+      .then((nextProjection) => acceptProjection(nextProjection, true))
+      .catch(() => {
+        if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
+        setAdvanceFailed(true);
+        setErrorMessage('The MMI station could not advance safely.');
+      })
+      .finally(() => setResponseAction(null));
+  }, [acceptProjection, dispatchTranscript, runner, speechPort]);
+
+  const advanceExpiredPhase = useCallback(() => {
+    const currentProjection = projectionRef.current;
+    if (currentProjection === null || currentProjection.phaseEndsAt === null) return;
+    if (currentProjection.phase === 'response') {
+      completeCurrentResponse(transcriptRef.current?.committedText ?? '', 'timer');
+      return;
+    }
+    const key = phaseKey(currentProjection);
+    if (expiringPhaseRef.current === key) return;
+    expiringPhaseRef.current = key;
+    setAdvanceFailed(false);
+    setErrorMessage(null);
+    void runner().expireCurrentPhase('')
       .then((nextProjection) => acceptProjection(nextProjection, true))
       .catch(() => {
         if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
         setAdvanceFailed(true);
         setErrorMessage('The MMI station could not advance safely.');
       });
-  }, [acceptProjection, dispatchTranscript, runner, speechPort]);
+  }, [acceptProjection, completeCurrentResponse, runner]);
 
   useEffect(() => {
     if (projection === null || remaining !== 0 || projection.phaseEndsAt === null) return;
@@ -462,24 +486,24 @@ export default function CandidateMmiStationScreen() {
     if (completedScoringSessionRef.current === completedId) return;
     completedScoringSessionRef.current = completedId;
     setScoringInProgress(true);
-    setScoringFailed(false);
+    setScoringFailureMessage(null);
     setFeedbackMessage(null);
 
-    let failed = false;
+    let failureMessage: string | null = null;
     try {
       const outcomes = await Promise.allSettled(
         MMI_PROMPT_ORDERS.map((promptOrder) =>
           scoringApi().scoreCandidateResponse(completedId, promptOrder),
         ),
       );
-      failed = outcomes.some((outcome) => outcome.status === 'rejected');
+      failureMessage = candidateMmiScoringFailureMessage(outcomes);
       try {
         setFeedback(await api().feedback(completedId));
       } catch {
-        failed = true;
+        failureMessage ??= 'AI scoring is unavailable. Try again.';
       }
     } finally {
-      setScoringFailed(failed);
+      setScoringFailureMessage(failureMessage);
       setScoringInProgress(false);
     }
   }, [api, scoringApi]);
@@ -602,12 +626,14 @@ export default function CandidateMmiStationScreen() {
               loading={testingMicrophone}
               disabled={!supported || starting}
               variant="secondary"
+              labelStyle={styles.actionLabel}
             />
             <Button
               label={starting ? 'Starting station' : 'Start station'}
               onPress={() => void startStation()}
               loading={starting}
               disabled={testingMicrophone}
+              labelStyle={styles.actionLabel}
             />
           </View>
         </ScrollView>
@@ -647,24 +673,29 @@ export default function CandidateMmiStationScreen() {
                   tone="info"
                 />
               ) : null}
-              {scoringFailed ? (
+              {scoringFailureMessage ? (
                 <>
                   <InlineNotice
                     title="AI scoring could not complete"
-                    message="Your station is saved. You can retry the evaluation without repeating it."
+                    message={scoringFailureMessage}
                     tone="error"
                   />
                   <Button
                     label="Retry AI scoring"
                     onPress={retryAiScoring}
                     variant="secondary"
+                    labelStyle={styles.actionLabel}
                   />
                 </>
               ) : null}
               {feedbackMessage ? <InlineNotice title="Feedback update" message={feedbackMessage} tone="warning" /> : null}
             </>
           ) : null}
-          <Button label="Return to practice" onPress={() => router.replace('/(tabs)/practice')} />
+          <Button
+            label="Return to practice"
+            onPress={() => router.replace('/(tabs)/practice')}
+            labelStyle={styles.actionLabel}
+          />
         </ScrollView>
       </SafeAreaView>
     );
@@ -685,7 +716,14 @@ export default function CandidateMmiStationScreen() {
           </TouchableOpacity>
         </View>
         {errorMessage ? <InlineNotice title="Station update" message={errorMessage} tone="error" /> : null}
-        {advanceFailed ? <Button label="Retry advance" onPress={advanceExpiredPhase} variant="secondary" /> : null}
+        {advanceFailed ? (
+          <Button
+            label="Retry advance"
+            onPress={advanceExpiredPhase}
+            variant="secondary"
+            labelStyle={styles.actionLabel}
+          />
+        ) : null}
         {projection.phase === 'scenario' ? (
           <View style={styles.panel}>
             <Text style={styles.label}>60-second brief</Text>
@@ -717,6 +755,7 @@ export default function CandidateMmiStationScreen() {
                   disabled={!speechPort().getCapability().supported || transcript?.frozen}
                   variant="secondary"
                   small
+                  labelStyle={styles.actionLabel}
                 />
               ) : null}
               <TextInput
@@ -744,6 +783,28 @@ export default function CandidateMmiStationScreen() {
               <Text style={styles.savedHint}>
                 {transcript?.dirty ? 'Saving transcript changes…' : 'Transcript saved.'}
               </Text>
+              <View style={styles.responseActions}>
+                <Button
+                  label="Submit answer now"
+                  onPress={() => completeCurrentResponse(
+                    transcriptRef.current?.committedText ?? '',
+                    'submit',
+                  )}
+                  loading={responseAction === 'submit'}
+                  disabled={responseAction !== null || transcript?.frozen || remaining <= 0}
+                  style={styles.responseAction}
+                  labelStyle={styles.actionLabel}
+                />
+                <Button
+                  label="Skip question"
+                  onPress={() => completeCurrentResponse('', 'skip')}
+                  loading={responseAction === 'skip'}
+                  disabled={responseAction !== null || transcript?.frozen || remaining <= 0}
+                  style={styles.responseAction}
+                  labelStyle={styles.actionLabel}
+                  variant="secondary"
+                />
+              </View>
             </View>
           </>
         ) : null}
@@ -768,11 +829,36 @@ const styles = StyleSheet.create({
   content: { padding: 24, gap: 20, flexGrow: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   actions: { gap: 12 },
+  responseActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  responseAction: { flexGrow: 1, minWidth: 220 },
   transcriptHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  eyebrow: { ...text.labelMd, color: colors.neutral[600] },
-  title: { ...text.displayLg, color: colors.primary[900] },
-  timer: { ...text.displayLg, color: colors.primary[900], marginTop: 4 },
-  leave: { ...text.labelMd, color: colors.error, paddingVertical: 8 },
+  eyebrow: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 0.8,
+    color: colors.neutral[600],
+  },
+  title: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 34,
+    lineHeight: 42,
+    color: colors.primary[900],
+  },
+  timer: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 40,
+    lineHeight: 46,
+    color: colors.primary[900],
+    marginTop: 4,
+  },
+  leave: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 17,
+    lineHeight: 24,
+    color: colors.error,
+    paddingVertical: 8,
+  },
   panel: { backgroundColor: colors.bg.white, borderWidth: 1, borderColor: colors.bg.tertiary, padding: 20, gap: 12 },
   transcriptPanel: { backgroundColor: colors.bg.white, borderTopWidth: 4, borderColor: colors.teal[400], padding: 20, gap: 12 },
   feedbackCard: { backgroundColor: colors.bg.white, borderLeftWidth: 4, borderColor: colors.teal[400], padding: 20, gap: 10 },
@@ -782,16 +868,71 @@ const styles = StyleSheet.create({
     borderColor: colors.primary[300],
     backgroundColor: colors.bg.primary,
     padding: 14,
-    ...text.bodyLg,
+    fontFamily: corridorTypography.reading,
+    fontSize: 20,
+    lineHeight: 30,
     color: colors.neutral[900],
   },
-  label: { ...text.headingMd, color: colors.primary[900] },
-  reading: { ...text.bodyLg, color: colors.neutral[700] },
-  status: { ...text.bodyMd, color: colors.neutral[600] },
-  count: { ...text.caption, color: colors.neutral[600] },
-  interim: { ...text.bodyMd, color: colors.info, fontStyle: 'italic' },
-  savedHint: { ...text.bodySm, color: colors.neutral[600] },
-  score: { ...text.headingLg, color: colors.primary[900] },
-  feedbackHeading: { ...text.headingSm, color: colors.primary[900] },
-  feedbackText: { ...text.bodyMd, color: colors.neutral[700] },
+  label: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 20,
+    lineHeight: 28,
+    color: colors.primary[900],
+  },
+  reading: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 22,
+    lineHeight: 32,
+    color: colors.neutral[700],
+  },
+  status: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 18,
+    lineHeight: 27,
+    color: colors.neutral[600],
+  },
+  count: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.neutral[600],
+  },
+  interim: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 18,
+    lineHeight: 27,
+    color: colors.info,
+    fontStyle: 'italic',
+  },
+  savedHint: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 16,
+    lineHeight: 23,
+    color: colors.neutral[600],
+  },
+  score: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 24,
+    lineHeight: 32,
+    color: colors.primary[900],
+  },
+  feedbackHeading: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 19,
+    lineHeight: 27,
+    color: colors.primary[900],
+  },
+  feedbackText: {
+    fontFamily: corridorTypography.reading,
+    fontSize: 18,
+    lineHeight: 27,
+    color: colors.neutral[700],
+  },
+  actionLabel: {
+    fontFamily: corridorTypography.readingMedium,
+    fontSize: 18,
+    lineHeight: 24,
+    letterSpacing: 0.2,
+    textTransform: 'none',
+  },
 });
