@@ -28,6 +28,7 @@ const {
   CURRENT_MMI_SCORING_CONTRACT_VERSION,
   MMI_SCORING_CONTRACTS,
   createMmiScoringContractSnapshot,
+  getCurrentMmiRubric,
   getCurrentMmiScoringContract,
   getMmiScoringContract,
   parseProviderAssessmentForContract,
@@ -174,6 +175,24 @@ describe('MMI contracts', () => {
     ], { cwd: repositoryRoot, stdio: 'pipe' }));
   });
 
+  it('ships one immutable server-owned rubric for the current AI scorer', () => {
+    const currentRubric = getCurrentMmiRubric() as EdgeContracts.MmiRubric;
+    const criteria = Object.values(currentRubric.criteria);
+
+    assert.equal(CURRENT_MMI_SCORING_CONTRACT_VERSION, '2026-09-04.1');
+    assert.equal(currentRubric.version, 2);
+    assert.equal(criteria.length, 10);
+    assert.equal(
+      Object.values(currentRubric.dimensionWeights).reduce((sum, value) => sum + value, 0),
+      1,
+    );
+    assert.deepEqual(new Set(criteria.map(item => item.dimension)), new Set(MMI_DIMENSIONS));
+    assert.doesNotMatch(JSON.stringify(currentRubric), /clinician|reviewed|approved/i);
+    assert.equal(Object.isFrozen(currentRubric), true);
+    assert.equal(Object.isFrozen(currentRubric.criteria), true);
+    assert.equal(Object.isFrozen(currentRubric.dimensionWeights), true);
+  });
+
   it('accepts exact standard and role-play requests and rejects identity/transcript mutations', () => {
     const common = {
       attemptId: '0b0d0e64-ef83-46b3-91e8-95743c4c7e63',
@@ -214,7 +233,7 @@ describe('MMI contracts', () => {
     assert.equal(parseSubmitMmiPromptRequest(common).transcript, reviewedTranscript);
   });
 
-  it('strictly validates clinician rubric rules, templates, weights, and safety codes', () => {
+  it('strictly validates rubric rules, templates, weights, and safety codes', () => {
     assert.deepEqual(parseMmiRubric(rubric), rubric);
     for (const ethics of [NaN, Infinity, -0.1, 1.1]) {
       assert.throws(() => parseMmiRubric({ ...rubric, dimensionWeights: { ...rubric.dimensionWeights, ethics } }));
@@ -492,9 +511,9 @@ describe('MMI contracts', () => {
         ...v1.studentFeedbackCatalog,
         templates: {
           ...v1.studentFeedbackCatalog.templates,
-          'future-clinician-template': {
+          'future-improvement-template': {
             kind: 'improvement',
-            text: 'Future-version clinician-approved feedback.',
+            text: 'Future-version feedback wording.',
           },
         },
         frameworkTips: {

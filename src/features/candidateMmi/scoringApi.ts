@@ -8,16 +8,15 @@ const MAX_PUBLIC_TEXT_CODE_POINTS = 1_000;
 const MAX_PUBLIC_TEXT_ITEMS = 20;
 
 const SAFE_MESSAGES = Object.freeze({
-  feature_disabled: 'Candidate MMI scoring is disabled.',
-  invalid_request: 'Candidate MMI scoring request is invalid.',
+  invalid_request: 'AI scoring request is invalid.',
+  not_ready: 'AI scoring starts after the station is complete.',
   in_progress: 'This response is already being scored.',
-  feedback_unavailable: 'Feedback is unavailable for this response.',
-  provider_not_configured: 'Scoring is not configured yet.',
-  provider_failed: 'The scoring provider is temporarily unavailable.',
+  provider_not_configured: 'AI scoring is not configured yet.',
+  provider_failed: 'AI scoring is temporarily unavailable. Try again.',
   invalid_provider_response:
-    'The scorer returned an invalid response. Please retry.',
+    'The AI scorer returned an invalid result. Try again.',
   unauthorized: 'Sign in again before requesting feedback.',
-  unavailable: 'Candidate MMI scoring is unavailable.',
+  unavailable: 'AI scoring is unavailable. Try again.',
 });
 
 export type CandidateMmiScoringErrorCode = keyof typeof SAFE_MESSAGES;
@@ -37,7 +36,7 @@ export type CandidateMmiScoringResult =
       status: 'scored';
       assessment: CandidateMmiPublicAssessment;
     }>
-  | Readonly<{ status: 'no_response' | 'feedback_unavailable' }>;
+  | Readonly<{ status: 'no_response' }>;
 
 export type CandidateMmiInvoke = (
   name: string,
@@ -153,8 +152,7 @@ function parseSuccess(value: unknown): CandidateMmiScoringResult {
   if (
     result !== null &&
     hasExactKeys(result, ['status']) &&
-    (result.status === 'no_response' ||
-      result.status === 'feedback_unavailable')
+    result.status === 'no_response'
   ) {
     return Object.freeze({ status: result.status });
   }

@@ -195,6 +195,10 @@ export const MMI_STUDENT_FEEDBACK_CATALOGS: Readonly<Record<string, MmiStudentFe
     templates: V1_STUDENT_FEEDBACK_TEMPLATE_DEFINITIONS,
     frameworkTips: V1_FRAMEWORK_TIPS,
   },
+  '2026-09-04.1': {
+    templates: V1_STUDENT_FEEDBACK_TEMPLATE_DEFINITIONS,
+    frameworkTips: V1_FRAMEWORK_TIPS,
+  },
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
