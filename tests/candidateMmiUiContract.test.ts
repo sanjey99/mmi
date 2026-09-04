@@ -9,6 +9,10 @@ const browserSpeechMigrationPath = resolve(
   process.cwd(),
   'supabase/migrations/20260831000000_candidate_mmi_browser_speech.sql',
 );
+const singleStationMigrationPath = resolve(
+  process.cwd(),
+  'supabase/migrations/20260904000000_single_mmi_station.sql',
+);
 
 function readCandidateStationRoute(): string {
   expect(existsSync(candidateStationPath), 'Candidate MMI station route must exist behind the feature gate.').toBe(true);
@@ -21,6 +25,10 @@ function readBrowserSpeechMigration(): string {
     'Browser-speech persistence must be introduced through its own forward migration.',
   ).toBe(true);
   return readFileSync(browserSpeechMigrationPath, 'utf8');
+}
+
+function readSingleStationMigration(): string {
+  return readFileSync(singleStationMigrationPath, 'utf8');
 }
 
 describe('single MMI station route contract', () => {
@@ -198,5 +206,22 @@ describe('single MMI station route contract', () => {
     ]) {
       expect(sql).toMatch(new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY;`, 'i'));
     }
+  });
+
+  it('removes database release and approval gates without weakening RPC security', () => {
+    const sql = readSingleStationMigration();
+
+    expect(sql).toMatch(/DELETE FROM public\.app_config\s+WHERE key = 'normalized_mmi_station_enabled'/i);
+    expect(sql).not.toMatch(/feature_disabled|clinician_reviewed|JOIN public\.mmi_scoring_rubrics/i);
+    expect(sql).toMatch(/question\.question_text/i);
+    expect(sql).toMatch(/question\.order_num/i);
+    expect(sql.match(/SET search_path = public, pg_temp/g)?.length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(sql).toMatch(/auth\.uid\s*\(\s*\)/i);
+    expect(sql).toMatch(/auth\.role\s*\(\s*\) IS DISTINCT FROM 'service_role'/i);
+    expect(sql).toMatch(/candidate session is not owned by caller/i);
+    expect(sql).toMatch(/REVOKE ALL PRIVILEGES ON TABLE[\s\S]*FROM PUBLIC, anon, authenticated/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.start_candidate_mmi_station_session\(\)[\s\S]*TO authenticated/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.claim_candidate_mmi_response_scoring\(uuid, uuid, smallint, uuid\)[\s\S]*TO service_role/i);
+    expect(sql).toMatch(/interval '7 days'/i);
   });
 });
