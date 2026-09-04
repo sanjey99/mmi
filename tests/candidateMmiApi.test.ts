@@ -599,34 +599,3 @@ describe('candidate MMI runner finalization boundary', () => {
     );
   });
 });
-
-describe('candidate MMI feature flag', () => {
-  it('uses the exact flag key and fails closed except for the exact enabled string', async () => {
-    const { CANDIDATE_MMI_FEATURE_FLAG, isNormalizedMmiStationEnabled } =
-      await import('../src/features/candidateMmi/featureFlag');
-    expect(CANDIDATE_MMI_FEATURE_FLAG).toBe('normalized_mmi_station_enabled');
-    await expect(
-      isNormalizedMmiStationEnabled(async () => 'true'),
-    ).resolves.toBe(true);
-    for (const value of [
-      undefined,
-      null,
-      false,
-      true,
-      'TRUE',
-      ' true ',
-      'false',
-      {},
-      [],
-    ]) {
-      await expect(
-        isNormalizedMmiStationEnabled(async () => value),
-      ).resolves.toBe(false);
-    }
-    await expect(
-      isNormalizedMmiStationEnabled(async () => {
-        throw new Error('Synthetic config failure.');
-      }),
-    ).resolves.toBe(false);
-  });
-});

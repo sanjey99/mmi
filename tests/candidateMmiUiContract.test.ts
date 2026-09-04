@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const practiceScreenPath = resolve(process.cwd(), 'app/(tabs)/practice.tsx');
 const candidateStationPath = resolve(process.cwd(), 'app/practice/mmi-station.tsx');
+const legacySessionPath = resolve(process.cwd(), 'app/practice/session.tsx');
 const browserSpeechMigrationPath = resolve(
   process.cwd(),
   'supabase/migrations/20260831000000_candidate_mmi_browser_speech.sql',
@@ -22,23 +23,22 @@ function readBrowserSpeechMigration(): string {
   return readFileSync(browserSpeechMigrationPath, 'utf8');
 }
 
-describe('candidate MMI chooser and station route contract', () => {
-  it('adds an 11-minute gated candidate station entry without replacing the flat-question chooser', () => {
+describe('single MMI station route contract', () => {
+  it('exposes one neutral 11-minute station instead of competing flat-question modes', () => {
     const practiceSource = readFileSync(practiceScreenPath, 'utf8');
 
-    expect(practiceSource).toMatch(/isNormalizedMmiStationEnabled/);
     expect(practiceSource).toContain('/practice/mmi-station');
-    expect(practiceSource).toMatch(/11[ -]minute/i);
-    expect(practiceSource).toContain('getRandomQuestion');
-    expect(practiceSource).toContain('startSession');
-    expect(practiceSource).toContain('/practice/session');
+    expect(practiceSource).toContain('11-minute MMI station');
+    expect(practiceSource).not.toMatch(/isNormalizedMmiStationEnabled|candidateEnabled|app_config/);
+    expect(practiceSource).not.toMatch(/Free practice|Timed practice|getRandomQuestion|startSession|\/practice\/session/);
   });
 
-  it('gates direct station access and falls back safely while disabled', () => {
+  it('opens the station without a product flag and retires the legacy response route', () => {
     const routeSource = readCandidateStationRoute();
+    const legacySessionSource = readFileSync(legacySessionPath, 'utf8');
 
-    expect(routeSource).toMatch(/isNormalizedMmiStationEnabled/);
-    expect(routeSource).toMatch(/router\.(?:replace|push)\('\/\(tabs\)\/practice'\)/);
+    expect(routeSource).not.toMatch(/isNormalizedMmiStationEnabled|feature_disabled|candidate station/i);
+    expect(legacySessionSource).toContain("router.replace('/(tabs)/practice')");
   });
 
   it('uses runner restore for a session URL and start only when the session ID is absent', () => {

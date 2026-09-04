@@ -17,7 +17,6 @@ import {
   type CandidateMmiFeedback,
   type CandidateMmiServerProjection,
 } from '../../src/features/candidateMmi/api';
-import { isNormalizedMmiStationEnabled } from '../../src/features/candidateMmi/featureFlag';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
 import { createBrowserSpeechPort } from '../../src/features/candidateMmi/speechPort';
@@ -189,7 +188,6 @@ export default function CandidateMmiStationScreen() {
   const checkpointInFlightRef = useRef<Promise<void> | null>(null);
   const checkpointQueuedRef = useRef(false);
   const volatileFinalizationKeysRef = useRef(new Map<string, string>());
-  const [enabled, setEnabled] = useState<boolean | null>(null);
   const [projection, setProjection] = useState<CandidateMmiServerProjection | null>(null);
   const [transcript, setTranscript] = useState<CandidateMmiTranscriptState | null>(null);
   const [feedback, setFeedback] = useState<readonly CandidateMmiFeedback[] | null>(null);
@@ -336,27 +334,7 @@ export default function CandidateMmiStationScreen() {
   }, [dispatchTranscript, runner]);
 
   useEffect(() => {
-    let active = true;
-    const readConfig = async (key: string): Promise<unknown> => {
-      const { data, error } = await supabase
-        .from('app_config').select('value').eq('key', key).maybeSingle();
-      if (error) throw error;
-      return data?.value;
-    };
-    void isNormalizedMmiStationEnabled(readConfig)
-      .then((flagEnabled) => {
-        if (!active) return;
-        setEnabled(flagEnabled);
-        if (!flagEnabled) router.replace('/(tabs)/practice');
-      })
-      .catch(() => {
-        if (active) setErrorMessage('The candidate station is unavailable.');
-      });
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if (enabled !== true || !sessionId || openedSessionRef.current === sessionId) return;
+    if (!sessionId || openedSessionRef.current === sessionId) return;
     let active = true;
     openedSessionRef.current = sessionId;
     void runner().restore(sessionId)
@@ -366,10 +344,10 @@ export default function CandidateMmiStationScreen() {
       .catch(() => {
         if (!active) return;
         openedSessionRef.current = null;
-        setErrorMessage('The candidate station is unavailable. Return to practice and try again.');
+        setErrorMessage('The MMI station is unavailable. Return to practice and try again.');
       });
     return () => { active = false; };
-  }, [acceptProjection, enabled, runner, sessionId]);
+  }, [acceptProjection, runner, sessionId]);
 
   useEffect(() => {
     if (projection?.phaseEndsAt === null || projection === null) return;
@@ -478,7 +456,7 @@ export default function CandidateMmiStationScreen() {
       .catch(() => {
         if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
         setAdvanceFailed(true);
-        setErrorMessage('The candidate station could not advance safely.');
+        setErrorMessage('The MMI station could not advance safely.');
       });
   }, [acceptProjection, dispatchTranscript, runner, scoringApi, speechPort]);
 
@@ -546,7 +524,7 @@ export default function CandidateMmiStationScreen() {
         params: { sessionId: nextProjection.sessionId },
       });
     } catch {
-      setErrorMessage('The candidate station could not start. Try again.');
+      setErrorMessage('The MMI station could not start. Try again.');
       setStarting(false);
     }
   };
@@ -559,28 +537,17 @@ export default function CandidateMmiStationScreen() {
       await runner().leave();
       router.replace('/(tabs)/practice');
     } catch {
-      setErrorMessage('Leaving the candidate station was not completed. Try again.');
+      setErrorMessage('Leaving the MMI station was not completed. Try again.');
       setLeaving(false);
     }
   };
-
-  if (enabled !== true) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.centered}>
-          <Text style={styles.title}>Opening candidate station</Text>
-          {errorMessage ? <InlineNotice title="Station unavailable" message={errorMessage} tone="error" /> : null}
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   if (projection === null && !sessionId) {
     const supported = speechPort().getCapability().supported;
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.eyebrow}>11-MINUTE CANDIDATE STATION</Text>
+          <Text style={styles.eyebrow}>11-MINUTE MMI STATION</Text>
           <Text style={styles.title}>Check your setup</Text>
           <View style={styles.panel}>
             <Text style={styles.label}>Browser speech service</Text>
@@ -623,7 +590,7 @@ export default function CandidateMmiStationScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.centered}>
-          <Text style={styles.title}>Restoring candidate station</Text>
+          <Text style={styles.title}>Restoring MMI station</Text>
           {errorMessage ? <InlineNotice title="Station unavailable" message={errorMessage} tone="error" /> : null}
         </View>
       </SafeAreaView>
@@ -634,7 +601,7 @@ export default function CandidateMmiStationScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.eyebrow}>CANDIDATE STATION</Text>
+          <Text style={styles.eyebrow}>MMI STATION</Text>
           <Text style={styles.title}>
             {projection.phase === 'completed' ? 'Station complete' : 'Station closed'}
           </Text>
@@ -658,7 +625,7 @@ export default function CandidateMmiStationScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View>
-            <Text style={styles.eyebrow}>CANDIDATE STATION</Text>
+            <Text style={styles.eyebrow}>MMI STATION</Text>
             <Text style={styles.timer} accessibilityLabel={`${remaining} seconds remaining`}>
               {formatSeconds(remaining)}
             </Text>
@@ -732,7 +699,7 @@ export default function CandidateMmiStationScreen() {
         ) : null}
         {leaveOpen ? (
           <ConfirmAction
-            title="Leave candidate station?"
+            title="Leave MMI station?"
             message="The current station will close."
             confirmLabel="Leave station"
             busy={leaving}
