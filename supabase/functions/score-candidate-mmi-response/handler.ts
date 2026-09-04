@@ -68,12 +68,43 @@ export interface CandidateMmiScoringRepository {
   ) => Promise<RepositoryResult>;
 }
 
-export interface CandidateMmiProviderFailureDiagnostic {
-  requestId: string | null;
-  provider: 'anthropic' | 'openai' | 'openai_compatible' | 'unknown';
-  status?: number;
-  code: 'provider_failed';
-}
+type CandidateMmiProvider =
+  | 'anthropic'
+  | 'openai'
+  | 'openai_compatible'
+  | 'unknown';
+
+type CandidateMmiInvalidProviderResponseStage =
+  | 'json_parse'
+  | 'response_schema'
+  | 'contract_validation'
+  | 'public_mapping';
+
+type CandidateMmiInvalidProviderResponseReason =
+  | 'malformed_json'
+  | 'schema_mismatch'
+  | 'evidence_reference'
+  | 'dimension_score'
+  | 'rubric_strength_codes'
+  | 'rubric_improvement_codes'
+  | 'safety_codes'
+  | 'improvement_framework'
+  | 'other';
+
+export type CandidateMmiProviderFailureDiagnostic =
+  | Readonly<{
+      requestId: string | null;
+      provider: CandidateMmiProvider;
+      status?: number;
+      code: 'provider_failed';
+    }>
+  | Readonly<{
+      requestId: string | null;
+      provider: CandidateMmiProvider;
+      code: 'invalid_provider_response';
+      stage: CandidateMmiInvalidProviderResponseStage;
+      reason: CandidateMmiInvalidProviderResponseReason;
+    }>;
 
 export interface CandidateMmiScoringDependencies {
   repository: CandidateMmiScoringRepository;
@@ -326,6 +357,47 @@ function parseProviderJson(value: unknown): unknown {
   }
 }
 
+class InvalidProviderAssessmentError extends Error {
+  readonly stage: CandidateMmiInvalidProviderResponseStage;
+  readonly reason: CandidateMmiInvalidProviderResponseReason;
+
+  constructor(
+    stage: CandidateMmiInvalidProviderResponseStage,
+    reason: CandidateMmiInvalidProviderResponseReason,
+  ) {
+    super('Invalid provider assessment');
+    this.name = 'InvalidProviderAssessmentError';
+    this.stage = stage;
+    this.reason = reason;
+  }
+}
+
+function contractValidationReason(
+  error: unknown,
+): CandidateMmiInvalidProviderResponseReason {
+  if (!(error instanceof Error)) return 'other';
+  if (error.message.startsWith('Invalid evidence reference')) {
+    return 'evidence_reference';
+  }
+  if (error.message === 'Invalid provider score') return 'dimension_score';
+  if (error.message.startsWith('Invalid rubric strength codes')) {
+    return 'rubric_strength_codes';
+  }
+  if (
+    error.message.startsWith('Invalid rubric improvement codes') ||
+    error.message === 'Invalid provider improvements'
+  ) {
+    return 'rubric_improvement_codes';
+  }
+  if (error.message.startsWith('Invalid safety omission codes')) {
+    return 'safety_codes';
+  }
+  if (error.message === 'Invalid improvement framework') {
+    return 'improvement_framework';
+  }
+  return 'other';
+}
+
 function providerName(
   value: string,
 ): CandidateMmiProviderFailureDiagnostic['provider'] {
@@ -346,6 +418,54 @@ function formatProviderContent(
     rubric,
     scoringContract,
   });
+}
+
+function createProviderResponseSchema(
+  scoringContract: MmiScoringContract,
+  rubric: MmiRubric,
+): Readonly<Record<string, unknown>> {
+  const properties = record(scoringContract.responseSchema.properties);
+  if (properties === null) throw new Error('Invalid scoring response schema');
+
+  const criteria = Object.entries(rubric.criteria);
+  const strengthCodes = criteria
+    .filter(([, criterion]) => criterion.kind === 'strength')
+    .map(([code]) => code);
+  const improvementCodes = criteria
+    .filter(([, criterion]) => criterion.kind === 'improvement')
+    .map(([code]) => code);
+  const safetyCodes = rubric.safetyCriticalItems.map((item) => item.id);
+
+  const constrainCodeArray = (
+    propertyName: string,
+    codes: readonly string[],
+  ): Readonly<Record<string, unknown>> => {
+    const arraySchema = record(properties[propertyName]);
+    if (arraySchema === null) throw new Error('Invalid scoring response schema');
+    return {
+      ...arraySchema,
+      items: { type: 'string', enum: [...codes] },
+    };
+  };
+
+  return {
+    ...scoringContract.responseSchema,
+    properties: {
+      ...properties,
+      rubricStrengthCodes: constrainCodeArray(
+        'rubricStrengthCodes',
+        strengthCodes,
+      ),
+      rubricImprovementCodes: constrainCodeArray(
+        'rubricImprovementCodes',
+        improvementCodes,
+      ),
+      safetyCriticalOmissionCodes: constrainCodeArray(
+        'safetyCriticalOmissionCodes',
+        safetyCodes,
+      ),
+    },
+  };
 }
 
 function completionSucceeded(value: unknown): boolean {
@@ -495,18 +615,21 @@ export function createCandidateMmiScoringHandler(
         systemPrompt: `${scoringContract.assessorInstructions} ${SCORING_SYSTEM_SUFFIX}`,
         userContent: formatProviderContent(claim, rubric, scoringContract),
         maxTokens: 768,
-        responseSchema: scoringContract.responseSchema,
+        responseSchema: createProviderResponseSchema(scoringContract, rubric),
       });
     } catch (error) {
       if (error instanceof ProviderRequestError) {
-        const diagnostic: CandidateMmiProviderFailureDiagnostic = {
+        const baseDiagnostic = {
           requestId:
             sanitizeDiagnosticRequestId(request.headers.get('x-request-id')) ??
             null,
           provider: providerName(configuration.config.provider),
           code: 'provider_failed',
-        };
-        if (error.status !== undefined) diagnostic.status = error.status;
+        } as const;
+        const diagnostic: CandidateMmiProviderFailureDiagnostic =
+          error.status === undefined
+            ? baseDiagnostic
+            : { ...baseDiagnostic, status: error.status };
         try {
           logProviderFailure(diagnostic);
         } catch {
@@ -519,27 +642,63 @@ export function createCandidateMmiScoringHandler(
 
     let assessment: MmiAssessment;
     try {
-      const rawAssessment = parseProviderJson(providerPayload);
-      if (!validateJsonSchema(rawAssessment, scoringContract.responseSchema)) {
-        throw new Error('Invalid provider response');
+      let rawAssessment: unknown;
+      try {
+        rawAssessment = parseProviderJson(providerPayload);
+      } catch {
+        throw new InvalidProviderAssessmentError('json_parse', 'malformed_json');
       }
-      const parsedProvider = parseProviderAssessmentForContract(
-        rawAssessment,
-        scoringContract,
-        rubric,
-        claim.transcript,
-      );
-      const publicContext = createMmiPublicOutputContext({
-        rubric,
-        scoringContractVersion: scoringContract.version,
-        studentFeedbackCatalog: scoringContract.studentFeedbackCatalog,
-      });
-      assessment = toPublicMmiAssessment(
-        parsedProvider,
-        claim.transcript,
-        publicContext,
-      );
-    } catch {
+      if (!validateJsonSchema(rawAssessment, scoringContract.responseSchema)) {
+        throw new InvalidProviderAssessmentError(
+          'response_schema',
+          'schema_mismatch',
+        );
+      }
+      let parsedProvider;
+      try {
+        parsedProvider = parseProviderAssessmentForContract(
+          rawAssessment,
+          scoringContract,
+          rubric,
+          claim.transcript,
+        );
+      } catch (error) {
+        throw new InvalidProviderAssessmentError(
+          'contract_validation',
+          contractValidationReason(error),
+        );
+      }
+      try {
+        const publicContext = createMmiPublicOutputContext({
+          rubric,
+          scoringContractVersion: scoringContract.version,
+          studentFeedbackCatalog: scoringContract.studentFeedbackCatalog,
+        });
+        assessment = toPublicMmiAssessment(
+          parsedProvider,
+          claim.transcript,
+          publicContext,
+        );
+      } catch {
+        throw new InvalidProviderAssessmentError('public_mapping', 'other');
+      }
+    } catch (error) {
+      const invalidResponse = error instanceof InvalidProviderAssessmentError
+        ? error
+        : new InvalidProviderAssessmentError('public_mapping', 'other');
+      try {
+        logProviderFailure({
+          requestId:
+            sanitizeDiagnosticRequestId(request.headers.get('x-request-id')) ??
+            null,
+          provider: providerName(configuration.config.provider),
+          code: 'invalid_provider_response',
+          stage: invalidResponse.stage,
+          reason: invalidResponse.reason,
+        });
+      } catch {
+        // Diagnostics must never affect the response or leak private values.
+      }
       await failClaimSafely(
         repository,
         claim,
