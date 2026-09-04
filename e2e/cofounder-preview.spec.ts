@@ -468,23 +468,24 @@ test('orientation keeps the next-station plate above its heading', async ({ page
   expect(stationPlateBox!.y + stationPlateBox!.height).toBeLessThanOrEqual(headingBox!.y);
 });
 
-test('candidate-disabled fallback keeps the flat chooser and legacy session available', async ({ page }) => {
+test('practice presents one 11-minute MMI station without a flat question chooser', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('02 Practise').click();
 
-  await expect(page.getByText('Candidate station', { exact: true })).toHaveCount(0);
-  await page.getByText('Ethics', { exact: true }).click();
+  await expect(page.getByText('11-minute MMI station', { exact: true })).toBeVisible();
+  await expect(page.getByText('One-minute brief, followed by five two-minute questions.', { exact: true }))
+    .toBeVisible();
+  await expect(page.getByText('Ethics', { exact: true })).toHaveCount(0);
   await page.getByText('Enter station', { exact: true }).click();
-  await expect(page).toHaveURL(/\/practice\/session/);
-  await expect(page.getByLabel('Your practice response')).toBeVisible();
+  await expect(page).toHaveURL(/\/practice\/mmi-station$/);
+  await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
 });
 
-test('candidate station follows only the current trusted prompt across timer expiry and re-entry', async ({ page }) => {
+test('MMI station follows only the current trusted prompt across timer expiry and re-entry', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   await page.goto('/');
   await page.getByLabel('02 Practise').click();
 
-  await page.getByText('Candidate station', { exact: true }).click();
   await page.getByText('Enter station', { exact: true }).click();
   await expect(page).toHaveURL(/\/practice\/mmi-station$/);
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
@@ -541,7 +542,7 @@ test('candidate station follows only the current trusted prompt across timer exp
     .toEqual(['start', 'get', 'get', 'get', 'get', 'get', 'get', 'get', 'get']);
 });
 
-test('candidate speech stays editable, checkpoints text, restarts safely, and restores paused', async ({ page }) => {
+test('MMI speech stays editable, checkpoints text, restarts safely, and restores paused', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectResponse(1, 'Restored opening', 2);
   await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
@@ -605,7 +606,7 @@ test('candidate speech stays editable, checkpoints text, restarts safely, and re
   await expect(page.getByRole('textbox', { name: 'Your response transcript' })).toBeEditable();
 });
 
-test('candidate deadline stops speech and finalizes without transcript or media', async ({ page }) => {
+test('MMI deadline stops speech and finalizes without early scoring or media', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectExpiringResponse(1, '');
   controller.advanceTo(candidateResponseProjections[2]);
@@ -630,11 +631,7 @@ test('candidate deadline stops speech and finalizes without transcript or media'
     p_session_id: candidateStationSessionId,
     p_prompt_order: 1,
   });
-  await expect.poll(() => controller.scoringRequests().length).toBe(1);
-  expect(controller.scoringRequests()[0]).toEqual({
-    sessionId: candidateStationSessionId,
-    promptOrder: 1,
-  });
+  await expect.poll(() => controller.scoringRequests().length).toBe(0);
   const nativeStops = await page.evaluate(() => (
     (window as unknown as {
       __candidateMmiSpeech: { counts: () => { stopCount: number } };
@@ -643,7 +640,7 @@ test('candidate deadline stops speech and finalizes without transcript or media'
   expect(nativeStops).toBeGreaterThanOrEqual(1);
 });
 
-test('candidate completion renders five ordered transcript-only feedback results', async ({ page }) => {
+test('MMI completion starts all five scores and renders ordered transcript-only feedback', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectCompleted();
   await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
@@ -659,16 +656,23 @@ test('candidate completion renders five ordered transcript-only feedback results
   expect(lastBox).not.toBeNull();
   expect(firstBox!.y).toBeLessThan(lastBox!.y);
   expect(controller.rpcCalls()).toContain('feedback');
+  await expect.poll(() => controller.scoringRequests().length).toBe(5);
+  expect(controller.scoringRequests()).toEqual(
+    ([1, 2, 3, 4, 5] as const).map(promptOrder => ({
+      sessionId: candidateStationSessionId,
+      promptOrder,
+    })),
+  );
 });
 
-test('candidate leave abandons exactly once from a current response and returns to practice', async ({ page }) => {
+test('MMI leave abandons exactly once from a current response and returns to practice', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectResponse(1);
   await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
 
   await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toBeVisible();
   await page.getByText('Leave', { exact: true }).click();
-  await expect(page.getByText('Leave candidate station?', { exact: true })).toBeVisible();
+  await expect(page.getByText('Leave MMI station?', { exact: true })).toBeVisible();
   await page.getByText('Leave station', { exact: true }).click();
   await expect(page).toHaveURL(/\/practice$/);
   expect(controller.abandonCount()).toBe(1);
@@ -685,7 +689,7 @@ test('admin profile links directly to the Question Desk', async ({ page }) => {
   await expect(page.getByText('Add practice questions')).toBeVisible();
 });
 
-test('partner completes practice, sends feedback, and signs out', async ({ page }) => {
+test('partner sends feedback, opens the MMI station, and signs out safely', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Ready, Partner.')).toBeVisible();
 
@@ -701,21 +705,11 @@ test('partner completes practice, sends feedback, and signs out', async ({ page 
 
   await page.getByText('Back to orient', { exact: true }).click();
   await page.getByLabel('02 Practise').click();
-  await expect(page.getByText('2 ACTIVE')).toBeVisible();
-  await expect(page.getByText('CLOSED', { exact: true }).first()).toBeVisible();
-  await page.getByText('Ethics', { exact: true }).click();
+  await expect(page.getByText('11-minute MMI station', { exact: true })).toBeVisible();
   await page.getByText('Enter station', { exact: true }).click();
-  await expect(page.getByText('LAMINATED CANDIDATE BRIEF')).toBeVisible();
-  await page.getByLabel('Your practice response').fill(
-    'I would first explore the patient’s concerns, confirm capacity, explain benefits and risks clearly, respect autonomy, and seek senior support if safety concerns remained.',
-  );
-  await page.getByText('Submit answer', { exact: true }).click();
-  await expect(page.getByText('Station feedback')).toBeVisible();
-  await expect(page.getByText('80%')).toBeVisible();
-
-  await page.getByText('Open progress', { exact: true }).click();
-  await expect(page.getByText('Progress record')).toBeVisible();
-  await page.getByRole('tab', { name: '01 Orient' }).click();
+  await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
+  await page.goto('/');
+  await expect(page.getByText('Ready, Partner.')).toBeVisible();
   await page.getByRole('button', { name: 'Open profile' }).last().click();
   await page.getByText('Sign out', { exact: true }).click();
   await page.getByText('Sign out', { exact: true }).last().click();
@@ -732,7 +726,7 @@ test('partner completes practice, sends feedback, and signs out', async ({ page 
   await expect(page.getByText('Your response balanced autonomy with a clear safety plan.')).toHaveCount(0);
   await expect(page.getByText(/I would first explore the patient/)).toHaveCount(0);
   await page.getByText('Choose a station', { exact: true }).click();
-  await expect(page.getByText('Choose a station door')).toBeVisible();
+  await expect(page.getByText('MMI practice', { exact: true })).toBeVisible();
 
   await page.goto('/admin/questions');
   await expect(page.getByText('Ready, Second.').last()).toBeVisible();
