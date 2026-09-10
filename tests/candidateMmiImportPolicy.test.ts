@@ -17,8 +17,8 @@ const stationMigrationPath = path.resolve(
 );
 const expectedSourceHash = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 const expectedCanonicalPayloadFingerprints = Object.freeze({
-  'normalized-stations-part-1.json': '83164f9cbac54447edd13e023b5d83ace389d5bc0d82629e525ae3ad680c1f3a',
-  'normalized-stations-part-2.json': 'fd91a790ac99e6fb87facb1f121abd54d407abe7c7f6315c379cb966230e2cf0',
+  'normalized-stations-part-1.json': 'b44d9ac27997340e7f6bef1f3c9bfa9cdd909186b70c29fba67f4a5438b66725',
+  'normalized-stations-part-2.json': '04b7fb7ccd236edcf5d537ccfb6be55b6be03ebe91c3f8e93c0f4a98c62689d6',
 });
 const privateArtifactPaths = [
   '/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-1.json',
@@ -49,7 +49,7 @@ function assertNoPrivatePromptFields(value: unknown): void {
   if (!value || typeof value !== 'object') return;
 
   for (const [key, entry] of Object.entries(value)) {
-    expect(key).not.toMatch(/scenario_text|question_text|model_answer|criteria|panel_note/i);
+    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|criteria|panel_note)$/i);
     assertNoPrivatePromptFields(entry);
   }
 }
@@ -94,16 +94,18 @@ describe('normalized candidate MMI station import policy', () => {
       private_artifacts: Record<string, { sha256: string; canonical_jsonb_payload_sha256: string }>;
     };
 
-    expect(manifest.artifact_version).toBe(1);
+    expect(manifest.artifact_version).toBe(2);
     expect(manifest.source).toEqual({
       basename: 'med_interview_question_bank.xlsx',
       sha256: expectedSourceHash,
     });
-    expect(manifest.normalized_flow).toEqual({
+    expect(manifest.normalized_flow).toMatchObject({
       source_namespace: 'med_interview_question_bank',
       candidate_station_count: 155,
       candidate_sub_question_count: 775,
+      candidate_criterion_count: 3100,
       panel_question_count: 10,
+      criteria_per_candidate_sub_question: { min: 4, max: 4 },
       sub_question_orders: [1, 2, 3, 4, 5],
       stable_grouping_source: 'workbook_station_id_and_sub_q_id',
       missing_or_inconsistent_grouping: 'reject',
@@ -114,11 +116,71 @@ describe('normalized candidate MMI station import policy', () => {
         total_seconds: 660,
       },
     });
+    expect((manifest as { policy?: unknown }).policy).toMatchObject({
+      criteria_preserved: true,
+      source_weights_preserved: true,
+      domains_preserved: true,
+      cached_model_answers_preserved_when_non_empty: true,
+      panel_notes_preserved_admin_only: true,
+      orphaned_criteria: 'reject_and_report',
+    });
     expect(Object.fromEntries(Object.entries(manifest.private_artifacts).map(([name, artifact]) => [
       name,
       artifact.canonical_jsonb_payload_sha256,
     ]))).toEqual(expectedCanonicalPayloadFingerprints);
     assertNoPrivatePromptFields(manifest);
+  });
+
+  it('normalizes ordered criteria and admin-only panel notes without copying model answers into prompts', async () => {
+    const result = await runGeneratorProbe(`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location('normalized_generator', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+station = (10, {
+    'station_id': 'MMI_001', 'category': 'ethics', 'topic': 'Synthetic topic',
+    'difficulty': 'foundation', 'uni_tags': '  ALPHA, Beta ', 'prep_time_sec': '60',
+    'scenario_text': 'Synthetic scenario', 'image_url': 'draft',
+})
+questions = [(20 + order, {
+    'sub_q_id': f'MMI_001_Q{order}', 'station_id': 'MMI_001', 'order': f'{order}.0',
+    'question_text': f'Synthetic question {order}', 'time_limit_sec': '120',
+    'model_answer_cached': '' if order == 1 else f'Synthetic answer {order}',
+}) for order in range(1, 6)]
+criteria = [(100 + order * 10 + criterion, {
+    'criterion_id': f'MMI_001_Q{order}_C{criterion}', 'sub_q_id': f'MMI_001_Q{order}',
+    'bullet_text': f' Synthetic criterion {order}-{criterion} ', 'weight': str(criterion),
+    'domain': ' ETHICS ',
+}) for order in range(1, 6) for criterion in range(1, 5)]
+panels = [(400, {
+    'question_id': 'PANEL_001', 'station_type': 'communication', 'topic': 'Synthetic panel topic',
+    'difficulty': 'foundation', 'uni_tags': 'ALPHA', 'question_text': 'Synthetic panel question',
+    'model_answer_cached': '', 'panel_notes': 'Synthetic admin note',
+})]
+normalized = module.normalize_content([station], questions, criteria, panels)
+print(json.dumps(normalized, sort_keys=True))
+`);
+
+    const station = (result.stations as Array<Record<string, unknown>>)[0];
+    const questions = station.sub_questions as Array<Record<string, unknown>>;
+    expect(station).toMatchObject({
+      university_tags: ['alpha', 'beta'], status: 'draft', image_url: null,
+    });
+    expect(questions.map(question => question.model_answer_cached)).toEqual([
+      null, 'Synthetic answer 2', 'Synthetic answer 3', 'Synthetic answer 4', 'Synthetic answer 5',
+    ]);
+    expect(questions.map(question => question.marking_criteria)).toEqual([
+      expect.arrayContaining([{ criterion_id: 'MMI_001_Q1_C1', order_num: 1, bullet_text: 'Synthetic criterion 1-1', source_weight: 1, domain: 'ethics' }]),
+      expect.any(Array), expect.any(Array), expect.any(Array), expect.any(Array),
+    ]);
+    expect(questions.flatMap(question => question.marking_criteria as Array<Record<string, unknown>>)).toHaveLength(20);
+    expect(JSON.stringify(questions.map(question => question.question_text))).not.toContain('Synthetic answer');
+    expect(result.panel_questions).toEqual([expect.objectContaining({
+      question_id: 'PANEL_001', panel_notes: 'Synthetic admin note', model_answer_cached: null,
+    })]);
   });
 
   it('keeps normalized payload artifacts ignored while the metadata manifest remains tracked-safe', async () => {

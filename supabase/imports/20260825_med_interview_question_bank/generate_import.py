@@ -317,9 +317,12 @@ def main() -> None:
                 'medium': 'intermediate',
                 'case_insensitive_allowed_values': ['foundation', 'intermediate', 'advanced'],
             },
-            'criteria_excluded': True,
-            'cached_model_answers_excluded': True,
-            'panel_notes_excluded': True,
+            'artifact_scope': 'legacy_flat_question_projection',
+            'runtime_import': 'normalized-station-manifest.json',
+            'complete_station_import_preservation': (
+                'Criteria, model answers, and panel notes are absent only from this retired flat projection '
+                'and preserved by the runtime complete-station import.'
+            ),
             'guidance_notes_policy': 'timing metadata only',
             'import_identity': {
                 'source_namespace': SOURCE_NAMESPACE,

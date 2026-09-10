@@ -11,7 +11,9 @@
     }
   },
   "policy": {
-    "cached_model_answers_excluded": true,
+    "artifact_scope": "legacy_flat_question_projection",
+    "runtime_import": "normalized-station-manifest.json",
+    "complete_station_import_preservation": "Criteria, model answers, and panel notes are absent only from this retired flat projection and preserved by the runtime complete-station import.",
     "category_mapping": {
       "communication": "scenarios",
       "ethics": "ethics",
@@ -22,7 +24,6 @@
       "professionalism": "ethics",
       "task prioritisation": "teamwork"
     },
-    "criteria_excluded": true,
     "difficulty_normalization": {
       "case_insensitive_allowed_values": [
         "foundation",
@@ -41,7 +42,6 @@
       "source_manifest_sha256": "903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71",
       "source_namespace": "med_interview_question_bank"
     },
-    "panel_notes_excluded": true,
     "repeated_headers_removed": 97
   },
   "prompt_counts": {

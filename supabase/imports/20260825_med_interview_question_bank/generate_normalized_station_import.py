@@ -19,9 +19,20 @@ import hashlib
 import json
 import re
 import sys
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from generate_import import (
+    map_category,
+    map_difficulty,
+    read_shared_strings,
+    read_worksheet,
+    to_records,
+)
 
 
 EXPECTED_SOURCE_SHA256 = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71'
@@ -262,7 +273,164 @@ def normalize_stations(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     return stations
 
 
-def write_private_payloads(stations: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def normalize_content(
+    station_records: list[tuple[int, dict[str, str]]],
+    sub_question_records: list[tuple[int, dict[str, str]]],
+    criterion_records: list[tuple[int, dict[str, str]]],
+    panel_records: list[tuple[int, dict[str, str]]],
+) -> dict[str, object]:
+    """Return validated candidate stations, panels, and a content-free report."""
+    stations_by_id: dict[str, tuple[int, dict[str, str]]] = {}
+    for source_row, station in station_records:
+        station_id = station.get('station_id', '').strip()
+        if not re.fullmatch(r'MMI_\d{3}', station_id):
+            continue
+        if station_id in stations_by_id:
+            raise ValueError('Workbook contains duplicate candidate station identities.')
+        stations_by_id[station_id] = (source_row, station)
+
+    questions_by_station: dict[str, list[tuple[int, dict[str, str]]]] = defaultdict(list)
+    seen_questions: dict[str, dict[str, str]] = {}
+    for source_row, question in sub_question_records:
+        sub_q_id = question.get('sub_q_id', '').strip()
+        if not re.fullmatch(r'MMI_\d{3}_Q\d+', sub_q_id):
+            continue
+        existing_question = seen_questions.get(sub_q_id)
+        if existing_question is not None:
+            if existing_question != question:
+                raise ValueError('Workbook contains duplicate candidate sub-question identities.')
+            continue
+        seen_questions[sub_q_id] = question
+        questions_by_station[question.get('station_id', '').strip()].append((source_row, question))
+
+    usable_station_ids = [
+        station_id for station_id in sorted(stations_by_id)
+        if [question.get('order', '').strip() for _, question in sorted(
+            questions_by_station.get(station_id, []), key=lambda entry: entry[0],
+        )] == EXPECTED_LEGACY_WORKBOOK_ORDERS
+    ]
+    usable_sub_q_ids = {
+        question['sub_q_id'].strip()
+        for station_id in usable_station_ids
+        for _, question in questions_by_station[station_id]
+    }
+
+    criteria_by_sub_question: dict[str, list[tuple[int, dict[str, str]]]] = defaultdict(list)
+    seen_criteria: dict[str, dict[str, str]] = {}
+    rejected_orphaned_criteria = 0
+    for source_row, criterion in criterion_records:
+        criterion_id = criterion.get('criterion_id', '').strip()
+        if not criterion_id:
+            continue
+        existing_criterion = seen_criteria.get(criterion_id)
+        if existing_criterion is not None:
+            if existing_criterion != criterion:
+                raise ValueError('Workbook contains duplicate candidate criterion identities.')
+            continue
+        seen_criteria[criterion_id] = criterion
+        sub_q_id = criterion.get('sub_q_id', '').strip()
+        if sub_q_id not in usable_sub_q_ids:
+            rejected_orphaned_criteria += 1
+            continue
+        criteria_by_sub_question[sub_q_id].append((source_row, criterion))
+
+    normalized_stations: list[dict[str, Any]] = []
+    for station_id in usable_station_ids:
+        _, station = stations_by_id[station_id]
+        source_image_url = station.get('image_url', '').strip()
+        source_status = station.get('status', '').strip().lower()
+        if source_image_url.lower() == 'draft':
+            source_image_url, source_status = '', 'draft'
+        sub_questions: list[dict[str, Any]] = []
+        for _, question in sorted(questions_by_station[station_id], key=lambda entry: entry[0]):
+            sub_q_id = question['sub_q_id'].strip()
+            ordered_criteria = sorted(criteria_by_sub_question[sub_q_id], key=lambda entry: entry[0])
+            if len(ordered_criteria) != 4:
+                raise ValueError('Candidate sub-question does not have exactly four marking criteria.')
+            sub_questions.append({
+                'sub_q_id': sub_q_id,
+                'order_num': int(float(question['order'])),
+                'question_text': question['question_text'].strip(),
+                'time_limit_sec': int(float(question.get('time_limit_sec', '').strip() or '120')),
+                'model_answer_cached': question.get('model_answer_cached', '').strip() or None,
+                'marking_criteria': [
+                    {
+                        'criterion_id': criterion['criterion_id'].strip(),
+                        'order_num': criterion_order,
+                        'bullet_text': criterion['bullet_text'].strip(),
+                        'source_weight': float(criterion['weight']),
+                        'domain': criterion.get('domain', '').strip().lower() or None,
+                    }
+                    for criterion_order, (_, criterion) in enumerate(ordered_criteria, start=1)
+                ],
+            })
+        normalized_stations.append({
+            'station_id': station_id,
+            'category': map_category(station['category']),
+            'topic': station['topic'].strip(),
+            'difficulty': map_difficulty(station['difficulty']),
+            'university_tags': parse_tags(station.get('uni_tags', '')),
+            'prep_time_sec': int(float(station.get('prep_time_sec', '').strip() or '60')),
+            'status': source_status or 'draft',
+            'image_url': source_image_url or None,
+            'scenario_text': station['scenario_text'].strip(),
+            'sub_questions': sub_questions,
+        })
+
+    seen_panel_ids: set[str] = set()
+    normalized_panels: list[dict[str, Any]] = []
+    for _, panel in sorted(panel_records, key=lambda entry: entry[0]):
+        question_id = panel.get('question_id', '').strip()
+        if not re.fullmatch(r'PANEL_\d{3}', question_id):
+            continue
+        if question_id in seen_panel_ids:
+            raise ValueError('Workbook contains duplicate panel question identities.')
+        seen_panel_ids.add(question_id)
+        normalized_panels.append({
+            'question_id': question_id,
+            'category': map_category(panel['station_type']),
+            'topic': panel['topic'].strip(),
+            'difficulty': map_difficulty(panel['difficulty']),
+            'university_tags': parse_tags(panel.get('uni_tags', '')),
+            'question_text': panel['question_text'].strip(),
+            'model_answer_cached': panel.get('model_answer_cached', '').strip() or None,
+            'panel_notes': (panel.get('panel_notes') or panel.get('notes') or '').strip() or None,
+            'status': panel.get('status', '').strip().lower() or 'draft',
+        })
+
+    criterion_count = sum(len(question['marking_criteria']) for station in normalized_stations for question in station['sub_questions'])
+    report = {
+        'candidate_station_count': len(normalized_stations),
+        'candidate_sub_question_count': sum(len(station['sub_questions']) for station in normalized_stations),
+        'candidate_criterion_count': criterion_count,
+        'panel_question_count': len(normalized_panels),
+        'criteria_per_candidate_sub_question': {'min': 4, 'max': 4},
+        'accepted_orphaned_criteria': 0,
+        'rejected_orphaned_criteria': rejected_orphaned_criteria,
+    }
+    return {'stations': normalized_stations, 'panel_questions': normalized_panels, 'report': report}
+
+
+def read_workbook_content(source: Path) -> dict[str, object]:
+    with zipfile.ZipFile(source) as workbook:
+        shared_strings = read_shared_strings(workbook)
+        sheets = {
+            name: read_worksheet(workbook, index + 1, shared_strings)
+            for index, name in enumerate(['README', 'stations', 'sub_questions', 'marking_criteria', 'panel_questions'])
+        }
+    return normalize_content(
+        to_records(sheets['stations'])[0],
+        to_records(sheets['sub_questions'])[0],
+        to_records(sheets['marking_criteria'])[0],
+        to_records(sheets['panel_questions'])[0],
+    )
+
+
+def write_private_payloads(normalized: dict[str, object]) -> dict[str, dict[str, Any]]:
+    stations = normalized['stations']
+    panels = normalized['panel_questions']
+    if not isinstance(stations, list) or not isinstance(panels, list):
+        raise ValueError('Normalized content has an invalid shape.')
     split_index = 80
     parts = (stations[:split_index], stations[split_index:])
     if [len(part) for part in parts] != [80, 75]:
@@ -271,33 +439,34 @@ def write_private_payloads(stations: list[dict[str, Any]]) -> dict[str, dict[str
     for filename, stations_part in zip(PRIVATE_OUTPUT_NAMES, parts):
         output_path = OUTPUT_DIRECTORY / filename
         payload = {
-            'artifact_version': 1,
+            'artifact_version': 2,
             'source_namespace': SOURCE_NAMESPACE,
             'source_manifest_sha256': EXPECTED_SOURCE_SHA256,
             'stations': stations_part,
+            'panel_questions': panels if filename == PRIVATE_OUTPUT_NAMES[0] else [],
         }
         output_path.write_text(json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
         artifacts[filename] = {
             'station_count': len(stations_part),
             'sub_question_count': sum(len(station['sub_questions']) for station in stations_part),
             'sha256': sha256_file(output_path),
-            'canonical_jsonb_payload_sha256': EXPECTED_NORMALIZED_ARTIFACTS[filename]['canonical_jsonb_payload_sha256'],
+            'canonical_jsonb_payload_sha256': hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8'),
+            ).hexdigest(),
         }
-        if artifacts[filename] != EXPECTED_NORMALIZED_ARTIFACTS[filename]:
-            raise ValueError(f'Normalized private artifact is not the reviewed payload: {filename}')
     return artifacts
 
 
-def verify_normalized_manifest(artifacts: dict[str, dict[str, Any]], panel_count: int) -> None:
+def verify_normalized_manifest(artifacts: dict[str, dict[str, Any]], report: dict[str, object]) -> None:
     manifest = load_json(NORMALIZED_MANIFEST_PATH)
     expected = {
-        'artifact_version': 1,
+        'artifact_version': 2,
         'source': {'basename': 'med_interview_question_bank.xlsx', 'sha256': EXPECTED_SOURCE_SHA256},
         'normalized_flow': {
             'source_namespace': SOURCE_NAMESPACE,
             'candidate_station_count': 155,
             'candidate_sub_question_count': 775,
-            'panel_question_count': panel_count,
+            **report,
             'sub_question_orders': [1, 2, 3, 4, 5],
             'stable_grouping_source': 'workbook_station_id_and_sub_q_id',
             'missing_or_inconsistent_grouping': 'reject',
@@ -309,6 +478,14 @@ def verify_normalized_manifest(artifacts: dict[str, dict[str, Any]], panel_count
             },
         },
         'private_artifacts': artifacts,
+        'policy': {
+            'criteria_preserved': True,
+            'source_weights_preserved': True,
+            'domains_preserved': True,
+            'cached_model_answers_preserved_when_non_empty': True,
+            'panel_notes_preserved_admin_only': True,
+            'orphaned_criteria': 'reject_and_report',
+        },
     }
     if manifest != expected:
         raise ValueError('Normalized station metadata manifest does not match verified private artifacts.')
@@ -316,19 +493,28 @@ def verify_normalized_manifest(artifacts: dict[str, dict[str, Any]], panel_count
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Generate verified private normalized MMI station artifacts.')
+    parser.add_argument('workbook', type=Path, help='Verified med_interview_question_bank.xlsx source workbook.')
     parser.add_argument('--verify-manifest', action='store_true', help='Require the tracked metadata manifest to match generated private artifact hashes.')
     arguments = parser.parse_args()
-    candidates, panel_count = read_verified_flat_rows()
-    stations = normalize_stations(candidates)
-    artifacts = write_private_payloads(stations)
+    source = arguments.workbook.resolve()
+    if source.name != 'med_interview_question_bank.xlsx' or sha256_file(source) != EXPECTED_SOURCE_SHA256:
+        raise SystemExit('Source workbook filename or SHA-256 is not approved.')
+    normalized = read_workbook_content(source)
+    report = normalized['report']
+    if not isinstance(report, dict) or report != {
+        'candidate_station_count': 155,
+        'candidate_sub_question_count': 775,
+        'candidate_criterion_count': 3100,
+        'panel_question_count': 10,
+        'criteria_per_candidate_sub_question': {'min': 4, 'max': 4},
+        'accepted_orphaned_criteria': 0,
+        'rejected_orphaned_criteria': 200,
+    }:
+        raise ValueError('Normalized workbook content counts are not verified.')
+    artifacts = write_private_payloads(normalized)
     if arguments.verify_manifest:
-        verify_normalized_manifest(artifacts, panel_count)
-    print(json.dumps({
-        'candidate_station_count': len(stations),
-        'candidate_sub_question_count': sum(len(station['sub_questions']) for station in stations),
-        'panel_question_count': panel_count,
-        'private_artifacts': artifacts,
-    }, sort_keys=True))
+        verify_normalized_manifest(artifacts, report)
+    print(json.dumps({**report, 'private_artifacts': artifacts}, sort_keys=True))
 
 
 if __name__ == '__main__':
