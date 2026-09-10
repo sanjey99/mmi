@@ -28,9 +28,9 @@ describe('20260825 medical-interview question-bank import policy', () => {
       policy: {
         repeated_headers_removed: number;
         exact_duplicate_rows_deduplicated: number;
-        criteria_excluded: boolean;
-        cached_model_answers_excluded: boolean;
-        panel_notes_excluded: boolean;
+        artifact_scope: string;
+        runtime_import: string;
+        complete_station_import_preservation: string;
         guidance_notes_policy: string;
         import_identity: {
           source_namespace: string;
@@ -70,9 +70,9 @@ describe('20260825 medical-interview question-bank import policy', () => {
     expect(manifest.policy).toMatchObject({
       repeated_headers_removed: 97,
       exact_duplicate_rows_deduplicated: 25,
-      criteria_excluded: true,
-      cached_model_answers_excluded: true,
-      panel_notes_excluded: true,
+      artifact_scope: 'legacy_flat_question_projection',
+      runtime_import: 'normalized-station-manifest.json',
+      complete_station_import_preservation: 'Criteria, model answers, and panel notes are absent only from this retired flat projection and preserved by the runtime complete-station import.',
       guidance_notes_policy: 'timing metadata only',
       import_identity: {
         source_namespace: 'med_interview_question_bank',
@@ -130,9 +130,9 @@ describe('20260825 medical-interview question-bank import policy', () => {
       expect(generator).toContain(`    '${header}',`);
     }
     expect(csvHeaders).not.toMatch(/criteria|model_answer|panel_notes/);
-    expect(generator).toContain("'criteria_excluded': True,");
-    expect(generator).toContain("'cached_model_answers_excluded': True,");
-    expect(generator).toContain("'panel_notes_excluded': True,");
+    expect(generator).toContain("'artifact_scope': 'legacy_flat_question_projection',");
+    expect(generator).toContain("'runtime_import': 'normalized-station-manifest.json',");
+    expect(generator).toContain("'complete_station_import_preservation': (");
     expect(generator).toContain("'guidance_notes_policy': 'timing metadata only',");
     expect(generator).toContain("'source_namespace': SOURCE_NAMESPACE,");
     expect(generator).toContain("'source_manifest_sha256': EXPECTED_SOURCE_SHA256,");

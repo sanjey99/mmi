@@ -10,6 +10,8 @@
     },
     "accepted_orphaned_criteria": 0,
     "rejected_orphaned_criteria": 200,
+    "rejected_duplicate_sub_questions": 25,
+    "rejected_duplicate_criteria": 0,
     "missing_or_inconsistent_grouping": "reject",
     "panel_question_count": 10,
     "source_namespace": "med_interview_question_bank",

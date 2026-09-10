@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Normalize verified private flat prompt artifacts into private station payloads.
+"""Normalize the verified private workbook into complete private station payloads.
 
-The original workbook is intentionally not required at this stage. This script
-accepts only the committed flat manifest plus its two verified, ignored CSV
-artifacts. It groups candidate prompts exclusively by the source-owned
-``MMI_###/MMI_###_Q#`` provenance identity and excludes source-owned
-``PANEL_###`` records. It never derives membership from prompt wording.
+The script accepts the approved workbook directly and reads its ZIP/XML sheets
+with the legacy standard-library helpers. It preserves station, rubric, cached
+model-answer, and admin-only panel data without deriving membership from prompt
+wording.
 
 Generated JSON payloads contain private candidate content and are ignored. This
 script prints only counts and SHA-256 values; it never prints prompt content.
@@ -291,17 +290,23 @@ def normalize_content(
 
     questions_by_station: dict[str, list[tuple[int, dict[str, str]]]] = defaultdict(list)
     seen_questions: dict[str, dict[str, str]] = {}
+    duplicate_question_ids: set[str] = set()
     for source_row, question in sub_question_records:
         sub_q_id = question.get('sub_q_id', '').strip()
         if not re.fullmatch(r'MMI_\d{3}_Q\d+', sub_q_id):
             continue
-        existing_question = seen_questions.get(sub_q_id)
-        if existing_question is not None:
-            if existing_question != question:
-                raise ValueError('Workbook contains duplicate candidate sub-question identities.')
+        if sub_q_id in seen_questions:
+            duplicate_question_ids.add(sub_q_id)
             continue
         seen_questions[sub_q_id] = question
-        questions_by_station[question.get('station_id', '').strip()].append((source_row, question))
+        station_id = question.get('station_id', '').strip()
+        try:
+            order_num = int(float(question.get('order', '')))
+        except ValueError as error:
+            raise ValueError('Candidate sub-question order is invalid.') from error
+        if sub_q_id != f'{station_id}_Q{order_num}':
+            raise ValueError('Candidate sub-question provenance does not belong to its station.')
+        questions_by_station[station_id].append((source_row, question))
 
     usable_station_ids = [
         station_id for station_id in sorted(stations_by_id)
@@ -317,15 +322,14 @@ def normalize_content(
 
     criteria_by_sub_question: dict[str, list[tuple[int, dict[str, str]]]] = defaultdict(list)
     seen_criteria: dict[str, dict[str, str]] = {}
+    duplicate_criterion_records: list[dict[str, str]] = []
     rejected_orphaned_criteria = 0
     for source_row, criterion in criterion_records:
         criterion_id = criterion.get('criterion_id', '').strip()
         if not criterion_id:
             continue
-        existing_criterion = seen_criteria.get(criterion_id)
-        if existing_criterion is not None:
-            if existing_criterion != criterion:
-                raise ValueError('Workbook contains duplicate candidate criterion identities.')
+        if criterion_id in seen_criteria:
+            duplicate_criterion_records.append(criterion)
             continue
         seen_criteria[criterion_id] = criterion
         sub_q_id = criterion.get('sub_q_id', '').strip()
@@ -333,6 +337,8 @@ def normalize_content(
             rejected_orphaned_criteria += 1
             continue
         criteria_by_sub_question[sub_q_id].append((source_row, criterion))
+    if any(record.get('sub_q_id', '').strip() in usable_sub_q_ids for record in duplicate_criterion_records):
+        raise ValueError('Workbook contains duplicate candidate criterion identities.')
 
     normalized_stations: list[dict[str, Any]] = []
     for station_id in usable_station_ids:
@@ -407,6 +413,8 @@ def normalize_content(
         'criteria_per_candidate_sub_question': {'min': 4, 'max': 4},
         'accepted_orphaned_criteria': 0,
         'rejected_orphaned_criteria': rejected_orphaned_criteria,
+        'rejected_duplicate_sub_questions': len(duplicate_question_ids),
+        'rejected_duplicate_criteria': len(duplicate_criterion_records),
     }
     return {'stations': normalized_stations, 'panel_questions': normalized_panels, 'report': report}
 
@@ -509,6 +517,8 @@ def main() -> None:
         'criteria_per_candidate_sub_question': {'min': 4, 'max': 4},
         'accepted_orphaned_criteria': 0,
         'rejected_orphaned_criteria': 200,
+        'rejected_duplicate_sub_questions': 25,
+        'rejected_duplicate_criteria': 0,
     }:
         raise ValueError('Normalized workbook content counts are not verified.')
     artifacts = write_private_payloads(normalized)

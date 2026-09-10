@@ -172,15 +172,56 @@ print(json.dumps(normalized, sort_keys=True))
     expect(questions.map(question => question.model_answer_cached)).toEqual([
       null, 'Synthetic answer 2', 'Synthetic answer 3', 'Synthetic answer 4', 'Synthetic answer 5',
     ]);
-    expect(questions.map(question => question.marking_criteria)).toEqual([
-      expect.arrayContaining([{ criterion_id: 'MMI_001_Q1_C1', order_num: 1, bullet_text: 'Synthetic criterion 1-1', source_weight: 1, domain: 'ethics' }]),
-      expect.any(Array), expect.any(Array), expect.any(Array), expect.any(Array),
-    ]);
+    expect(questions.map(question => question.marking_criteria)).toEqual(
+      Array.from({ length: 5 }, (_, questionIndex) => Array.from({ length: 4 }, (_, criterionIndex) => ({
+        criterion_id: `MMI_001_Q${questionIndex + 1}_C${criterionIndex + 1}`,
+        order_num: criterionIndex + 1,
+        bullet_text: `Synthetic criterion ${questionIndex + 1}-${criterionIndex + 1}`,
+        source_weight: criterionIndex + 1,
+        domain: 'ethics',
+      }))),
+    );
     expect(questions.flatMap(question => question.marking_criteria as Array<Record<string, unknown>>)).toHaveLength(20);
     expect(JSON.stringify(questions.map(question => question.question_text))).not.toContain('Synthetic answer');
     expect(result.panel_questions).toEqual([expect.objectContaining({
       question_id: 'PANEL_001', panel_notes: 'Synthetic admin note', model_answer_cached: null,
     })]);
+  });
+
+  it('rejects mismatched, duplicate, and orphaned criterion provenance before import', async () => {
+    const result = await runGeneratorProbe(`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location('normalized_generator', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+station = (1, {'station_id': 'MMI_001', 'category': 'ethics', 'topic': 'Synthetic', 'difficulty': 'foundation', 'uni_tags': 'synthetic', 'prep_time_sec': '60', 'scenario_text': 'Synthetic'})
+questions = [(order, {'sub_q_id': f'MMI_001_Q{order}', 'station_id': 'MMI_001', 'order': f'{order}.0', 'question_text': f'Question {order}', 'time_limit_sec': '120', 'model_answer_cached': ''}) for order in range(1, 6)]
+criteria = [(100 + order * 10 + criterion, {'criterion_id': f'MMI_001_Q{order}_C{criterion}', 'sub_q_id': f'MMI_001_Q{order}', 'bullet_text': f'Criterion {order}-{criterion}', 'weight': '1', 'domain': 'ethics'}) for order in range(1, 6) for criterion in range(1, 5)]
+cases = {
+  'mismatched_suffix': ([(1, {**questions[0][1], 'sub_q_id': 'MMI_001_Q9'})] + questions[1:], criteria),
+  'duplicate_question': (questions + [(99, dict(questions[0][1]))], criteria),
+  'duplicate_criterion': (questions, criteria + [(999, dict(criteria[0][1]))]),
+  'orphan_criterion': (questions, criteria + [(1000, {'criterion_id': 'ORPHAN_001', 'sub_q_id': 'MMI_999_Q1', 'bullet_text': 'Orphan', 'weight': '1', 'domain': 'ethics'})]),
+}
+outcomes = {}
+for name, (case_questions, case_criteria) in cases.items():
+    try:
+        value = module.normalize_content([station], case_questions, case_criteria, [])
+        outcomes[name] = {'rejected': False, 'report': value['report']}
+    except ValueError:
+        outcomes[name] = {'rejected': True}
+print(json.dumps(outcomes, sort_keys=True))
+`);
+
+    expect(result).toMatchObject({
+      mismatched_suffix: { rejected: true },
+      duplicate_question: { rejected: false, report: { candidate_station_count: 1, rejected_duplicate_sub_questions: 1 } },
+      duplicate_criterion: { rejected: true },
+      orphan_criterion: { rejected: false, report: { rejected_orphaned_criteria: 1, accepted_orphaned_criteria: 0 } },
+    });
   });
 
   it('keeps normalized payload artifacts ignored while the metadata manifest remains tracked-safe', async () => {
