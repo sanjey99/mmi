@@ -49,7 +49,7 @@ function assertNoPrivatePromptFields(value: unknown): void {
   if (!value || typeof value !== 'object') return;
 
   for (const [key, entry] of Object.entries(value)) {
-    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|model_answer_cached|criteria|marking_criteria|panel_note|panel_notes)$/i);
+    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|model_answer_cached|criteria|marking_criteria|bullet_text|panel_note|panel_notes)$/i);
     assertNoPrivatePromptFields(entry);
   }
 }
@@ -63,6 +63,7 @@ describe('normalized candidate MMI station import policy', () => {
       'model_answer_cached',
       'criteria',
       'marking_criteria',
+      'bullet_text',
       'panel_note',
       'panel_notes',
     ]) {
