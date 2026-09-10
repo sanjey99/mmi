@@ -49,12 +49,28 @@ function assertNoPrivatePromptFields(value: unknown): void {
   if (!value || typeof value !== 'object') return;
 
   for (const [key, entry] of Object.entries(value)) {
-    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|criteria|panel_note)$/i);
+    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|model_answer_cached|criteria|marking_criteria|panel_note|panel_notes)$/i);
     assertNoPrivatePromptFields(entry);
   }
 }
 
 describe('normalized candidate MMI station import policy', () => {
+  it('rejects every private payload field name from tracked metadata', () => {
+    for (const privateKey of [
+      'scenario_text',
+      'question_text',
+      'model_answer',
+      'model_answer_cached',
+      'criteria',
+      'marking_criteria',
+      'panel_note',
+      'panel_notes',
+    ]) {
+      expect(() => assertNoPrivatePromptFields({ [privateKey]: 'synthetic private value' })).toThrow();
+    }
+    expect(() => assertNoPrivatePromptFields({ criteria_per_candidate_sub_question: { min: 4, max: 4 } })).not.toThrow();
+  });
+
   it('ships a verified local-only generator instead of inferring candidate groups from prompt wording', async () => {
     const generatorExists = await exists(generatorPath);
 
