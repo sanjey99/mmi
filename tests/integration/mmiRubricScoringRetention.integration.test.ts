@@ -59,7 +59,7 @@ function scoredUsage(overrides: Record<string, unknown> = {}) {
   return {
     provider: 'anthropic', model: 'local-test', inputTokens: 1, cachedInputTokens: 0,
     outputTokens: 1, inputRatePerMillion: 0, cachedInputRatePerMillion: 0,
-    outputRatePerMillion: 0, currency: 'USD', estimatedCost: 0, latencyMs: 1,
+    outputRatePerMillion: 0, currency: 'USD', estimatedCost: '0.00000000', latencyMs: 1,
     outcome: 'scored', ...overrides,
   };
 }
@@ -109,10 +109,25 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
       p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: precisionLease,
       p_public_assessment: assessmentFor(criteria),
-      p_usage: scoredUsage({ inputTokens: 123, inputRatePerMillion: 0.123456, estimatedCost: 0.00001519 }),
+      p_usage: scoredUsage({ inputTokens: 123, inputRatePerMillion: 0.123456, estimatedCost: '0.00001519' }),
     });
     assert.equal(completion.error, null, completion.error?.message);
     assert.equal(sql(`SELECT estimated_cost::text || '|' || (SELECT coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}') || '|' || (SELECT count(*) FROM public.candidate_mmi_station_response_drafts WHERE session_id='${fixture.sessionId}') FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '0.00001519|<null>|0');
+  });
+
+  it('accepts a lossless fixed cost above JavaScript scaled-integer precision', async () => {
+    const fixture = createResponseFixture('large precision transcript');
+    const precisionLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: precisionLease });
+    assert.equal(claim.error, null, claim.error?.message);
+    const criteria = (claim.data as { criteria: Array<{ criterionId: string }> }).criteria;
+    const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: precisionLease,
+      p_public_assessment: assessmentFor(criteria),
+      p_usage: scoredUsage({ inputTokens: 9007199254740991, inputRatePerMillion: 0.000001, estimatedCost: '9007.19925474' }),
+    });
+    assert.equal(completion.error, null, completion.error?.message);
+    assert.equal(sql(`SELECT estimated_cost::text FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '9007.19925474');
   });
 
   it('rolls back completion when inserting its usage event fails, leaving an unscored retryable transcript', async () => {

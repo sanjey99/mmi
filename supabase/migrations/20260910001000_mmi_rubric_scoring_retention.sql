@@ -103,13 +103,15 @@ RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $fun
     AND (p_scored OR p_usage->>'outcome' <> 'scored')
     AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY['inputTokens','cachedInputTokens','outputTokens']) key WHERE jsonb_typeof(p_usage->key) <> 'null' AND (jsonb_typeof(p_usage->key) <> 'number' OR (p_usage->>key) !~ '^[0-9]+$' OR (p_usage->>key)::numeric > 9223372036854775807))
     AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY['inputRatePerMillion','cachedInputRatePerMillion','outputRatePerMillion']) key WHERE jsonb_typeof(p_usage->key) <> 'number' OR (p_usage->>key)::numeric < 0 OR (p_usage->>key)::numeric > 99999999.999999 OR scale((p_usage->>key)::numeric) > 6)
-    AND (jsonb_typeof(p_usage->'estimatedCost') = 'null' OR (jsonb_typeof(p_usage->'estimatedCost') = 'number' AND (p_usage->>'estimatedCost')::numeric BETWEEN 0 AND 99999999.99999999 AND scale((p_usage->>'estimatedCost')::numeric) <= 8))
+    AND (jsonb_typeof(p_usage->'estimatedCost') = 'null' OR (jsonb_typeof(p_usage->'estimatedCost') = 'string' AND p_usage->>'estimatedCost' ~ '^(?:0|[1-9][0-9]{0,7})\.[0-9]{8}$' AND (p_usage->>'estimatedCost')::numeric BETWEEN 0 AND 99999999.99999999))
     AND (
       (jsonb_typeof(p_usage->'inputTokens') = 'null' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'null' AND jsonb_typeof(p_usage->'outputTokens') = 'null' AND jsonb_typeof(p_usage->'estimatedCost') = 'null')
       OR
-      (jsonb_typeof(p_usage->'inputTokens') = 'number' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'number' AND jsonb_typeof(p_usage->'outputTokens') = 'number' AND jsonb_typeof(p_usage->'estimatedCost') = 'number' AND (p_usage->>'estimatedCost')::numeric = round(((p_usage->>'inputTokens')::numeric * (p_usage->>'inputRatePerMillion')::numeric + (p_usage->>'cachedInputTokens')::numeric * (p_usage->>'cachedInputRatePerMillion')::numeric + (p_usage->>'outputTokens')::numeric * (p_usage->>'outputRatePerMillion')::numeric) / 1000000, 8))
+      (jsonb_typeof(p_usage->'inputTokens') = 'number' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'number' AND jsonb_typeof(p_usage->'outputTokens') = 'number' AND jsonb_typeof(p_usage->'estimatedCost') = 'string' AND (p_usage->>'estimatedCost')::numeric = round(((p_usage->>'inputTokens')::numeric * (p_usage->>'inputRatePerMillion')::numeric + (p_usage->>'cachedInputTokens')::numeric * (p_usage->>'cachedInputRatePerMillion')::numeric + (p_usage->>'outputTokens')::numeric * (p_usage->>'outputRatePerMillion')::numeric) / 1000000, 8))
+      OR
+      (jsonb_typeof(p_usage->'inputTokens') = 'number' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'number' AND jsonb_typeof(p_usage->'outputTokens') = 'number' AND jsonb_typeof(p_usage->'estimatedCost') = 'null' AND p_usage->>'outcome' = 'persistence_failed')
     )
-    AND (NOT p_scored OR (jsonb_typeof(p_usage->'estimatedCost') = 'number' AND jsonb_typeof(p_usage->'inputTokens') = 'number' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'number' AND jsonb_typeof(p_usage->'outputTokens') = 'number'));
+    AND (NOT p_scored OR (jsonb_typeof(p_usage->'estimatedCost') = 'string' AND jsonb_typeof(p_usage->'inputTokens') = 'number' AND jsonb_typeof(p_usage->'cachedInputTokens') = 'number' AND jsonb_typeof(p_usage->'outputTokens') = 'number'));
 $function$;
 ALTER TABLE public.candidate_mmi_station_responses
   ADD CONSTRAINT candidate_mmi_station_response_public_assessment_valid CHECK (

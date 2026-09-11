@@ -21,7 +21,7 @@ export function calculateEstimatedUsdCost(
   inputRatePerMillion: number,
   cachedInputRatePerMillion: number,
   outputRatePerMillion: number,
-): number {
+): string | null {
   const toMicroRate = (rate: number): bigint => BigInt(Math.round(rate * 1_000_000));
   const numerator =
     BigInt(inputTokens) * toMicroRate(inputRatePerMillion) +
@@ -29,7 +29,8 @@ export function calculateEstimatedUsdCost(
     BigInt(outputTokens) * toMicroRate(outputRatePerMillion);
   // numerator / 10^12 dollars; convert to 10^-8 dollars => divide by 10^4.
   const roundedUnits = (numerator + 5_000n) / 10_000n;
-  const cost = Number(roundedUnits) / 100_000_000;
-  if (!isValidEstimatedUsdCost(cost)) throw new Error('candidate_mmi_usage_cost_out_of_range');
-  return cost;
+  if (roundedUnits > 9_999_999_999_999_999n) return null;
+  const whole = roundedUnits / 100_000_000n;
+  const fraction = (roundedUnits % 100_000_000n).toString().padStart(8, '0');
+  return `${whole.toString()}.${fraction}`;
 }

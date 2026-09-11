@@ -32,7 +32,7 @@ export type CandidateMmiUsage = Readonly<{
   cachedInputRatePerMillion: number;
   outputRatePerMillion: number;
   currency: 'USD';
-  estimatedCost: number | null;
+  estimatedCost: string | null;
   latencyMs: number;
   outcome: 'scored' | 'provider_failed' | 'invalid_response' | 'persistence_failed';
 }>;
@@ -160,6 +160,11 @@ export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScori
       return http.json({ code: 'provider_failed' }, 502);
     }
     const latencyMs = monotonicNow() - startedAt;
+    const overflowUsage = usageFor(config, providerResult, latencyMs, 'persistence_failed');
+    if (providerResult.usage !== null && overflowUsage.estimatedCost === null) {
+      await failClaimSafely(repository, claim, leaseToken, 'usage_cost_overflow', overflowUsage);
+      return http.json({ code: 'unavailable' }, 500);
+    }
     let assessment: PublicRubricAssessment;
     try { assessment = toPublicRubricAssessment(parseRubricProviderAssessment(providerResult.content, claim.criteria, claim.transcript), claim.criteria, claim.transcript); } catch {
       const usage = usageFor(config, providerResult, latencyMs, 'invalid_response');

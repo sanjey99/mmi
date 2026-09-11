@@ -67,7 +67,7 @@ describe('candidate MMI rubric scoring handler', () => {
         { criterionId: 'CRIT_1', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_2', achieved: true, weightPct: 25 },
         { criterionId: 'CRIT_3', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_4', achieved: false, weightPct: 25 },
       ] },
-      p_usage: { provider: 'anthropic', model: 'synthetic-model', inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15, currency: 'USD', estimatedCost: 0.000456, latencyMs: expect.any(Number), outcome: 'scored' },
+      p_usage: { provider: 'anthropic', model: 'synthetic-model', inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15, currency: 'USD', estimatedCost: '0.00045600', latencyMs: expect.any(Number), outcome: 'scored' },
     });
     const persisted = JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls[0]);
     expect(persisted).not.toContain(transcript);
@@ -90,6 +90,21 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(response.status).toBe(502);
     expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ p_error_code: 'provider_failed', p_usage: expect.objectContaining({ outcome: 'provider_failed', estimatedCost: null }) }));
     expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(transcript);
+  });
+
+  it('records token and rate usage when post-provider cost overflows NUMERIC(16,8)', async () => {
+    const overflowingConfig = { ...providerConfig, inputRatePerMillion: 99_999_999.999999 };
+    const repo = repository({ loadProviderConfig: vi.fn(async () => ({ config: overflowingConfig })) });
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({ content: JSON.stringify(providerAssessment), usage: { inputTokens: 2_000_000, cachedInputTokens: 0, outputTokens: 0 } })),
+    }))(scoringRequest());
+    expect(response.status).toBe(500);
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({
+      p_error_code: 'usage_cost_overflow',
+      p_usage: expect.objectContaining({ inputTokens: 2_000_000, inputRatePerMillion: 99_999_999.999999, estimatedCost: null, outcome: 'persistence_failed' }),
+    }));
   });
 
   it('rejects transcript injection before claiming', async () => {

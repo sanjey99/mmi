@@ -848,7 +848,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
         provider: 'anthropic', model: 'local-contract-test', inputTokens: 1,
         cachedInputTokens: 0, outputTokens: 1, inputRatePerMillion: 0,
         cachedInputRatePerMillion: 0, outputRatePerMillion: 0, currency: 'USD',
-        estimatedCost: 0, latencyMs: 1, outcome: 'scored',
+        estimatedCost: '0.00000000', latencyMs: 1, outcome: 'scored',
       } as const;
 
       const responseId = (claim as { responseId: string }).responseId;

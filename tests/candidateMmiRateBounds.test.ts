@@ -20,8 +20,13 @@ describe('candidate MMI USD numeric bounds', () => {
 
   it('rounds valid six-decimal rates to the database NUMERIC(16,8) cost', () => {
     // Raw formula is 0.000015185088, which has twelve fractional places.
-    expect(calculateEstimatedUsdCost(123, 0, 0, 0.123456, 0, 0)).toBe(0.00001519);
+    expect(calculateEstimatedUsdCost(123, 0, 0, 0.123456, 0, 0)).toBe('0.00001519');
     // Half-up ties are resolved deterministically without IEEE-754 drift.
-    expect(calculateEstimatedUsdCost(1, 0, 0, 0.005, 0, 0)).toBe(0.00000001);
+    expect(calculateEstimatedUsdCost(1, 0, 0, 0.005, 0, 0)).toBe('0.00000001');
+  });
+
+  it('keeps costs above Number scaled-integer precision lossless and reports NUMERIC overflow', () => {
+    expect(calculateEstimatedUsdCost(9_007_199_254_740_991, 0, 0, 0.000001, 0, 0)).toBe('9007.19925474');
+    expect(calculateEstimatedUsdCost(9_007_199_254_740_991, 0, 0, 99_999_999.999999, 0, 0)).toBeNull();
   });
 });
