@@ -197,6 +197,26 @@ describe('candidate MMI API transcript boundary', () => {
     });
   });
 
+  it('accepts a bounded admin-created station ID and rejects unsafe station IDs', async () => {
+    const adminStationProjection = Object.freeze({
+      ...scenarioProjection,
+      stationId: 'ADMIN_station-01',
+    });
+
+    await expect(
+      createCandidateMmiApi(rpcClient([{ data: adminStationProjection, error: null }])).start('all'),
+    ).resolves.toEqual(adminStationProjection);
+
+    for (const stationId of ['-unsafe', 'unsafe/slash', 'x'.repeat(101)]) {
+      await expect(
+        createCandidateMmiApi(rpcClient([{
+          data: { ...scenarioProjection, stationId },
+          error: null,
+        }])).start('all'),
+      ).rejects.toMatchObject({ kind: 'invalid_response' });
+    }
+  });
+
   it('accepts only owned structured results and history without answer content', async () => {
     const result = Object.freeze({
       sessionId,

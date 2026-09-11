@@ -62,6 +62,7 @@ type TerminalClaim =
   | Readonly<{ status: 'no_response' }>
   | Readonly<{ status: 'in_progress' }>
   | Readonly<{ status: 'unavailable' }>
+  | Readonly<{ status: 'rate_limited'; retryAfterSeconds: number; retryAt: string }>
   | Readonly<{ status: 'scored' }>;
 type Claim = TerminalClaim | ClaimedResponse;
 
@@ -103,6 +104,21 @@ function parseClaim(value: unknown, request: ScoringRequest): Claim | null {
     if (claim.status === 'unavailable') return { status: 'unavailable' };
     if (claim.status === 'scored') return { status: 'scored' };
   }
+  if (
+    hasExactKeys(claim, ['status', 'retryAfterSeconds', 'retryAt'])
+    && claim.status === 'rate_limited'
+    && Number.isInteger(claim.retryAfterSeconds)
+    && (claim.retryAfterSeconds as number) >= 1
+    && (claim.retryAfterSeconds as number) <= 3_600
+    && boundedText(claim.retryAt, 40)
+    && Number.isFinite(Date.parse(claim.retryAt as string))
+  ) {
+    return {
+      status: 'rate_limited',
+      retryAfterSeconds: claim.retryAfterSeconds as number,
+      retryAt: claim.retryAt as string,
+    };
+  }
   if (!hasExactKeys(claim, ['status', 'responseId', 'sessionId', 'promptOrder', 'scenarioText', 'promptText', 'transcript', 'criteria', 'scoringContractVersion']) || claim.status !== 'claimed' || typeof claim.responseId !== 'string' || !UUID_PATTERN.test(claim.responseId) || claim.sessionId !== request.sessionId || claim.promptOrder !== request.promptOrder || !boundedText(claim.scenarioText) || !boundedText(claim.promptText) || !boundedText(claim.transcript, MAX_TRANSCRIPT_CODE_POINTS) || !boundedText(claim.scoringContractVersion, 100)) return null;
   const criteria = parseCriteria(claim.criteria);
   return criteria === null ? null : Object.freeze({ status: 'claimed', responseId: claim.responseId, sessionId: request.sessionId, promptOrder: request.promptOrder, scenarioText: claim.scenarioText, promptText: claim.promptText, transcript: claim.transcript, criteria, scoringContractVersion: claim.scoringContractVersion });
@@ -143,6 +159,11 @@ export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScori
     if (claim.status === 'no_response') return http.json({ status: 'no_response' });
     if (claim.status === 'in_progress') return http.json({ code: 'in_progress' }, 409, { 'Retry-After': '3' });
     if (claim.status === 'unavailable') return http.json({ code: 'unavailable' }, 503);
+    if (claim.status === 'rate_limited') return http.json(
+      { code: 'rate_limited' },
+      429,
+      { 'Retry-After': String(claim.retryAfterSeconds) },
+    );
     if (claim.status === 'scored') return http.json({ status: 'scored' });
     let configuration: RepositoryResult<{ config?: AiConfig }>;
     try { configuration = await repository.loadProviderConfig(); } catch { await failClaimSafely(repository, claim, leaseToken, 'persistence_failed', null); return http.json({ code: 'unavailable' }, 500); }

@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // @ts-expect-error Node's native TypeScript runner resolves explicit source extensions.
 import { canRunLocalProfileElevationTests } from './mutationTestSafety.ts';
+// @ts-expect-error Node's native TypeScript runner resolves explicit source extensions.
+import { createCandidateMmiApi } from '../../src/features/candidateMmi/api.ts';
 
 const testFramework = (process.env.VITEST
   ? await import('vitest')
@@ -20,6 +22,7 @@ const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const suffix = randomUUID().replaceAll('-', '');
 const stationId = `ADMIN_${suffix}`;
 const duplicateStationId = `DUPLICATE_${suffix}`;
+const incompleteStationId = `INCOMPLETE_${suffix}`;
 const assessmentStationId = `ASSESS_${suffix}`;
 const panelId = `PANEL_${suffix}`;
 const adminEmail = `mmi-admin-${suffix}@example.test`;
@@ -48,7 +51,7 @@ function completeStationPayload(id: string, expectedVersion: number | null) {
     category: 'ethics',
     topic: 'Admin fixture',
     difficulty: 'intermediate',
-    universityTags: ['all'],
+    universityTags: ['final-high'],
     prepTimeSec: 60,
     imageUrl: null,
     scenarioText: 'A synthetic local-only scenario.',
@@ -89,6 +92,7 @@ WHERE config.key IN ('ai_api_key','ai_provider','ai_model','ai_base_url','ai_inp
     adminId = createdAdmin.data.user!.id;
     candidateId = createdCandidate.data.user!.id;
     sql(`UPDATE public.profiles SET is_admin=TRUE WHERE id='${adminId}';
+UPDATE public.profiles SET university_target='final-high' WHERE id='${candidateId}';
 INSERT INTO public.mmi_stations(station_id,category,topic,difficulty,uni_tags,prep_time_sec,status,scenario_text,source_namespace,source_manifest_sha256,content_version)
 VALUES ('${assessmentStationId}','ethics','Assessment fixture','intermediate',ARRAY['all'],60,'published','Synthetic assessment scenario','admin_test','${'a'.repeat(64)}',1);
 INSERT INTO public.mmi_sub_questions(sub_q_id,station_id,order_num,question_text,time_limit_sec,source_namespace,source_manifest_sha256)
@@ -133,11 +137,11 @@ WHERE admin_user_id='${adminId}' OR target_id IN ('${stationId}','${panelId}','a
     sql(`DELETE FROM public.mmi_panel_questions WHERE question_id='${panelId}';
 BEGIN;
 SET LOCAL session_replication_role=replica;
-DELETE FROM public.mmi_station_versions WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');
+DELETE FROM public.mmi_station_versions WHERE station_id IN ('${stationId}','${duplicateStationId}','${incompleteStationId}','${assessmentStationId}');
 COMMIT;
-DELETE FROM public.mmi_marking_criteria WHERE sub_q_id LIKE '${stationId}_Q%' OR sub_q_id LIKE '${duplicateStationId}_Q%' OR sub_q_id LIKE '${assessmentStationId}_Q%';
-DELETE FROM public.mmi_sub_questions WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');
-DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');`);
+DELETE FROM public.mmi_marking_criteria WHERE sub_q_id LIKE '${stationId}_Q%' OR sub_q_id LIKE '${duplicateStationId}_Q%' OR sub_q_id LIKE '${incompleteStationId}_Q%' OR sub_q_id LIKE '${assessmentStationId}_Q%';
+DELETE FROM public.mmi_sub_questions WHERE station_id IN ('${stationId}','${duplicateStationId}','${incompleteStationId}','${assessmentStationId}');
+DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicateStationId}','${incompleteStationId}','${assessmentStationId}');`);
   });
 
   it('requires an authenticated admin and keeps both audit tables private', async () => {
@@ -167,6 +171,13 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicate
     assert.equal(published.error, null, published.error?.message);
     assert.equal((published.data as { version: number }).version, 3);
     assert.equal(sql(`SELECT status || '|' || content_version FROM public.mmi_stations WHERE station_id='${stationId}';`), 'published|3');
+    sql(`UPDATE public.candidate_mmi_station_sessions SET abandoned_at=clock_timestamp() WHERE user_id='${candidateId}' AND abandoned_at IS NULL;`);
+    const candidateApi = createCandidateMmiApi(candidate);
+    const started = await candidateApi.start('target');
+    assert.equal(started.stationId, stationId);
+    assert.equal(started.phase, 'scenario');
+    assert.equal(started.scenarioText, 'A synthetic local-only scenario.');
+    assert.equal(sql(`SELECT practice_scope || '|' || target_university_snapshot FROM public.candidate_mmi_station_sessions WHERE id='${started.sessionId}';`), 'target|final-high');
     const publishedEdit = await admin.rpc('save_admin_mmi_station', {
       p_station: { ...completeStationPayload(stationId, 3), topic: 'Must unpublish first' },
       p_expected_version: 3,
@@ -262,12 +273,10 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicate
     assert.equal((await admin.rpc('get_admin_mmi_assessment', { p_response_id: responseId, p_purpose: 'curiosity' })).error?.code, '22023');
     assert.equal((await admin.rpc('save_admin_ai_config', { p_provider: 'openai_compatible', p_model: 'local', p_base_url: 'http://127.0.0.1:11434/v1', p_input_rate: 0, p_cached_input_rate: 0, p_output_rate: 0 })).error?.code, '22023');
     assert.equal((await admin.rpc('get_admin_mmi_usage', { p_filters: { limit: 20, offset: 0, unexpected: true } })).error?.code, '22023');
-    const drafted = await admin.rpc('set_admin_mmi_station_status', { p_station_id: stationId, p_expected_version: 3, p_status: 'draft' });
-    assert.equal(drafted.error, null, drafted.error?.message);
-    const incomplete = completeStationPayload(stationId, 4);
-    const invalid = await admin.rpc('save_admin_mmi_station', { p_station: { ...incomplete, questions: incomplete.questions.slice(0, 4) }, p_expected_version: 4 });
+    const incomplete = completeStationPayload(incompleteStationId, null);
+    const invalid = await admin.rpc('save_admin_mmi_station', { p_station: { ...incomplete, questions: incomplete.questions.slice(0, 4) }, p_expected_version: null });
     assert.equal(invalid.error, null, invalid.error?.message);
-    const publish = await admin.rpc('set_admin_mmi_station_status', { p_station_id: stationId, p_expected_version: 5, p_status: 'published' });
+    const publish = await admin.rpc('set_admin_mmi_station_status', { p_station_id: incompleteStationId, p_expected_version: 1, p_status: 'published' });
     assert.equal(publish.error?.code, '22023');
   });
 });

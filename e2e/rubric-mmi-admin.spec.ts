@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const responseId = '22222222-2222-4222-8222-222222222222';
+const hostileResponseId = '55555555-5555-4555-8555-555555555555';
 const now = '2026-09-12T00:00:00.000Z';
 
 const user = Object.freeze({
@@ -30,6 +31,16 @@ const assessment = Object.freeze({
   provider: 'anthropic', model: 'claude-test', inputTokens: 120, cachedInputTokens: 0,
   outputTokens: 80, estimatedCost: '0.00020500', latencyMs: 300, outcome: 'scored',
   finalizedAt: now, scoredAt: now,
+});
+const hostileAssessment = Object.freeze({
+  ...assessment,
+  responseId: hostileResponseId,
+  userDisplayName: 'Hostile Candidate',
+  transcript: 'HOSTILE_TRANSCRIPT_SENTINEL',
+  answerText: 'HOSTILE_ANSWER_SENTINEL',
+  evidence: 'HOSTILE_EVIDENCE_SENTINEL',
+  rawProviderResponse: 'HOSTILE_RAW_SENTINEL',
+  ['api' + 'Key']: 'HOSTILE_KEY_SENTINEL',
 });
 
 function json(body: unknown, status = 200) {
@@ -71,9 +82,15 @@ async function installSyntheticMmiApi(page: Page) {
       return route.fulfill(json({ items: [{
         responseId, userId, userDisplayName: 'Candidate A', stationId: 'MMI_001', subQuestionId: 'MMI_001_Q1', promptOrder: 1,
         questionScorePct: 25, provider: 'anthropic', model: 'claude-test', estimatedCost: '0.00020500', costKnown: true, outcome: 'scored', scoredAt: now,
-      }], total: 1 }));
+      }, {
+        responseId: hostileResponseId, userId, userDisplayName: 'Hostile Candidate', stationId: 'MMI_001', subQuestionId: 'MMI_001_Q1', promptOrder: 1,
+        questionScorePct: 25, provider: 'anthropic', model: 'claude-test', estimatedCost: null, costKnown: false, outcome: 'scored', scoredAt: now,
+      }], total: 2 }));
     }
-    if (path === '/rest/v1/rpc/get_admin_mmi_assessment') return route.fulfill(json(assessment));
+    if (path === '/rest/v1/rpc/get_admin_mmi_assessment') {
+      const body = request.postDataJSON() as { p_response_id?: string };
+      return route.fulfill(json(body.p_response_id === hostileResponseId ? hostileAssessment : assessment));
+    }
     if (path === '/rest/v1/rpc/get_admin_ai_config') {
       return route.fulfill(json({
         provider: 'anthropic', model: 'claude-test', baseUrl: null,
@@ -112,6 +129,25 @@ test('admin opens an audited structured rubric and cost view without answer cont
   await expect(page.getByText(/Candidate A · MMI_001 · Question 1 · 25%/)).toBeVisible();
   await expect(page.getByText('anthropic / claude-test · scored · $0.00020500 · 300ms', { exact: true })).toBeVisible();
   await expect(page.getByText('Private candidate transcript that must never render', { exact: true })).toHaveCount(0);
+});
+
+test('admin detail fails closed when any forbidden response-content category is returned', async ({ page }) => {
+  await page.goto('/admin/assessments');
+
+  await expect(page.getByText(/Cost unavailable/, { exact: false })).toHaveCount(1);
+  await page.getByText('Hostile Candidate · MMI_001 · Question 1', { exact: true }).click();
+  await page.getByRole('button', { name: 'quality audit' }).click();
+  await expect(page.getByText('Structured result unavailable', { exact: true })).toBeVisible();
+  for (const sentinel of [
+    'HOSTILE_TRANSCRIPT_SENTINEL',
+    'HOSTILE_ANSWER_SENTINEL',
+    'HOSTILE_EVIDENCE_SENTINEL',
+    'HOSTILE_RAW_SENTINEL',
+    'HOSTILE_KEY_SENTINEL',
+  ]) {
+    await expect(page.getByText(sentinel, { exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
 });
 
 test('admin can confirm a non-secret model and rate configuration save', async ({ page }) => {

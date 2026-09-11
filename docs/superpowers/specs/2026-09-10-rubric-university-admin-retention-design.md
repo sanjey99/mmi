@@ -117,6 +117,13 @@ a score. A retry reuses the immutable scenario, question, rubric, and answer
 snapshots and scores only unfinished questions; it does not rerun the timed
 station or duplicate a completed assessment.
 
+Paid scoring claims are limited to three per user and response in a true
+rolling hour. The claim transaction locks the response, prunes attempts that
+are at least one hour old, and durably records a new attempt before a provider
+can be called. A fourth claim returns a stable rate-limited state with the
+earliest accurate retry time; the HTTP boundary maps it to `429` and
+`Retry-After` without calling the provider or exposing internal details.
+
 If any question remains unscored, the station result clearly shows assessment
 as pending or failed and does not present a fabricated overall percentage.
 
@@ -151,6 +158,12 @@ University matching uses a canonical alias map shared by profile storage,
 imports, counts, and selection. For example, `King's College London` maps to
 the workbook tag `KCL`. Tags are compared as normalized exact values, not
 free-text substrings.
+
+Candidate and administrator clients share the same bounded source-ID contract:
+one leading ASCII letter or digit followed by at most 99 ASCII letters,
+digits, underscores, or hyphens. This admits deterministic imported IDs and
+administrator-created IDs while rejecting separators, traversal syntax,
+whitespace, control characters, and overlong values.
 
 The server selects only from the requested pool and prefers stations the user
 has seen least recently. The attempt permanently records whether it came from
@@ -193,6 +206,13 @@ responses, prompts containing candidate answers, or provider request bodies.
 Operational logs contain identifiers and safe error stages, never scenario,
 question, rubric, answer, credentials, or response content.
 
+The operational cutoff is 23 hours 30 minutes, with a five-minute purge
+schedule, leaving margin below the 24-hour promise. The cutoff outranks an
+active scoring lease: the lease is expired and the response becomes
+unavailable before free text is purged. A private singleton heartbeat records
+the most recent successful purge and count so operations can detect a missed
+schedule without storing user identifiers or content.
+
 The following structured records are retained until the account is deleted or
 a later explicit retention policy applies:
 
@@ -223,6 +243,11 @@ rates. Cost is calculated from provider-reported token usage and those rate
 snapshots, so historical cost does not change when an administrator edits the
 current model or rates. Missing provider usage is visibly marked unknown; it
 must not be silently treated as zero.
+
+A successful schema-v3 assessment may therefore store provider, model, rate,
+latency, and outcome snapshots while all three token counts and estimated cost
+remain null. Partial token data is rejected, and whenever tokens are present
+the stored cost must exactly match the snapshotted-rate calculation.
 
 Configuration changes are validated, attributed to the acting administrator,
 timestamped, and audited without recording secret values.

@@ -23,6 +23,7 @@ import type {
   AdminMmiUsageFilters,
   AdminMmiUsageRow,
 } from './types';
+import { isMmiSourceId } from '../mmi/sourceId';
 import { validateStationDraft } from './validation';
 
 export type AdminMmiApiErrorKind =
@@ -50,7 +51,6 @@ export class AdminMmiApiError extends Error {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 const MONEY_PATTERN = /^(?:0|[1-9]\d{0,7})\.\d{8}$/;
 const providers = new Set<AdminMmiProvider>(['anthropic', 'openai', 'openai_compatible']);
@@ -115,7 +115,7 @@ function uuid(value: unknown): string {
 }
 function sourceId(value: unknown): string {
   const parsed = text(value, 100);
-  if (!SOURCE_ID_PATTERN.test(parsed)) invalidResponse();
+  if (!isMmiSourceId(parsed)) invalidResponse();
   return parsed;
 }
 function timestamp(value: unknown): string {
@@ -403,7 +403,7 @@ export function createAdminMmiApi(client: AdminMmiRpcClient) {
       if (filters.difficulty !== undefined && !difficulties.has(filters.difficulty)) return Promise.reject(new AdminMmiApiError('invalid_request'));
       return request('list_admin_mmi_stations_v2', { p_filters: { query: query ?? null, status: filters.status ?? null, university: university ?? null, category: category ?? null, topic: topic ?? null, difficulty: filters.difficulty ?? null, limit: filters.limit, offset: filters.offset } }, parseStationList);
     },
-    getStation: (stationId: string) => SOURCE_ID_PATTERN.test(stationId)
+    getStation: (stationId: string) => isMmiSourceId(stationId)
       ? request('get_admin_mmi_station', { p_station_id: stationId }, parseStationDetail)
       : Promise.reject(new AdminMmiApiError('invalid_request')),
     saveStation: (station: AdminMmiStationDraft) => {
@@ -411,7 +411,7 @@ export function createAdminMmiApi(client: AdminMmiRpcClient) {
       if (validation.issues.length > 0) return Promise.reject(new AdminMmiApiError('invalid_request'));
       return request('save_admin_mmi_station', { p_station: validation.value, p_expected_version: validation.value.expectedVersion }, parseConfirmation);
     },
-    setStationStatus: (stationId: string, expectedVersion: number, nextStatus: AdminMmiContentStatus) => SOURCE_ID_PATTERN.test(stationId) && Number.isSafeInteger(expectedVersion) && expectedVersion > 0 && statuses.has(nextStatus)
+    setStationStatus: (stationId: string, expectedVersion: number, nextStatus: AdminMmiContentStatus) => isMmiSourceId(stationId) && Number.isSafeInteger(expectedVersion) && expectedVersion > 0 && statuses.has(nextStatus)
       ? request('set_admin_mmi_station_status', { p_station_id: stationId, p_expected_version: expectedVersion, p_status: nextStatus }, parseConfirmation)
       : Promise.reject(new AdminMmiApiError('invalid_request')),
     listPanels: (filters: AdminMmiPageFilters) => validPage(filters)
@@ -443,7 +443,7 @@ export function createAdminMmiApi(client: AdminMmiRpcClient) {
       let normalized: AdminMmiUsageFilters;
       try { normalized = { ...filters, from: validateDate(filters.from), to: validateDate(filters.to) }; }
       catch (error) { return Promise.reject(error); }
-      if ((normalized.userId && !UUID_PATTERN.test(normalized.userId)) || (normalized.stationId && !SOURCE_ID_PATTERN.test(normalized.stationId)) || (normalized.scope && normalized.scope !== 'target' && normalized.scope !== 'all') || (normalized.outcome && !outcomes.has(normalized.outcome))) return Promise.reject(new AdminMmiApiError('invalid_request'));
+      if ((normalized.userId && !UUID_PATTERN.test(normalized.userId)) || (normalized.stationId && !isMmiSourceId(normalized.stationId)) || (normalized.scope && normalized.scope !== 'target' && normalized.scope !== 'all') || (normalized.outcome && !outcomes.has(normalized.outcome))) return Promise.reject(new AdminMmiApiError('invalid_request'));
       return request('get_admin_mmi_usage', { p_filters: normalized }, parseUsage);
     },
     listAssessments: (filters: AdminMmiAssessmentFilters) => {
@@ -451,7 +451,7 @@ export function createAdminMmiApi(client: AdminMmiRpcClient) {
       let normalized: AdminMmiAssessmentFilters;
       try { normalized = { ...filters, from: validateDate(filters.from), to: validateDate(filters.to) }; }
       catch (error) { return Promise.reject(error); }
-      if ((normalized.userId && !UUID_PATTERN.test(normalized.userId)) || (normalized.stationId && !SOURCE_ID_PATTERN.test(normalized.stationId))) return Promise.reject(new AdminMmiApiError('invalid_request'));
+      if ((normalized.userId && !UUID_PATTERN.test(normalized.userId)) || (normalized.stationId && !isMmiSourceId(normalized.stationId))) return Promise.reject(new AdminMmiApiError('invalid_request'));
       return request('list_admin_mmi_assessments', { p_filters: normalized }, parseAssessmentList);
     },
     getAssessment: (responseId: string, purpose: AdminMmiAssessmentPurpose) => UUID_PATTERN.test(responseId) && purposes.has(purpose)

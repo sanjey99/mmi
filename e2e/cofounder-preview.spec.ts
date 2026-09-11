@@ -5,7 +5,7 @@ const questionId = '22222222-2222-4222-8222-222222222222';
 const sessionId = '33333333-3333-4333-8333-333333333333';
 const feedbackId = '44444444-4444-4444-8444-444444444444';
 const candidateStationSessionId = '66666666-6666-4666-8666-666666666666';
-const candidateStationId = 'MMI_001';
+const candidateStationId = 'ADMIN_e2e-station';
 const now = '2026-08-25T00:00:00.000Z';
 
 const user = {
@@ -320,6 +320,7 @@ async function installCandidateMmiController(page: Page) {
   let abandonCount = 0;
   let scoringFailureCode: string | null = null;
   const rpcCalls: string[] = [];
+  const startRequests: Array<Record<string, unknown>> = [];
   const checkpoints: Array<Record<string, unknown>> = [];
   const finalizations: Array<Record<string, unknown>> = [];
   const scoringRequests: Array<Record<string, unknown>> = [];
@@ -375,6 +376,7 @@ async function installCandidateMmiController(page: Page) {
   ));
   await page.route('https://e2e.supabase.co/rest/v1/rpc/start_candidate_mmi_station_session', route => {
     rpcCalls.push('start');
+    startRequests.push(route.request().postDataJSON() as Record<string, unknown>);
     return route.fulfill(json(candidateScenarioProjection));
   });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_session', route => {
@@ -461,6 +463,7 @@ async function installCandidateMmiController(page: Page) {
     failScoringWith: (code: string) => { scoringFailureCode = code; feedbackMode = 'pending'; },
     abandonCount: () => abandonCount,
     rpcCalls: () => [...rpcCalls],
+    startRequests: () => startRequests.map((request) => ({ ...request })),
     checkpoints: () => [...checkpoints],
     finalizations: () => [...finalizations],
     scoringRequests: () => [...scoringRequests],
@@ -492,6 +495,7 @@ test('orientation keeps the next-station plate above its heading', async ({ page
 });
 
 test('practice presents distinct Oxford and all-repository 11-minute station pools', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
   await page.goto('/');
   await page.getByLabel('02 Practise').click();
 
@@ -502,6 +506,21 @@ test('practice presents distinct Oxford and all-repository 11-minute station poo
   await page.getByRole('button', { name: 'Practise' }).first().click();
   await expect(page).toHaveURL(/\/practice\/mmi-station\?scope=target$/);
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
+  await page.getByText('Start station', { exact: true }).click();
+  await expect(page.getByText('ADMIN_e2e-station', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Synthetic candidate scenario.', { exact: true })).toBeVisible();
+  await expect.poll(() => controller.startRequests()).toEqual([{ p_scope: 'target' }]);
+
+  await page.goto('/');
+  await page.getByLabel('02 Practise').click();
+  await page.getByRole('button', { name: 'Practise' }).nth(1).click();
+  await expect(page).toHaveURL(/\/practice\/mmi-station\?scope=all$/);
+  await page.getByText('Start station', { exact: true }).click();
+  await expect(page.getByText('Synthetic candidate scenario.', { exact: true })).toBeVisible();
+  await expect.poll(() => controller.startRequests()).toEqual([
+    { p_scope: 'target' },
+    { p_scope: 'all' },
+  ]);
 });
 
 test('MMI station follows only the current trusted prompt across timer expiry and re-entry', async ({ page }) => {

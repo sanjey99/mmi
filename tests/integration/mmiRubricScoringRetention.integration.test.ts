@@ -130,6 +130,39 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     assert.equal(sql(`SELECT estimated_cost::text FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '90071992.54740993');
   });
 
+  it('persists a scored outcome and immutable rate snapshots when provider usage is unknown', async () => {
+    const fixture = createResponseFixture('unknown usage transcript');
+    const unknownUsageLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: userId,
+      p_session_id: fixture.sessionId,
+      p_prompt_order: 1,
+      p_lease_token: unknownUsageLease,
+    });
+    assert.equal(claim.error, null, claim.error?.message);
+    const criteria = (claim.data as { criteria: Array<{ criterionId: string }> }).criteria;
+    const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId,
+      p_session_id: fixture.sessionId,
+      p_lease_token: unknownUsageLease,
+      p_public_assessment: assessmentFor(criteria),
+      p_usage: scoredUsage({
+        provider: 'unknown-usage-provider',
+        model: 'unknown-usage-model',
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        inputRatePerMillion: 1.25,
+        cachedInputRatePerMillion: 0.125,
+        outputRatePerMillion: 5.5,
+        estimatedCost: null,
+      }),
+    });
+
+    assert.equal(completion.error, null, completion.error?.message);
+    assert.equal(sql(`SELECT response.scoring_status || '|' || coalesce(response.finalized_transcript,'<null>') || '|' || usage.provider || '|' || usage.model || '|' || coalesce(usage.input_tokens::text,'<null>') || '|' || coalesce(usage.cached_input_tokens::text,'<null>') || '|' || coalesce(usage.output_tokens::text,'<null>') || '|' || usage.input_rate_per_million::text || '|' || usage.cached_input_rate_per_million::text || '|' || usage.output_rate_per_million::text || '|' || coalesce(usage.estimated_cost::text,'<null>') || '|' || usage.outcome FROM public.candidate_mmi_station_responses response JOIN public.mmi_ai_usage_events usage ON usage.response_id=response.id WHERE response.id='${fixture.responseId}';`), 'scored|<null>|unknown-usage-provider|unknown-usage-model|<null>|<null>|<null>|1.250000|0.125000|5.500000|<null>|scored');
+  });
+
   it('rolls back completion when inserting its usage event fails, leaving an unscored retryable transcript', async () => {
     const fixture = createResponseFixture('retryable transcript');
     const failedLease = randomUUID();
@@ -195,24 +228,94 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     assert.equal(sql(`SELECT response.scoring_status || '|' || claim.lease_token || '|' || (SELECT count(*) FROM public.mmi_ai_usage_events usage WHERE usage.response_id=response.id) FROM public.candidate_mmi_station_responses response JOIN public.candidate_mmi_response_scoring_claims claim ON claim.response_id=response.id WHERE response.id='${fixture.responseId}';`), `in_progress|${secondLease}|1`);
   });
 
-  it('purges pending text and drafts at 24 hours while marking feedback unavailable', async () => {
-    const fixture = createResponseFixture('expired transcript', "clock_timestamp() - interval '24 hours 1 second'");
-    sql(`INSERT INTO public.candidate_mmi_station_response_drafts(session_id,prompt_order,transcript,client_revision,accepted_at) VALUES ('${fixture.sessionId}',1,'expired draft',1,clock_timestamp()-interval '24 hours 1 second');`);
-    const purge = await service.rpc('purge_expired_candidate_mmi_free_text', { p_now: new Date().toISOString() });
-    assert.equal(purge.error, null, purge.error?.message);
-    assert.equal(sql(`SELECT scoring_status || '|' || coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}';`), 'feedback_unavailable|<null>');
-    assert.equal(sql(`SELECT count(*) FROM public.candidate_mmi_station_response_drafts WHERE session_id='${fixture.sessionId}' AND prompt_order=1;`), '0');
+  it('serializes concurrent claims and enforces a true rolling-hour paid-call limit', async () => {
+    const fixture = createResponseFixture('rate limited transcript');
+    const firstLease = randomUUID();
+    const secondLease = randomUUID();
+    for (const token of [firstLease, secondLease]) {
+      const claim = await service.rpc('claim_candidate_mmi_response_scoring', {
+        p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: token,
+      });
+      assert.equal((claim.data as { status: string }).status, 'claimed');
+      assert.equal((await service.rpc('fail_candidate_mmi_response_scoring', {
+        p_response_id: fixture.responseId, p_session_id: fixture.sessionId,
+        p_lease_token: token, p_error_code: 'provider_failed', p_usage: null,
+      })).error, null);
+    }
+
+    const concurrentTokens = [randomUUID(), randomUUID()];
+    const concurrent = await Promise.all(concurrentTokens.map((token) => service.rpc(
+      'claim_candidate_mmi_response_scoring',
+      { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: token },
+    )));
+    assert.deepEqual(
+      concurrent.map((result) => (result.data as { status: string }).status).sort(),
+      ['claimed', 'in_progress'],
+    );
+    const winningIndex = concurrent.findIndex((result) => (result.data as { status: string }).status === 'claimed');
+    const winningLease = concurrentTokens[winningIndex]!;
+    assert.equal((await service.rpc('fail_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId,
+      p_lease_token: winningLease, p_error_code: 'provider_failed', p_usage: null,
+    })).error, null);
+
+    const fourth = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: randomUUID(),
+    });
+    assert.equal(fourth.error, null, fourth.error?.message);
+    assert.equal((fourth.data as { status: string }).status, 'rate_limited');
+    assert.ok(Number.isInteger((fourth.data as { retryAfterSeconds: number }).retryAfterSeconds));
+    assert.ok((fourth.data as { retryAfterSeconds: number }).retryAfterSeconds > 0);
+    assert.ok((fourth.data as { retryAfterSeconds: number }).retryAfterSeconds <= 3_600);
+    assert.ok(Number.isFinite(Date.parse((fourth.data as { retryAt: string }).retryAt)));
+    assert.equal(sql(`SELECT count(*) FROM public.mmi_paid_scoring_claim_attempts WHERE response_id='${fixture.responseId}';`), '3');
+
+    sql(`WITH ordered AS (SELECT lease_token,row_number() OVER (ORDER BY claimed_at) AS position FROM public.mmi_paid_scoring_claim_attempts WHERE response_id='${fixture.responseId}') UPDATE public.mmi_paid_scoring_claim_attempts attempt SET claimed_at=clock_timestamp()-CASE ordered.position WHEN 1 THEN interval '1 hour 1 second' WHEN 2 THEN interval '59 minutes 58 seconds' ELSE interval '59 minutes 57 seconds' END FROM ordered WHERE attempt.lease_token=ordered.lease_token;
+UPDATE public.candidate_mmi_response_scoring_claims SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE response_id='${fixture.responseId}';`);
+    const afterOldestExpires = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: randomUUID(),
+    });
+    assert.equal(afterOldestExpires.error, null, afterOldestExpires.error?.message);
+    assert.equal((afterOldestExpires.data as { status: string }).status, 'claimed');
+    assert.equal(sql(`SELECT count(*) || '|' || (min(claimed_at) > clock_timestamp()-interval '1 hour')::text FROM public.mmi_paid_scoring_claim_attempts WHERE response_id='${fixture.responseId}';`), '3|true');
+
+    const replacementLease = sql(`SELECT lease_token FROM public.candidate_mmi_response_scoring_claims WHERE response_id='${fixture.responseId}';`);
+    assert.equal((await service.rpc('fail_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId,
+      p_lease_token: replacementLease, p_error_code: 'provider_failed', p_usage: null,
+    })).error, null);
+    const noBoundaryBurst = await service.rpc('claim_candidate_mmi_response_scoring', {
+      p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: randomUUID(),
+    });
+    assert.equal((noBoundaryBurst.data as { status: string }).status, 'rate_limited');
+    assert.ok((noBoundaryBurst.data as { retryAfterSeconds: number }).retryAfterSeconds > 0);
+    assert.ok((noBoundaryBurst.data as { retryAfterSeconds: number }).retryAfterSeconds <= 5);
+    assert.ok(Number.isFinite(Date.parse((noBoundaryBurst.data as { retryAt: string }).retryAt)));
   });
 
-  it('uses the 24-hour purge cutoff without deleting a live leased transcript', async () => {
+  it('keeps 23h29 text but purges response and draft text at 23h31', async () => {
+    const boundaryNow = new Date().toISOString();
+    const retained = createResponseFixture('retained transcript', `'${boundaryNow}'::timestamptz - interval '23 hours 29 minutes'`);
+    const expired = createResponseFixture('expired transcript', `'${boundaryNow}'::timestamptz - interval '23 hours 31 minutes'`);
+    sql(`INSERT INTO public.candidate_mmi_station_response_drafts(session_id,prompt_order,transcript,client_revision,accepted_at) VALUES ('${retained.sessionId}',1,'retained draft',1,'${boundaryNow}'::timestamptz-interval '23 hours 29 minutes'),('${expired.sessionId}',1,'expired draft',1,'${boundaryNow}'::timestamptz-interval '23 hours 31 minutes');`);
+    const purge = await service.rpc('purge_expired_candidate_mmi_free_text', { p_now: boundaryNow });
+    assert.equal(purge.error, null, purge.error?.message);
+    assert.equal(sql(`SELECT scoring_status || '|' || coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${retained.responseId}';`), 'pending|retained transcript');
+    assert.equal(sql(`SELECT scoring_status || '|' || coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${expired.responseId}';`), 'feedback_unavailable|<null>');
+    assert.equal(sql(`SELECT count(*) FROM public.candidate_mmi_station_response_drafts WHERE session_id='${retained.sessionId}' AND prompt_order=1;`), '1');
+    assert.equal(sql(`SELECT count(*) FROM public.candidate_mmi_station_response_drafts WHERE session_id='${expired.sessionId}' AND prompt_order=1;`), '0');
+  });
+
+  it('does not let an active scoring lease extend transcript retention past the cutoff', async () => {
+    const boundaryNow = new Date().toISOString();
     const liveSession = sql(`INSERT INTO public.candidate_mmi_station_sessions (user_id,station_id,started_at) VALUES ('${userId}','${fixtureStationId}',clock_timestamp()-interval '12 minutes') RETURNING id;`);
     const promptId = sql(`SELECT sub_q_id FROM public.mmi_sub_questions WHERE station_id='${fixtureStationId}' ORDER BY order_num LIMIT 1;`);
     sql(`INSERT INTO public.candidate_mmi_station_prompt_snapshots(session_id,prompt_order,sub_question_id,prompt_text) VALUES ('${liveSession}',1,'${promptId}','local prompt');`);
-    const liveResponse = sql(`INSERT INTO public.candidate_mmi_station_responses (session_id,prompt_order,response_state,finalized_transcript,finalized_at,finalization_key,scoring_status) VALUES ('${liveSession}',1,'response','live transcript',clock_timestamp()-interval '25 hours','${randomUUID()}','in_progress') RETURNING id;`);
-    sql(`INSERT INTO public.candidate_mmi_response_scoring_claims(response_id,lease_token,lease_expires_at) VALUES ('${liveResponse}','${randomUUID()}',clock_timestamp()+interval '5 minutes');`);
-    const purge = await service.rpc('purge_expired_candidate_mmi_free_text', { p_now: new Date().toISOString() });
+    const liveResponse = sql(`INSERT INTO public.candidate_mmi_station_responses (session_id,prompt_order,response_state,finalized_transcript,finalized_at,finalization_key,scoring_status) VALUES ('${liveSession}',1,'response','live transcript','${boundaryNow}'::timestamptz-interval '23 hours 31 minutes','${randomUUID()}','in_progress') RETURNING id;`);
+    sql(`INSERT INTO public.candidate_mmi_response_scoring_claims(response_id,lease_token,lease_expires_at) VALUES ('${liveResponse}','${randomUUID()}','${boundaryNow}'::timestamptz+interval '5 minutes');`);
+    const purge = await service.rpc('purge_expired_candidate_mmi_free_text', { p_now: boundaryNow });
     assert.equal(purge.error, null, purge.error?.message);
-    assert.equal(sql(`SELECT finalized_transcript FROM public.candidate_mmi_station_responses WHERE id='${liveResponse}';`), 'live transcript');
+    assert.equal(sql(`SELECT response.scoring_status || '|' || coalesce(response.finalized_transcript,'<null>') || '|' || (claim.lease_expires_at <= '${boundaryNow}'::timestamptz)::text FROM public.candidate_mmi_station_responses response JOIN public.candidate_mmi_response_scoring_claims claim ON claim.response_id=response.id WHERE response.id='${liveResponse}';`), 'feedback_unavailable|<null>|true');
   });
 
   it('expires a 25-hour in-progress response with no live lease before purging its transcript', async () => {
@@ -233,5 +336,28 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
   it('removes unmetered RPC overloads and grants only the metered service surface', () => {
     assert.equal(sql(`SELECT count(*) FROM pg_proc procedure JOIN pg_namespace namespace ON namespace.oid=procedure.pronamespace WHERE namespace.nspname='public' AND procedure.proname IN ('complete_candidate_mmi_response_scoring','fail_candidate_mmi_response_scoring') AND pg_get_function_identity_arguments(procedure.oid) IN ('p_response_id uuid, p_session_id uuid, p_lease_token uuid, p_public_assessment jsonb','p_response_id uuid, p_session_id uuid, p_lease_token uuid, p_error_code text');`), '0');
     assert.equal(sql(`SELECT has_function_privilege('service_role','public.complete_candidate_mmi_response_scoring(uuid,uuid,uuid,jsonb,jsonb)','EXECUTE')::text || '|' || has_function_privilege('authenticated','public.complete_candidate_mmi_response_scoring(uuid,uuid,uuid,jsonb,jsonb)','EXECUTE')::text;`), 'true|false');
+  });
+
+  it('installs a five-minute monitored retention job and exact live foreign-key deletion policies', () => {
+    assert.equal(sql(`SELECT schedule || '|' || command || '|' || active::text FROM cron.job WHERE jobname='candidate-mmi-purge-expired-free-text';`), '*/5 * * * *|SELECT public.purge_expired_candidate_mmi_free_text_internal();|true');
+    const purgeDefinition = sql(`SELECT pg_get_functiondef('public.purge_expired_candidate_mmi_free_text(timestamptz)'::regprocedure);`);
+    assert.match(purgeDefinition, /23 hours 30 minutes/i);
+    assert.doesNotMatch(purgeDefinition, /lease_expires_at\s*>\s*p_now/i);
+    sql(`SELECT public.purge_expired_candidate_mmi_free_text_internal();`);
+    assert.equal(sql(`SELECT (last_completed_at > clock_timestamp()-interval '1 minute')::text || '|' || (last_purged_count >= 0)::text FROM public.mmi_retention_job_health WHERE singleton;`), 'true|true');
+    assert.equal(sql(`SELECT has_table_privilege('public','public.mmi_retention_job_health','SELECT')::text || '|' || has_table_privilege('anon','public.mmi_retention_job_health','SELECT')::text || '|' || has_table_privilege('authenticated','public.mmi_retention_job_health','SELECT')::text || '|' || has_table_privilege('service_role','public.mmi_retention_job_health','SELECT')::text;`), 'false|false|false|false');
+
+    for (const [table, referenced, column, expectedDeleteAction] of [
+      ['mmi_ai_usage_events', 'profiles', 'user_id', 'c'],
+      ['mmi_paid_scoring_claim_attempts', 'profiles', 'user_id', 'c'],
+      ['mmi_paid_scoring_claim_attempts', 'candidate_mmi_station_responses', 'response_id', 'c'],
+      ['candidate_mmi_station_sessions', 'profiles', 'user_id', 'c'],
+      ['candidate_mmi_station_responses', 'candidate_mmi_station_sessions', 'session_id', 'c'],
+      ['mmi_admin_access_audit', 'profiles', 'admin_user_id', 'n'],
+      ['mmi_admin_access_audit', 'profiles', 'subject_user_id', 'n'],
+    ] as const) {
+      const actual = sql(`SELECT fk.confdeltype FROM pg_constraint fk JOIN pg_attribute attribute ON attribute.attrelid=fk.conrelid AND attribute.attnum=ANY(fk.conkey) WHERE fk.contype='f' AND fk.conrelid='public.${table}'::regclass AND fk.confrelid='public.${referenced}'::regclass AND attribute.attname='${column}';`);
+      assert.equal(actual, expectedDeleteAction, `${table}.${column} deletion policy`);
+    }
   });
 });

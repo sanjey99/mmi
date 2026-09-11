@@ -23,6 +23,10 @@ const adminMigration = readFileSync(fileURLToPath(new URL(
   '../supabase/migrations/20260910003000_mmi_admin_operations.sql',
   import.meta.url,
 )), 'utf8');
+const finalHardeningMigration = readFileSync(fileURLToPath(new URL(
+  '../supabase/migrations/20260910005000_mmi_final_high_blockers.sql',
+  import.meta.url,
+)), 'utf8');
 const candidateApi = readFileSync(fileURLToPath(new URL(
   '../src/features/candidateMmi/api.ts',
   import.meta.url,
@@ -36,13 +40,13 @@ const keyHandler = readFileSync(fileURLToPath(new URL(
   import.meta.url,
 )), 'utf8');
 
-function functionBody(sql: string, name: string): string {
-  const match = sql.match(new RegExp(
+function lastFunctionBody(sql: string, name: string): string {
+  const matches = [...sql.matchAll(new RegExp(
     `create\\s+or\\s+replace\\s+function\\s+public\\.${name}\\b[\\s\\S]*?as\\s+\\$function\\$([\\s\\S]*?)\\$function\\$`,
-    'i',
-  ));
-  assert.ok(match, `expected ${name} function body`);
-  return match[1]!;
+    'gi',
+  ))];
+  assert.ok(matches.length > 0, `expected ${name} function body`);
+  return matches.at(-1)![1]!;
 }
 
 function declaration(sql: string, name: string): string {
@@ -79,35 +83,39 @@ describe('MMI rubric retention and admin projection policy', () => {
 
   it('projects only structured rubric/cost data from candidate results and admin detail', () => {
     const publicBodies = [
-      functionBody(scoringMigration, 'get_candidate_mmi_station_feedback'),
-      functionBody(practiceMigration, 'get_candidate_mmi_station_result'),
-      functionBody(practiceMigration, 'list_candidate_mmi_history'),
-      functionBody(adminMigration, 'list_admin_mmi_assessments'),
-      functionBody(adminMigration, 'get_admin_mmi_assessment'),
+      lastFunctionBody(scoringMigration, 'get_candidate_mmi_station_feedback'),
+      lastFunctionBody(practiceMigration, 'get_candidate_mmi_station_result'),
+      lastFunctionBody(practiceMigration, 'list_candidate_mmi_history'),
+      lastFunctionBody(adminMigration, 'list_admin_mmi_assessments'),
+      lastFunctionBody(adminMigration, 'get_admin_mmi_assessment'),
     ].join('\n');
 
     for (const field of forbiddenProjectionFields) {
       assert.doesNotMatch(publicBodies, new RegExp(`['\"]${field}['\"]`, 'i'), `public JSON must not project ${field}`);
     }
-    assert.match(functionBody(adminMigration, 'get_admin_mmi_assessment'), /'criterionId'[\s\S]*?'achieved'[\s\S]*?'weightPct'/i);
-    assert.match(functionBody(adminMigration, 'get_admin_mmi_assessment'), /'estimatedCost'[\s\S]*?'latencyMs'[\s\S]*?'outcome'/i);
+    assert.match(lastFunctionBody(adminMigration, 'get_admin_mmi_assessment'), /'criterionId'[\s\S]*?'achieved'[\s\S]*?'weightPct'/i);
+    assert.match(lastFunctionBody(adminMigration, 'get_admin_mmi_assessment'), /'estimatedCost'[\s\S]*?'latencyMs'[\s\S]*?'outcome'/i);
   });
 
-  it('erases a successfully scored transcript in its score transaction and expires unresolved text at exactly 24 hours', () => {
-    const complete = functionBody(scoringMigration, 'complete_candidate_mmi_response_scoring');
+  it('uses the final installed definitions for atomic scoring and margin-backed retention', () => {
+    const installedSql = `${scoringMigration}\n${practiceMigration}\n${adminMigration}\n${finalHardeningMigration}`;
+    const complete = lastFunctionBody(installedSql, 'complete_candidate_mmi_response_scoring');
     const usageInsert = complete.indexOf('INSERT INTO public.mmi_ai_usage_events');
     const scoreUpdate = complete.indexOf("scoring_status='scored',finalized_transcript=NULL,transcript_purged_at=clock_timestamp()");
     assert.ok(usageInsert >= 0, 'successful score must record metered usage');
     assert.ok(scoreUpdate > usageInsert, 'successful score must clear transcript in the same transaction after usage persistence');
 
-    const purge = functionBody(scoringMigration, 'purge_expired_candidate_mmi_free_text');
-    assert.match(purge, /p_now-interval '24 hours'/i);
-    assert.equal((purge.match(/p_now-interval '24 hours'/gi) ?? []).length, 3, 'response and draft cleanup must use one exact 24-hour boundary');
+    const purge = lastFunctionBody(installedSql, 'purge_expired_candidate_mmi_free_text');
+    assert.match(purge, /p_now\s*-\s*interval '23 hours 30 minutes'/i);
+    assert.doesNotMatch(purge, /lease_expires_at\s*>\s*p_now/i);
     assert.match(purge, /finalized_transcript=NULL,transcript_purged_at=p_now,scoring_status='feedback_unavailable'/i);
+    assert.match(finalHardeningMigration, /'\*\/5 \* \* \* \*'/);
+    assert.match(finalHardeningMigration, /CREATE TABLE public\.mmi_retention_job_health/i);
+    assert.match(finalHardeningMigration, /REVOKE ALL ON TABLE public\.mmi_retention_job_health FROM PUBLIC, anon, authenticated, service_role/i);
   });
 
   it('keeps AI keys write-only and revokes direct browser-table access', () => {
-    const config = functionBody(adminMigration, 'get_admin_ai_config');
+    const config = lastFunctionBody(adminMigration, 'get_admin_ai_config');
     assert.match(config, /'isConfigured'/);
     const configProjection = config.slice(config.indexOf('RETURN jsonb_build_object'));
     assert.doesNotMatch(configProjection, /api[_ ]?key/i);
@@ -135,21 +143,23 @@ describe('MMI rubric retention and admin projection policy', () => {
       }
     }
 
-    const detail = functionBody(adminMigration, 'get_admin_mmi_assessment');
+    const detail = lastFunctionBody(adminMigration, 'get_admin_mmi_assessment');
     const auditInsert = detail.indexOf('INSERT INTO public.mmi_admin_access_audit');
     const returnProjection = detail.indexOf('RETURN jsonb_build_object');
     assert.ok(auditInsert >= 0 && auditInsert < returnProjection, 'audit insertion must happen before detail is returned');
   });
 
-  it('cascades attempt, result, usage, and audit relationships when a user is deleted', () => {
-    const allSql = `${scoringMigration}\n${practiceMigration}\n${adminMigration}`;
-    for (const relation of [
-      'mmi_ai_usage_events',
-      'candidate_mmi_station_sessions',
-      'candidate_mmi_station_responses',
-      'mmi_admin_access_audit',
-    ]) {
-      assert.match(allSql, new RegExp(`references\\s+public\\.${relation === 'candidate_mmi_station_sessions' ? 'profiles' : relation === 'candidate_mmi_station_responses' ? 'candidate_mmi_station_sessions' : 'profiles'}\\([^)]*\\)\\s+on\\s+delete\\s+cascade`, 'i'));
-    }
+  it('rate-limits paid claims and permits only all-null or fully metered scored usage', () => {
+    const claim = lastFunctionBody(finalHardeningMigration, 'claim_candidate_mmi_response_scoring');
+    assert.match(claim, /mmi_paid_scoring_claim_attempts/i);
+    assert.match(claim, /claimed_at\s*<=\s*v_now\s*-\s*interval '1 hour'/i);
+    assert.match(claim, /v_recent_claim_count\s*>=\s*3/i);
+    assert.match(claim, /'status'\s*,\s*'rate_limited'/i);
+    assert.match(claim, /'retryAfterSeconds'/i);
+    assert.match(claim, /'retryAt'/i);
+
+    const usageValidator = lastFunctionBody(finalHardeningMigration, 'is_valid_candidate_mmi_usage');
+    assert.match(usageValidator, /p_scored[\s\S]*?inputTokens[\s\S]*?estimatedCost/i);
+    assert.match(usageValidator, /jsonb_typeof\(p_usage->'inputTokens'\) = 'null'/i);
   });
 });

@@ -1,64 +1,86 @@
-# Task 9 — Verification report
+# Task 9 — Verification and final-hardening report
 
 ## Delivered
 
-- Added a hostile static retention/projection policy test. It checks recursive
-  forbidden-field rejection, structured rubric/cost-only projections, atomic
-  successful-score purge, exact 24-hour unresolved-content retention, write-only
-  AI key handling, grants/revokes, fixed function search paths, audit-before-
-  detail return, and deletion cascades.
-- Updated the existing synthetic candidate journey to use Oxford (115) and
-  repository-wide (155) complete 11-minute pools plus schema-v3 equal-weight
-  rubric checkboxes. It confirms retained feedback is read rather than rescored.
-- Added a synthetic localhost-only administrator journey for structured
-  cross-user rubric/cost review and non-secret AI configuration saves. The
-  fixtures fail closed for all non-synthetic Supabase hosts and never use real
-  credentials or candidate answer text.
-- Made mutation integration file order deterministic: the existing checked-in
-  candidate corpus importer now runs before the university-count test that
-  consumes its 155-station fixture. No application or SQL behavior changed.
-- Applied the approved lockfile-only `js-yaml` remediation: 3.15.1 to 3.15.2
-  and 4.3.1 to 4.3.2. No direct package, major-version, or source change was
-  made.
+- Added a race-free true rolling-hour limiter for paid scoring claims. Each
+  user/response can create at most three durable claim attempts in any rolling
+  hour; the fourth returns an accurate retry time before provider configuration
+  or invocation. The HTTP boundary returns `429` plus `Retry-After` and no
+  internal detail.
+- Unified candidate and administrator station source IDs on the exact bounded
+  ASCII contract `[A-Za-z0-9][A-Za-z0-9_-]{0,99}`. An administrator-created,
+  published station now has configured database proof that it can be selected,
+  started, and rendered by the candidate API; traversal, separators,
+  whitespace, and overlong IDs fail closed.
+- Replaced the installed transcript-retention definition with a 23h30 cutoff
+  and five-minute schedule. The cutoff expires active scoring leases before
+  purging, and a private content-free singleton heartbeat makes missed
+  scheduled runs observable.
+- Relaxed only the final usage validator so a successful schema-v3 assessment
+  can retain provider/model/rate/latency/outcome snapshots when provider token
+  usage is unavailable. Token counts and cost must be either all null or fully
+  present with exact cost arithmetic; the administrator UI labels null cost as
+  `Cost unavailable`.
+- Strengthened the Task 9 proof surfaces: target and all-repository E2E flows
+  each start a station and assert their distinct RPC scope; static SQL tests
+  extract the last installed function definitions; live-catalog tests scope
+  every deletion action to its exact table, referenced table, and column; and
+  a hostile admin payload containing transcript, answer, evidence, raw provider
+  response, and key fields is rejected before rendering.
+
+## TDD and debugging evidence
+
+- RED: the scoring handler mapped the new rate-limited claim to `500`, and the
+  candidate parser rejected an administrator-safe source ID. Minimal handler
+  and shared-parser changes made 48/48 focused unit tests GREEN.
+- RED: the static policy suite could not find the new forward migration. The
+  final-definition extractor and migration contract made 6/6 policy tests
+  GREEN.
+- The first disposable-stack startup failure was isolated to a temporary
+  harness function stanza without copied source. The first configured database
+  pass then exposed three proof-fixture defects: reuse of a versioned station,
+  a reserved SQL alias, and an incorrect retry-horizon expectation. Production
+  behavior was not weakened; corrected fixtures produced 22/22 focused
+  configured database tests.
 
 ## Verification
 
-- TDD: the new static policy suite was first RED because Vitest did not include
-  it; after the minimal allowlist addition it passed 6/6 in both Node and
-  Vitest. The new browser suite was first RED until the local route/UUID
-  fixtures matched the shipped public contracts, then passed 3/3.
-- `npm test`: 52 Node tests and 358 Vitest tests pass.
-- Fresh disposable local Supabase proof: reset only
-  `/private/tmp/mmi-supabase-task2-full`, restored the documented
-  compatibility fixture, applied reconciliation and migrations in order through
-  `20260910004000`, then ran the canonical mutation command. Vitest mutation
-  tests passed 5 files / 34 tests and Node integration tests passed 41/41.
-- `npm run test:e2e`: 15/15 localhost synthetic journeys pass. An apparent
-  connection refusal during an earlier run was traced to the verification tool
-  releasing its long-lived Expo child at its 30-second yield; holding that child
-  through completion produced the full green run without any product change.
-- `npm run test:coverage`: Node thresholds pass; Vitest coverage is 87.36%
-  statements, 83.04% branches, 97.15% functions, and 94.84% lines.
-- `npm run typecheck`, Edge-handler typecheck, and `npm run build` pass after
-  a clean `npm ci` from the remediated lockfile.
-- Production-only audit is 18 moderate, 0 high, and 0 critical. The prior high
-  `js-yaml` advisory is removed. Remaining moderate fixes require incompatible
-  Expo/Expo Router upgrades and were not applied.
-- `git diff --check` passes. GitNexus was refreshed; `detect-changes --scope
-  all` is low risk (6 files / 80 symbols) and the comparison to `main` reports
-  the expected feature-wide critical scope (78 files / 853 symbols / 172
-  flows). Both detect-change reports completed without a partial/truncated
-  result. Reviewed candidate practice/scoring and admin-detail flows are
-  covered by the focused static, mutation, and browser gates.
+- Fresh isolated local Supabase stack: API `55431`, PostgreSQL `55432`; baseline,
+  reviewed security reconciliation, and every forward migration through
+  `20260910005000_mmi_final_high_blockers.sql` applied successfully. The local
+  hosted-compatibility tables and policy names were synthetic fixtures only.
+- Focused configured database suites: 22/22 pass, including concurrent claims,
+  fourth-claim limiting, rolling-window reset, null-usage persistence, immediate
+  successful-score purge, 23h29/23h31 boundaries, active-lease expiry, cron,
+  heartbeat ACL, live FKs, and administrator-created station start/render.
+- Full mutation command: 5/5 files and 37/37 Vitest cases pass; serial Node
+  integration contracts pass 41/41. The corpus proof retains 155 stations,
+  775 questions, 3,100 criteria, target count 115, and all-repository count 155.
+- `npm test`: 52 Node tests and 361 Vitest tests pass.
+- `npm run test:e2e`: 16/16 synthetic localhost browser journeys pass.
+- `npm run test:coverage`: Node thresholds pass; Vitest coverage is 87.43%
+  statements, 83.18% branches, 97.15% functions, and 94.91% lines.
+- `npm run typecheck`, Edge-handler typecheck, and `npm run build` pass.
+- `npm audit --audit-level=high`: zero high/critical advisories; 21 existing
+  moderate advisories remain in Vitest/Expo dependency paths and their offered
+  fixes are outside this scoped hardening change or require breaking upgrades.
+- `git diff --check` passes before final graph analysis and commit.
 
 ## Security review
 
-No new production endpoint or persistence code was introduced. The new tests
-use fixed synthetic IDs and synthetic session values only, block unexpected
-hosts, contain no real secret, and assert that answer/transcript/evidence/raw
-provider/key fields cannot enter candidate or administrator projections.
+- The new claim ledger and retention heartbeat have RLS enabled and revoke all
+  browser and service-role table privileges. Security-definer functions retain
+  fixed search paths and narrow grants; the internal cron wrapper is not
+  callable by public, anonymous, authenticated, or service roles.
+- Claim serialization uses the existing response row lock, so concurrent
+  requests cannot exceed the rolling limit. The rate-limited response contains
+  only a stable code and bounded retry metadata and never reaches the paid
+  provider path.
+- Unknown usage never becomes zero cost. Partial token data, mismatched exact
+  cost, provider prose, evidence, transcript, raw response, and key fields all
+  remain rejected at their boundaries.
 
 ## Scope
 
-All verification is local-only. No shared Supabase, provider, Vercel, or other
-remote resource was changed, deployed, pushed, or merged.
+All work and verification is local-only. No shared Supabase, provider, Vercel,
+credential, or other remote resource was changed, deployed, pushed, or merged.

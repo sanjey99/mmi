@@ -7,8 +7,8 @@ import type {
   AdminMmiValidationIssue,
   AdminMmiValidationMode,
 } from './types';
+import { isMmiSourceId } from '../mmi/sourceId';
 
-const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 const ALLOWED_DIFFICULTIES = new Set(['foundation', 'intermediate', 'advanced']);
 
 function codePointLength(value: string): number {
@@ -117,7 +117,7 @@ export function validateStationDraft(
   const issues: AdminMmiValidationIssue[] = [];
   const requiredForPublish = mode === 'publish';
 
-  if (!SOURCE_ID_PATTERN.test(value.stationId)) issue(issues, 'stationId', 'invalid_id', 'Use a stable station ID.');
+  if (!isMmiSourceId(value.stationId)) issue(issues, 'stationId', 'invalid_id', 'Use a stable station ID.');
   if (value.expectedVersion !== null && (!Number.isInteger(value.expectedVersion) || value.expectedVersion < 1)) {
     issue(issues, 'expectedVersion', 'invalid_number', 'Version must be a positive integer.');
   }
@@ -154,7 +154,7 @@ export function validateStationDraft(
   const stationCriterionIds = new Set<string>();
   for (const [questionIndex, question] of value.questions.entries()) {
     const path = `questions.${questionIndex}`;
-    if (!SOURCE_ID_PATTERN.test(question.subQuestionId)) issue(issues, `${path}.subQuestionId`, 'invalid_id', 'Use a stable sub-question ID.');
+    if (!isMmiSourceId(question.subQuestionId)) issue(issues, `${path}.subQuestionId`, 'invalid_id', 'Use a stable sub-question ID.');
     if (!Number.isInteger(question.order) || question.order < 1 || question.order > 5) issue(issues, `${path}.order`, 'invalid_question_orders', 'Question order must be 1 through 5.');
     if (question.timeLimitSec !== 120) issue(issues, `${path}.timeLimitSec`, 'invalid_response_time', 'Each response uses 120 seconds.');
     validateText(issues, `${path}.questionText`, question.questionText, 10_000, requiredForPublish);
@@ -167,7 +167,7 @@ export function validateStationDraft(
     if (new Set(criterionOrders).size !== criterionOrders.length) issue(issues, `${path}.criteria`, 'duplicate_criterion_order', 'Criterion orders must be unique per question.');
     for (const [criterionIndex, criterion] of question.criteria.entries()) {
       const criterionPath = `${path}.criteria.${criterionIndex}`;
-      if (!SOURCE_ID_PATTERN.test(criterion.criterionId)) issue(issues, `${criterionPath}.criterionId`, 'invalid_id', 'Use a stable criterion ID.');
+      if (!isMmiSourceId(criterion.criterionId)) issue(issues, `${criterionPath}.criterionId`, 'invalid_id', 'Use a stable criterion ID.');
       if (stationCriterionIds.has(criterion.criterionId)) {
         issue(issues, `${criterionPath}.criterionId`, 'duplicate_criterion_id', 'Criterion IDs must be unique across the station.');
       }

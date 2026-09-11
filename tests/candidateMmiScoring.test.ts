@@ -84,6 +84,54 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(callProvider).not.toHaveBeenCalled();
   });
 
+  it('returns a bounded 429 retry window without loading configuration or calling a provider', async () => {
+    const repo = repository({
+      claim: vi.fn(async () => ({
+        data: {
+          status: 'rate_limited',
+          retryAfterSeconds: 3_599,
+          retryAt: '2026-09-12T03:00:00.000Z',
+        },
+      })),
+    });
+    const callProvider = vi.fn();
+
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({ repository: repo, callProvider }),
+    )(scoringRequest());
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('3599');
+    expect(await response.json()).toEqual({ code: 'rate_limited' });
+    expect(repo.loadProviderConfig).not.toHaveBeenCalled();
+    expect(callProvider).not.toHaveBeenCalled();
+  });
+
+  it('persists a scored assessment with explicit unknown usage when the provider omits usage', async () => {
+    const repo = repository();
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({
+        content: JSON.stringify(providerAssessment),
+        usage: null,
+      })),
+    }))(scoringRequest());
+
+    expect(response.status).toBe(200);
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_usage: expect.objectContaining({
+        provider: 'anthropic',
+        model: 'synthetic-model',
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        estimatedCost: null,
+        outcome: 'scored',
+      }),
+    }));
+    expect(repo.fail).not.toHaveBeenCalled();
+  });
+
   it('records provider-failure usage without persisting provider content', async () => {
     const repo = repository();
     const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider: vi.fn(async () => { throw new Error('private provider body'); }) }))(scoringRequest());

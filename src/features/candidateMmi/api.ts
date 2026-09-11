@@ -1,4 +1,5 @@
 import type { CandidateMmiPracticeScope, CandidateMmiPromptOrder } from './types';
+import { isMmiSourceId } from '../mmi/sourceId';
 
 export type CandidateMmiApiErrorKind =
   | 'access_denied'
@@ -149,7 +150,6 @@ export type CandidateMmiRpcClient = Readonly<{
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const STATION_ID_PATTERN = /^MMI_[0-9]{3}$/;
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 const scenarioKeys = [
@@ -271,8 +271,7 @@ function isValidBaseProjection(value: Record<string, unknown>): boolean {
   return (
     typeof value.sessionId === 'string' &&
     UUID_PATTERN.test(value.sessionId) &&
-    typeof value.stationId === 'string' &&
-    STATION_ID_PATTERN.test(value.stationId) &&
+    isMmiSourceId(value.stationId) &&
     parseIsoTimestamp(value.serverNow) !== null &&
     parseIsoTimestamp(value.phaseStartedAt) !== null
   );
@@ -550,7 +549,7 @@ function parseStationResult(
   if (
     result === null || !hasExactKeys(result, resultKeys) ||
     result.sessionId !== expectedSessionId ||
-    typeof result.stationId !== 'string' || !STATION_ID_PATTERN.test(result.stationId) ||
+    !isMmiSourceId(result.stationId) ||
     (result.status !== 'completed' && result.status !== 'awaiting_scoring' && result.status !== 'abandoned') ||
     (result.overallPct !== null && !isScore(result.overallPct)) ||
     !Array.isArray(result.feedback)
@@ -582,7 +581,7 @@ function parseHistory(value: unknown): readonly CandidateMmiHistoryItem[] {
     if (
       item === null || !hasExactKeys(item, historyKeys) ||
       typeof item.sessionId !== 'string' || !UUID_PATTERN.test(item.sessionId) ||
-      typeof item.stationId !== 'string' || !STATION_ID_PATTERN.test(item.stationId) ||
+      !isMmiSourceId(item.stationId) ||
       !isPracticeScope(item.scope) ||
       (item.targetUniversity !== null && !isPublicText(item.targetUniversity, 100)) ||
       parseIsoTimestamp(item.startedAt) === null ||
