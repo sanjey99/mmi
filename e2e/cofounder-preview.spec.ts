@@ -31,7 +31,7 @@ const profile = {
   id: userId,
   full_name: 'Partner Tester',
   avatar_url: null,
-  university_target: 'ucl',
+  university_target: 'Oxford',
   entry_year: 2027,
   daily_goal: 5,
   streak_current: 2,
@@ -263,6 +263,9 @@ async function installSupabaseMocks(page: Page) {
     if (url.pathname === '/rest/v1/app_config') {
       return json({ key: 'normalized_mmi_station_enabled', value: 'false' });
     }
+    if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_practice_options') {
+      return json({ targetUniversity: 'Oxford', targetTag: 'oxford', targetCount: 115, allCount: 155 });
+    }
 
     if (url.pathname === '/rest/v1/rpc/get_legacy_question_counts') {
       return json([
@@ -325,34 +328,45 @@ async function installCandidateMmiController(page: Page) {
     contentType: 'application/json',
     body: JSON.stringify(body),
   });
-  const dimension = Object.freeze({
-    score: 4,
-    applicable: true,
-    evidence: 'The response identified the immediate priority.',
-    improvement: 'Make the escalation threshold more explicit.',
+  const criterion = Object.freeze({
+    criterionId: 'MMI_001_Q1_C1',
+    achieved: true,
+    weightPct: 25,
+    bulletText: 'Identifies the immediate priority.',
+    domain: 'safety',
   });
   const assessment = Object.freeze({
-    dimensions: Object.freeze({
-      structure: dimension,
-      ethics: dimension,
-      communication: dimension,
-      reflection: dimension,
-      nhs_awareness: dimension,
-    }),
-    overallPct: 80,
-    strengths: ['Clear prioritisation and a safe first action.'],
-    improvements: ['State when senior support is required.'],
-    improvementTip: 'Name the escalation trigger before closing your response.',
-    rubricVersion: 1,
+    schemaVersion: 3 as const,
+    questionScorePct: 25,
+    criteria: Object.freeze([
+      criterion,
+      Object.freeze({ criterionId: 'MMI_001_Q1_C2', achieved: false, weightPct: 25, bulletText: 'Explains a proportionate next step.', domain: 'communication' }),
+      Object.freeze({ criterionId: 'MMI_001_Q1_C3', achieved: false, weightPct: 25, bulletText: 'Considers autonomy.', domain: 'ethics' }),
+      Object.freeze({ criterionId: 'MMI_001_Q1_C4', achieved: false, weightPct: 25, bulletText: 'Escalates appropriately.', domain: 'safety' }),
+    ]),
   });
   const feedback = Object.freeze([
-    Object.freeze({ promptOrder: 1, status: 'scored', assessment }),
+    Object.freeze({ promptOrder: 1, status: 'scored', legacy: false, assessment }),
     ...([2, 3, 4, 5] as const).map(promptOrder => Object.freeze({
       promptOrder,
       status: 'no_response',
-      assessment: null,
+      legacy: false,
+      assessment: Object.freeze({
+        ...assessment,
+        questionScorePct: 0,
+        criteria: Object.freeze(assessment.criteria.map((item) => ({ ...item, achieved: false }))),
+      }),
     })),
   ]);
+  const pendingFeedback = Object.freeze(
+    ([1, 2, 3, 4, 5] as const).map((promptOrder) => Object.freeze({
+      promptOrder,
+      status: 'pending' as const,
+      legacy: false,
+      assessment: null,
+    })),
+  );
+  let feedbackMode: 'terminal' | 'pending' = 'terminal';
 
   // Registered after the default route: Playwright's reverse matching gives
   // this candidate-only controller precedence without widening the wildcard.
@@ -402,7 +416,7 @@ async function installCandidateMmiController(page: Page) {
   });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_feedback', route => {
     rpcCalls.push('feedback');
-    return route.fulfill(json(feedback));
+    return route.fulfill(json(feedbackMode === 'terminal' ? feedback : pendingFeedback));
   });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/abandon_candidate_mmi_station_session', route => {
     rpcCalls.push('abandon');
@@ -419,7 +433,7 @@ async function installCandidateMmiController(page: Page) {
         body: JSON.stringify({ code: scoringFailureCode }),
       });
     }
-    return route.fulfill(json({ status: 'scored', assessment }));
+    return route.fulfill(json({ status: 'scored' }));
   });
 
   return Object.freeze({
@@ -444,7 +458,7 @@ async function installCandidateMmiController(page: Page) {
       nextAfterFinalization = nextProjection;
     },
     selectCompleted: () => { currentProjection = candidateCompletedProjection; },
-    failScoringWith: (code: string) => { scoringFailureCode = code; },
+    failScoringWith: (code: string) => { scoringFailureCode = code; feedbackMode = 'pending'; },
     abandonCount: () => abandonCount,
     rpcCalls: () => [...rpcCalls],
     checkpoints: () => [...checkpoints],
@@ -477,16 +491,16 @@ test('orientation keeps the next-station plate above its heading', async ({ page
   expect(stationPlateBox!.y + stationPlateBox!.height).toBeLessThanOrEqual(headingBox!.y);
 });
 
-test('practice presents one 11-minute MMI station without a flat question chooser', async ({ page }) => {
+test('practice presents distinct Oxford and all-repository 11-minute station pools', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('02 Practise').click();
 
-  await expect(page.getByText('11-minute MMI station', { exact: true })).toBeVisible();
-  await expect(page.getByText('One-minute brief, followed by five two-minute questions.', { exact: true }))
-    .toBeVisible();
+  await expect(page.getByText('Oxford practice', { exact: true })).toBeVisible();
+  await expect(page.getByText('115 complete 11-minute stations', { exact: true })).toBeVisible();
+  await expect(page.getByText('155 complete 11-minute stations', { exact: true })).toBeVisible();
   await expect(page.getByText('Ethics', { exact: true })).toHaveCount(0);
-  await page.getByText('Enter station', { exact: true }).click();
-  await expect(page).toHaveURL(/\/practice\/mmi-station$/);
+  await page.getByRole('button', { name: 'Practise' }).first().click();
+  await expect(page).toHaveURL(/\/practice\/mmi-station\?scope=target$/);
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
 });
 
@@ -495,8 +509,8 @@ test('MMI station follows only the current trusted prompt across timer expiry an
   await page.goto('/');
   await page.getByLabel('02 Practise').click();
 
-  await page.getByText('Enter station', { exact: true }).click();
-  await expect(page).toHaveURL(/\/practice\/mmi-station$/);
+  await page.getByRole('button', { name: 'Practise' }).first().click();
+  await expect(page).toHaveURL(/\/practice\/mmi-station\?scope=target$/);
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
   await expect(page.getByLabel(/seconds remaining/)).toHaveCount(0);
   expect(controller.rpcCalls()).toEqual([]);
@@ -686,29 +700,17 @@ test('MMI responses can be submitted early or deliberately skipped with softer r
   });
 });
 
-test('MMI completion starts all five scores and renders ordered transcript-only feedback', async ({ page }) => {
+test('MMI completion renders retained strict rubric-only feedback without re-scoring', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectCompleted();
   await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
 
   await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
-  await expect(page.getByText('Overall score · 80%', { exact: true })).toBeVisible();
-  await expect(page.getByText('Improvement tip', { exact: true })).toBeVisible();
-  const responseCards = page.getByText(/^Response [1-5]$/);
-  await expect(responseCards).toHaveCount(5);
-  const firstBox = await responseCards.nth(0).boundingBox();
-  const lastBox = await responseCards.nth(4).boundingBox();
-  expect(firstBox).not.toBeNull();
-  expect(lastBox).not.toBeNull();
-  expect(firstBox!.y).toBeLessThan(lastBox!.y);
+  await expect(page.getByText('Question 1 · 25%', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox')).toHaveCount(20);
+  await expect(page.getByText('No response was saved. A compatible rubric result is unavailable for this question.')).toHaveCount(0);
   expect(controller.rpcCalls()).toContain('feedback');
-  await expect.poll(() => controller.scoringRequests().length).toBe(5);
-  expect(controller.scoringRequests()).toEqual(
-    ([1, 2, 3, 4, 5] as const).map(promptOrder => ({
-      sessionId: candidateStationSessionId,
-      promptOrder,
-    })),
-  );
+  await expect.poll(() => controller.scoringRequests().length).toBe(0);
 });
 
 test('MMI completion explains when AI scoring is not configured', async ({ page }) => {
@@ -737,13 +739,13 @@ test('MMI leave abandons exactly once from a current response and returns to pra
   await expect(page.getByRole('textbox')).toHaveCount(0);
 });
 
-test('admin profile links directly to the Question Desk', async ({ page }) => {
+test('admin profile links directly to the station repository', async ({ page }) => {
   await page.goto('/profile');
 
   await page.getByText('Question Desk', { exact: true }).click();
 
-  await expect(page).toHaveURL(/\/admin\/questions$/);
-  await expect(page.getByText('Add practice questions')).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/stations$/);
+  await expect(page.getByText('Station repository', { exact: true })).toBeVisible();
 });
 
 test('partner sends feedback, opens the MMI station, and signs out safely', async ({ page }) => {
@@ -762,8 +764,8 @@ test('partner sends feedback, opens the MMI station, and signs out safely', asyn
 
   await page.getByText('Back to orient', { exact: true }).click();
   await page.getByLabel('02 Practise').click();
-  await expect(page.getByText('11-minute MMI station', { exact: true })).toBeVisible();
-  await page.getByText('Enter station', { exact: true }).click();
+  await expect(page.getByText('Oxford practice', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Practise' }).first().click();
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
   await page.goto('/');
   await expect(page.getByText('Ready, Partner.')).toBeVisible();
@@ -790,15 +792,10 @@ test('partner sends feedback, opens the MMI station, and signs out safely', asyn
   await expect(page.getByText('Add practice questions')).toHaveCount(0);
 });
 
-test('admin creates a draft and reviews masked partner feedback', async ({ page }) => {
+test('admin opens the repository and reviews masked partner feedback', async ({ page }) => {
   await page.goto('/admin/questions');
-  await expect(page.getByText('Add practice questions')).toBeVisible();
-  await page.getByPlaceholder('Write the exact prompt shown to the candidate.').fill(
-    'How would you respond when a patient’s family disagrees with the patient’s informed decision?',
-  );
-  await page.getByText('Review draft', { exact: true }).click();
-  await page.getByText('Save draft', { exact: true }).click();
-  await expect(page.getByText('Draft saved')).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/stations$/);
+  await expect(page.getByText('Station repository', { exact: true })).toBeVisible();
 
   await page.goto('/admin/feedback');
   await expect(page.getByText('Partner field reports')).toBeVisible();

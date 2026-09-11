@@ -2,7 +2,7 @@
 
 **Date:** 10 September 2026
 
-**Status:** Approved in chat; awaiting written-spec review
+**Status:** Implemented locally; deployment not performed
 
 **Builds on:** The single 11-minute MMI station experience
 
