@@ -540,11 +540,14 @@ function parsePracticeOptions(value: unknown): CandidateMmiPracticeOptions {
     allCount: options.allCount,
   });
 }
-function parseStationResult(value: unknown): CandidateMmiStationResult {
+function parseStationResult(
+  value: unknown,
+  expectedSessionId: string,
+): CandidateMmiStationResult {
   const result = record(value);
   if (
     result === null || !hasExactKeys(result, resultKeys) ||
-    typeof result.sessionId !== 'string' || !UUID_PATTERN.test(result.sessionId) ||
+    result.sessionId !== expectedSessionId ||
     typeof result.stationId !== 'string' || !STATION_ID_PATTERN.test(result.stationId) ||
     (result.status !== 'completed' && result.status !== 'awaiting_scoring' && result.status !== 'abandoned') ||
     (result.overallPct !== null && !isScore(result.overallPct)) ||
@@ -553,6 +556,15 @@ function parseStationResult(value: unknown): CandidateMmiStationResult {
   const feedback = parseFeedback(result.feedback);
   if (result.status === 'completed' && result.overallPct === null) return invalidResponse();
   if (result.status !== 'completed' && result.overallPct !== null) return invalidResponse();
+  if (
+    result.status === 'completed' && feedback.some((item) =>
+      item.status === 'scored'
+        ? item.legacy || item.assessment?.schemaVersion !== 3
+        : item.status === 'no_response'
+          ? item.assessment?.schemaVersion !== 3
+          : true,
+    )
+  ) return invalidResponse();
   return Object.freeze({
     sessionId: result.sessionId,
     stationId: result.stationId,
@@ -714,7 +726,11 @@ export function createCandidateMmiApi(rpc: CandidateMmiRpcClient) {
         : Promise.reject(new CandidateMmiApiError('invalid_request')),
     result: (sessionId: string): Promise<CandidateMmiStationResult> =>
       UUID_PATTERN.test(sessionId)
-        ? request('get_candidate_mmi_station_result', { p_session_id: sessionId }, parseStationResult)
+        ? request(
+            'get_candidate_mmi_station_result',
+            { p_session_id: sessionId },
+            (value) => parseStationResult(value, sessionId),
+          )
         : Promise.reject(new CandidateMmiApiError('invalid_request')),
     history: (limit = 20): Promise<readonly CandidateMmiHistoryItem[]> =>
       !Number.isInteger(limit) || limit < 1 || limit > 100

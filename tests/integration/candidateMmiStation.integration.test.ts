@@ -304,6 +304,19 @@ function assertDirectStationVersionAuthorNullingRejected(stationId: string, vers
   ]);
 }
 
+function seedHistoricalPromptSnapshot(sessionId: string): void {
+  assert.match(sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `BEGIN; SET LOCAL session_replication_role = replica; UPDATE public.candidate_mmi_station_prompt_snapshots SET rubric_snapshot = '{"version":0}'::jsonb WHERE session_id = '${sessionId}'::uuid AND prompt_order = 2; COMMIT;`,
+  ]);
+}
+
 function assertResponseProjection(
   value: unknown,
   expectedOrder: number,
@@ -865,12 +878,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       assert.equal(scoreError, null, scoreError?.message);
       assert.deepEqual(scored, { status: 'scored' });
 
-      const { error: legacySnapshotError } = await service
-        .from('candidate_mmi_station_prompt_snapshots')
-        .update({ rubric_snapshot: { version: 0 } })
-        .eq('session_id', sessionId)
-        .eq('prompt_order', 2);
-      assert.equal(legacySnapshotError, null, legacySnapshotError?.message);
+      seedHistoricalPromptSnapshot(sessionId);
 
       const { data: promptSnapshots, error: promptSnapshotsError } = await service
         .from('candidate_mmi_station_prompt_snapshots')

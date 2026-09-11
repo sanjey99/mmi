@@ -17,6 +17,7 @@ describe('final release UI policy', () => {
     expect(privacy).toContain('Service providers and AI processing');
     expect(privacy).toContain('Retention and your choices');
     expect(privacy).toContain('Our application and database never store raw MMI audio');
+    expect(privacy).toContain('delete MMI transcript text immediately after successful scoring and within 24 hours when unresolved');
     expect(privacy).toContain('External speech and AI providers may retain or process data under their own terms');
     expect(legalFooter).toContain("router.push('/terms')");
     expect(legalFooter).toContain("router.push('/privacy')");

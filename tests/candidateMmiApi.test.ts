@@ -232,6 +232,24 @@ describe('candidate MMI API transcript boundary', () => {
         : createCandidateMmiApi(rpcClient([{ data: malformed, error: null }])).result(sessionId);
       await expect(response).rejects.toMatchObject({ kind: 'invalid_response' });
     }
+
+    await expect(
+      createCandidateMmiApi(rpcClient([{ data: { ...result, sessionId: finalizationKey }, error: null }])).result(sessionId),
+    ).rejects.toMatchObject({ kind: 'invalid_response' });
+
+    await expect(
+      createCandidateMmiApi(rpcClient([{
+        data: { ...result, status: 'completed', overallPct: 20, feedback: feedbackRows(legacyAssessment, true) },
+        error: null,
+      }])).result(sessionId),
+    ).rejects.toMatchObject({ kind: 'invalid_response' });
+
+    await expect(
+      createCandidateMmiApi(rpcClient([{
+        data: { ...result, status: 'awaiting_scoring', overallPct: null, feedback: feedbackRows(legacyAssessment, true) },
+        error: null,
+      }])).result(sessionId),
+    ).resolves.toMatchObject({ status: 'awaiting_scoring', overallPct: null });
   });
 
   it('accepts only the exact schema-v3 public rubric projection', () => {
