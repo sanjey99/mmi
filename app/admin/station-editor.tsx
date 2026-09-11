@@ -7,39 +7,14 @@ import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { FloatingInput as Input } from '../../src/components/ui/Input';
 import { AdminMmiApiError, createAdminMmiApi } from '../../src/features/adminMmi/api';
-import type { AdminMmiContentStatus, AdminMmiStationDraft, AdminMmiQuestionDraft } from '../../src/features/adminMmi/types';
+import type { AdminMmiContentStatus, AdminMmiStationDraft } from '../../src/features/adminMmi/types';
+import { addDraftCriterion, addDraftQuestion, createStationDraft, remapUnsavedStationDraft } from '../../src/features/adminMmi/stationDraftIds';
 import { validateStationDraft } from '../../src/features/adminMmi/validation';
 import { navigateBackOr } from '../../src/lib/navigation';
 import { supabase } from '../../src/lib/supabase';
 import { colors, layout, text } from '../../src/theme';
 
 const api = createAdminMmiApi(supabase);
-const makeQuestion = (stationId: string, order: number): AdminMmiQuestionDraft => ({
-  subQuestionId: `${stationId}-q${order}`,
-  order,
-  questionText: '',
-  timeLimitSec: 120,
-  modelAnswerCached: null,
-  criteria: [],
-});
-
-function emptyStation(): AdminMmiStationDraft {
-  const stationId = 'new-station';
-  return {
-    stationId,
-    expectedVersion: null,
-    category: '', topic: '', difficulty: 'foundation', universityTags: [], prepTimeSec: 60, imageUrl: null, scenarioText: '',
-    questions: [1, 2, 3, 4, 5].map((order) => ({
-      ...makeQuestion(stationId, order),
-      criteria: [1, 2, 3, 4].map((criterion) => ({
-        criterionId: `${stationId}-q${order}-c${criterion}`,
-        order: criterion,
-        bulletText: '', domain: null, sourceWeight: 1,
-      })),
-    })),
-  };
-}
-
 const reordered = <T extends { order: number }>(items: readonly T[], order: number, direction: -1 | 1) => {
   const next = [...items].sort((left, right) => left.order - right.order);
   const from = next.findIndex((item) => item.order === order);
@@ -51,8 +26,8 @@ const reordered = <T extends { order: number }>(items: readonly T[], order: numb
 
 export default function StationEditor() {
   const { stationId } = useLocalSearchParams<{ stationId?: string }>();
-  const [draft, setDraft] = useState<AdminMmiStationDraft>(emptyStation);
-  const [savedDraft, setSavedDraft] = useState<AdminMmiStationDraft>(emptyStation);
+  const [draft, setDraft] = useState<AdminMmiStationDraft>(createStationDraft);
+  const [savedDraft, setSavedDraft] = useState<AdminMmiStationDraft>(createStationDraft);
   const [status, setStatus] = useState<AdminMmiContentStatus>('draft');
   const [loading, setLoading] = useState(Boolean(stationId));
   const [saving, setSaving] = useState(false);
@@ -76,7 +51,11 @@ export default function StationEditor() {
     setDraft((current) => isPublished ? current : updater(current));
   };
   const update = <K extends keyof AdminMmiStationDraft>(key: K, value: AdminMmiStationDraft[K]) => {
-    if (key === 'stationId' && !canChangeId) return;
+    if (key === 'stationId') {
+      if (!canChangeId) return;
+      setDraft((current) => isPublished ? current : remapUnsavedStationDraft(current, String(value)));
+      return;
+    }
     edit((current) => ({ ...current, [key]: value }));
   };
   const updateQuestion = (order: number, field: 'questionText' | 'modelAnswerCached', value: string) => edit((current) => ({
@@ -95,26 +74,13 @@ export default function StationEditor() {
       }),
     }),
   }));
-  const addQuestion = () => edit((current) => current.questions.length >= 5 ? current : ({
-    ...current,
-    questions: [...current.questions, makeQuestion(current.stationId, current.questions.length + 1)],
-  }));
+  const addQuestion = () => edit(addDraftQuestion);
   const removeQuestion = (order: number) => edit((current) => ({
     ...current,
     questions: current.questions.filter((question) => question.order !== order).map((question, index) => ({ ...question, order: index + 1 })),
   }));
   const moveQuestion = (order: number, direction: -1 | 1) => edit((current) => ({ ...current, questions: reordered(current.questions, order, direction) }));
-  const addCriterion = (questionOrder: number) => edit((current) => ({
-    ...current,
-    questions: current.questions.map((question) => question.order !== questionOrder || question.criteria.length >= 20 ? question : ({
-      ...question,
-      criteria: [...question.criteria, {
-        criterionId: `${question.subQuestionId}-c${question.criteria.length + 1}`,
-        order: question.criteria.length + 1,
-        bulletText: '', domain: null, sourceWeight: 1,
-      }],
-    })),
-  }));
+  const addCriterion = (subQuestionId: string) => edit((current) => addDraftCriterion(current, subQuestionId));
   const removeCriterion = (questionOrder: number, criterionOrder: number) => edit((current) => ({
     ...current,
     questions: current.questions.map((question) => question.order !== questionOrder ? question : ({
@@ -198,7 +164,7 @@ export default function StationEditor() {
             <TextInput value={String(criterion.sourceWeight)} editable={!isPublished} onChangeText={(value) => updateCriterion(question.order, criterion.order, 'sourceWeight', value)} style={styles.weightInput} keyboardType="decimal-pad" accessibilityLabel={`Question ${question.order} criterion ${criterion.order} source weight`} />
           </View>;
         })}
-        <TouchableOpacity disabled={isPublished || question.criteria.length >= 20} onPress={() => addCriterion(question.order)} accessibilityRole="button"><Text style={styles.control}>Add criterion</Text></TouchableOpacity>
+        <TouchableOpacity disabled={isPublished || question.criteria.length >= 20} onPress={() => addCriterion(question.subQuestionId)} accessibilityRole="button"><Text style={styles.control}>Add criterion</Text></TouchableOpacity>
       </View>)}
       {validation.issues.length ? <InlineNotice title="Draft validation" message={validation.issues.slice(0, 4).map((issue) => issue.message).join(' ')} tone="warning" /> : null}
       <Button label="Save draft version" onPress={() => setConfirm('save')} loading={saving} disabled={saving || isPublished} />

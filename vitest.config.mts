@@ -36,6 +36,7 @@ export default defineConfig({
       'tests/candidateMmiSpeech.test.ts',
       'tests/candidateMmiUiContract.test.ts',
       'tests/adminMmiValidation.test.ts',
+      'tests/adminMmiDraftIds.test.ts',
       'tests/adminMmiApi.test.ts',
       'tests/adminMmiUiContract.test.ts',
       'tests/cofounderFeedback.test.ts',

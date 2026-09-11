@@ -33,15 +33,29 @@ describe('admin MMI workspace contract', () => {
     expect(editor).not.toMatch(/deleteStation|delete_admin_mmi_station|\/delete/i);
   });
 
-  it('uses the narrow admin API for configuration and marks rates as future-only', () => {
+  it('separates non-secret AI settings from write-only key mutations', () => {
     const aiConfig = read('app/admin/ai-config.tsx');
 
     expect(aiConfig).toMatch(/MODEL/);
     expect(aiConfig).toMatch(/INPUT RATE/);
     expect(aiConfig).toMatch(/createAdminMmiApi/);
     expect(aiConfig).toMatch(/saveAiConfig/);
+    expect(aiConfig).toMatch(/requestSettingsSave|saveSettings/);
+    expect(aiConfig).toMatch(/requestReplaceKey|replaceKey/);
+    expect(aiConfig).toMatch(/clearKey/);
+    expect(aiConfig).toMatch(/settingsNotice/);
+    expect(aiConfig).toMatch(/keyNotice/);
+    const saveSettings = aiConfig.slice(aiConfig.indexOf('const saveSettings'), aiConfig.indexOf('const requestReplaceKey'));
+    expect(saveSettings).not.toMatch(/manage-ai-key/);
     expect(aiConfig).toMatch(/future calls only/i);
     expect(aiConfig).not.toMatch(/\.from\('app_config'\)/);
+  });
+
+  it('ignores stale repository responses after filters reset pagination', () => {
+    const stations = read('app/admin/stations.tsx');
+    expect(stations).toMatch(/createLatestRequestGate/);
+    expect(stations).toMatch(/isCurrent\(request\)/);
+    expect(stations).toMatch(/setOffset\(0\); load\(0\)/);
   });
 
   it('keeps questions links compatible and preserves the admin route guard', () => {
