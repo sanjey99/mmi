@@ -82,7 +82,7 @@ export type CandidateMmiFinalization = Readonly<{
 export type CandidateMmiDimension = (typeof MMI_DIMENSIONS)[number];
 export type CandidateMmiPublicDimensionResult =
   MmiAssessment['dimensions'][CandidateMmiDimension];
-export type CandidateMmiPublicAssessment = Readonly<{
+type CandidateMmiLegacyAssessment = Readonly<{
   schemaVersion?: never;
   dimensions: Readonly<
     Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>
@@ -93,21 +93,21 @@ export type CandidateMmiPublicAssessment = Readonly<{
   improvementTip: string;
   rubricVersion: number;
 }>;
-export type CandidateMmiRubricCriterion = Readonly<{
+export type CandidateMmiCriterionResult = Readonly<{
   criterionId: string;
   achieved: boolean;
   weightPct: number;
   bulletText: string;
   domain: string | null;
 }>;
-export type CandidateMmiRubricAssessment = Readonly<{
+export type CandidateMmiPublicAssessment = Readonly<{
   schemaVersion: 3;
   questionScorePct: number;
-  criteria: readonly CandidateMmiRubricCriterion[];
+  criteria: readonly CandidateMmiCriterionResult[];
 }>;
 export type CandidateMmiFeedbackAssessment =
-  | CandidateMmiPublicAssessment
-  | CandidateMmiRubricAssessment;
+  | CandidateMmiLegacyAssessment
+  | CandidateMmiPublicAssessment;
 export type CandidateMmiFeedback = Readonly<{
   promptOrder: CandidateMmiPromptOrder;
   status: CandidateMmiScoringStatus;
@@ -417,7 +417,7 @@ function parseFinalization(
     scoringStatus: result.scoringStatus,
   });
 }
-function parseAssessment(value: unknown): CandidateMmiPublicAssessment {
+function parseLegacyAssessment(value: unknown): CandidateMmiLegacyAssessment {
   const result = record(value);
   if (
     result === null ||
@@ -480,7 +480,7 @@ function parseAssessment(value: unknown): CandidateMmiPublicAssessment {
     rubricVersion: result.rubricVersion,
   });
 }
-function parseRubricAssessment(value: unknown): CandidateMmiRubricAssessment {
+export function parseCandidateAssessment(value: unknown): CandidateMmiPublicAssessment {
   const result = record(value);
   if (
     result === null || !hasExactKeys(result, rubricAssessmentKeys) ||
@@ -495,7 +495,7 @@ function parseRubricAssessment(value: unknown): CandidateMmiRubricAssessment {
       criterion === null || !hasExactKeys(criterion, rubricCriterionKeys) ||
       !isPublicText(criterion.criterionId) || typeof criterion.achieved !== 'boolean' ||
       typeof criterion.weightPct !== 'number' || !Number.isFinite(criterion.weightPct) ||
-      criterion.weightPct < 0 || criterion.weightPct > 100 ||
+      criterion.weightPct <= 0 || criterion.weightPct > 100 ||
       !isPublicText(criterion.bulletText) ||
       (criterion.domain !== null && !isPublicText(criterion.domain))
     ) return invalidResponse();
@@ -505,7 +505,21 @@ function parseRubricAssessment(value: unknown): CandidateMmiRubricAssessment {
       domain: criterion.domain,
     });
   });
-  return Object.freeze({ schemaVersion: 3, questionScorePct: result.questionScorePct, criteria: Object.freeze(criteria) });
+  const totalWeight = criteria.reduce((total, criterion) => total + criterion.weightPct, 0);
+  const achievedWeight = criteria.reduce(
+    (total, criterion) => total + (criterion.achieved ? criterion.weightPct : 0),
+    0,
+  );
+  if (
+    new Set(criteria.map((criterion) => criterion.criterionId)).size !== criteria.length ||
+    Math.abs(totalWeight - 100) > 0.01 ||
+    Math.abs(achievedWeight - result.questionScorePct) > 0.01
+  ) return invalidResponse();
+  return Object.freeze({
+    schemaVersion: 3,
+    questionScorePct: result.questionScorePct,
+    criteria: Object.freeze(criteria),
+  });
 }
 function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
   if (!Array.isArray(value) || value.length !== 5) return invalidResponse();
@@ -519,7 +533,8 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
         row.promptOrder !== promptOrder ||
         !isScoringStatus(row.status) ||
         typeof row.legacy !== 'boolean' ||
-        (row.status === 'scored') !== (row.assessment !== null) ||
+        (row.status === 'scored' || row.status === 'no_response') !==
+          (row.assessment !== null) ||
         (row.status !== 'scored' && row.legacy)
       )
         return invalidResponse();
@@ -529,8 +544,12 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
         legacy: row.legacy,
         assessment:
           row.status === 'scored'
-            ? row.legacy ? parseAssessment(row.assessment) : parseRubricAssessment(row.assessment)
-            : null,
+            ? row.legacy
+              ? parseLegacyAssessment(row.assessment)
+              : parseCandidateAssessment(row.assessment)
+            : row.status === 'no_response'
+              ? parseCandidateAssessment(row.assessment)
+              : null,
       });
     }),
   );

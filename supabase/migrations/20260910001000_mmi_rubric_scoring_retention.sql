@@ -309,7 +309,65 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='candidate session is not owned by caller'; END IF;
   IF clock_timestamp()<v_session.started_at+interval '660 seconds' THEN RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='candidate_feedback_not_ready'; END IF;
   PERFORM public.catch_up_candidate_mmi_station_responses(p_session_id,clock_timestamp());
-  RETURN (SELECT jsonb_agg(jsonb_build_object('promptOrder',response.prompt_order,'status',response.scoring_status,'legacy',CASE WHEN response.scoring_status='scored' THEN COALESCE((response.public_assessment->>'schemaVersion')::integer,0)<>3 ELSE false END,'assessment',CASE WHEN response.scoring_status<>'scored' THEN NULL WHEN COALESCE((response.public_assessment->>'schemaVersion')::integer,0)<>3 THEN response.public_assessment ELSE jsonb_build_object('schemaVersion',3,'questionScorePct',response.public_assessment->'questionScorePct','criteria',(SELECT jsonb_agg(jsonb_build_object('criterionId',decision.value->>'criterionId','achieved',(decision.value->>'achieved')::boolean,'weightPct',(decision.value->>'weightPct')::numeric,'bulletText',criterion.value->>'bulletText','domain',criterion.value->'domain') ORDER BY decision.ordinality) FROM jsonb_array_elements(response.public_assessment->'criteria') WITH ORDINALITY AS decision(value, ordinality) JOIN LATERAL jsonb_array_elements(snapshot.rubric_snapshot->'criteria') AS criterion(value) ON criterion.value->>'criterionId'=decision.value->>'criterionId') ) END) ORDER BY response.prompt_order) FROM public.candidate_mmi_station_responses response JOIN public.candidate_mmi_station_prompt_snapshots snapshot ON snapshot.session_id=response.session_id AND snapshot.prompt_order=response.prompt_order WHERE response.session_id=p_session_id);
+  RETURN (
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'promptOrder', response.prompt_order,
+        'status', response.scoring_status,
+        'legacy', CASE WHEN response.scoring_status = 'scored'
+          THEN COALESCE((response.public_assessment->>'schemaVersion')::integer, 0) <> 3
+          ELSE false
+        END,
+        'assessment', CASE
+          WHEN response.scoring_status = 'no_response' THEN jsonb_build_object(
+            'schemaVersion', 3,
+            'questionScorePct', 0,
+            'criteria', (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'criterionId', criterion.value->>'criterionId',
+                  'achieved', false,
+                  'weightPct', round(100::numeric / jsonb_array_length(snapshot.rubric_snapshot->'criteria'), 8),
+                  'bulletText', criterion.value->>'bulletText',
+                  'domain', criterion.value->'domain'
+                )
+                ORDER BY criterion.ordinality
+              )
+              FROM jsonb_array_elements(snapshot.rubric_snapshot->'criteria') WITH ORDINALITY AS criterion(value, ordinality)
+            )
+          )
+          WHEN response.scoring_status <> 'scored' THEN NULL
+          WHEN COALESCE((response.public_assessment->>'schemaVersion')::integer, 0) <> 3
+            THEN response.public_assessment
+          ELSE jsonb_build_object(
+            'schemaVersion', 3,
+            'questionScorePct', response.public_assessment->'questionScorePct',
+            'criteria', (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'criterionId', decision.value->>'criterionId',
+                  'achieved', (decision.value->>'achieved')::boolean,
+                  'weightPct', (decision.value->>'weightPct')::numeric,
+                  'bulletText', criterion.value->>'bulletText',
+                  'domain', criterion.value->'domain'
+                )
+                ORDER BY decision.ordinality
+              )
+              FROM jsonb_array_elements(response.public_assessment->'criteria') WITH ORDINALITY AS decision(value, ordinality)
+              JOIN LATERAL jsonb_array_elements(snapshot.rubric_snapshot->'criteria') AS criterion(value)
+                ON criterion.value->>'criterionId' = decision.value->>'criterionId'
+            )
+          )
+        END
+      )
+      ORDER BY response.prompt_order
+    )
+    FROM public.candidate_mmi_station_responses response
+    JOIN public.candidate_mmi_station_prompt_snapshots snapshot
+      ON snapshot.session_id = response.session_id
+      AND snapshot.prompt_order = response.prompt_order
+    WHERE response.session_id = p_session_id
+  );
 END;
 $function$;
 

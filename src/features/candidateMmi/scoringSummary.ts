@@ -1,4 +1,8 @@
 import { CandidateMmiScoringError } from './scoringApi';
+import type {
+  CandidateMmiCriterionResult,
+  CandidateMmiPublicAssessment,
+} from './api';
 
 const GENERIC_SCORING_FAILURE = 'AI scoring is unavailable. Try again.';
 
@@ -19,4 +23,18 @@ export function candidateMmiScoringFailureMessage(
     (failure) => failure.code === 'provider_not_configured',
   );
   return configurationFailure?.message ?? safeFailures[0]?.message ?? GENERIC_SCORING_FAILURE;
+}
+
+export type CandidateMmiRubricSummary = Readonly<{
+  covered: readonly CandidateMmiCriterionResult[];
+  nextTime: readonly CandidateMmiCriterionResult[];
+}>;
+
+export function summarizeCandidateMmiAssessment(
+  assessment: CandidateMmiPublicAssessment,
+): CandidateMmiRubricSummary {
+  return Object.freeze({
+    covered: Object.freeze(assessment.criteria.filter((criterion) => criterion.achieved)),
+    nextTime: Object.freeze(assessment.criteria.filter((criterion) => !criterion.achieved)),
+  });
 }

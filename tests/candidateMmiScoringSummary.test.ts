@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CandidateMmiScoringError } from '../src/features/candidateMmi/scoringApi';
-import { candidateMmiScoringFailureMessage } from '../src/features/candidateMmi/scoringSummary';
+import { candidateMmiScoringFailureMessage, summarizeCandidateMmiAssessment } from '../src/features/candidateMmi/scoringSummary';
 
 describe('candidate MMI scoring failure summary', () => {
   it('shows the safe actionable provider configuration reason', () => {
@@ -20,5 +20,25 @@ describe('candidate MMI scoring failure summary', () => {
     expect(candidateMmiScoringFailureMessage([
       { status: 'fulfilled', value: { status: 'no_response' } },
     ])).toBeNull();
+  });
+
+  it('derives covered and next-time points only from rubric ticks', () => {
+    expect(summarizeCandidateMmiAssessment({
+      schemaVersion: 3,
+      questionScorePct: 25,
+      criteria: [
+        { criterionId: 'CRIT_1', bulletText: 'Clarify risk', domain: 'safety', weightPct: 25, achieved: true },
+        { criterionId: 'CRIT_2', bulletText: 'Protect privacy', domain: null, weightPct: 25, achieved: false },
+        { criterionId: 'CRIT_3', bulletText: 'Escalate', domain: null, weightPct: 25, achieved: false },
+        { criterionId: 'CRIT_4', bulletText: 'Document', domain: null, weightPct: 25, achieved: false },
+      ],
+    })).toEqual({
+      covered: [{ criterionId: 'CRIT_1', bulletText: 'Clarify risk', domain: 'safety', weightPct: 25, achieved: true }],
+      nextTime: [
+        { criterionId: 'CRIT_2', bulletText: 'Protect privacy', domain: null, weightPct: 25, achieved: false },
+        { criterionId: 'CRIT_3', bulletText: 'Escalate', domain: null, weightPct: 25, achieved: false },
+        { criterionId: 'CRIT_4', bulletText: 'Document', domain: null, weightPct: 25, achieved: false },
+      ],
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CandidateMmiApiError,
   createCandidateMmiApi,
+  parseCandidateAssessment,
   type CandidateMmiCheckpoint,
   type CandidateMmiServerProjection,
 } from '../src/features/candidateMmi/api';
@@ -97,6 +98,33 @@ const assessment = Object.freeze({
   improvementTip: 'Name the escalation triggers explicitly.',
   rubricVersion: 1,
 });
+const rubricAssessment = Object.freeze({
+  schemaVersion: 3 as const,
+  questionScorePct: 25,
+  criteria: [
+    { criterionId: 'CRIT_1', bulletText: 'Clarifies immediate risk', domain: 'safety', weightPct: 25, achieved: true },
+    { criterionId: 'CRIT_2', bulletText: 'Protects confidentiality', domain: 'ethics', weightPct: 25, achieved: false },
+    { criterionId: 'CRIT_3', bulletText: 'Escalates proportionately', domain: 'professionalism', weightPct: 25, achieved: false },
+    { criterionId: 'CRIT_4', bulletText: 'Documents the action', domain: 'governance', weightPct: 25, achieved: false },
+  ],
+});
+const noResponseRubricAssessment = Object.freeze({
+  ...rubricAssessment,
+  questionScorePct: 0,
+  criteria: rubricAssessment.criteria.map((criterion) => ({ ...criterion, achieved: false })),
+});
+
+function feedbackRows(firstAssessment: unknown, firstLegacy: boolean) {
+  return [
+    { promptOrder: 1, status: 'scored', legacy: firstLegacy, assessment: firstAssessment },
+    ...[2, 3, 4, 5].map((promptOrder) => ({
+      promptOrder,
+      status: 'no_response',
+      legacy: false,
+      assessment: noResponseRubricAssessment,
+    })),
+  ];
+}
 
 type RpcResult = Readonly<{
   data: unknown;
@@ -120,6 +148,17 @@ const finalizationResult = Object.freeze({
 });
 
 describe('candidate MMI API transcript boundary', () => {
+  it('accepts only the exact schema-v3 public rubric projection', () => {
+    expect(parseCandidateAssessment(rubricAssessment)).toEqual(rubricAssessment);
+
+    for (const malformed of [
+      { ...rubricAssessment, evidence: 'private' },
+      { ...rubricAssessment, criteria: [...rubricAssessment.criteria, { ...rubricAssessment.criteria[0], criterionId: 'CRIT_1' }] },
+      { ...rubricAssessment, criteria: rubricAssessment.criteria.map((criterion, index) => index === 3 ? { ...criterion, weightPct: 24 } : criterion) },
+      { ...rubricAssessment, questionScorePct: 50 },
+    ]) expect(() => parseCandidateAssessment(malformed)).toThrow('Candidate MMI response is invalid.');
+  });
+
   it('accepts exact scenario and terminal projections, including PostgreSQL ISO offsets', async () => {
     const offsetScenario = {
       ...scenarioProjection,
@@ -253,12 +292,7 @@ describe('candidate MMI API transcript boundary', () => {
   });
 
   it('parses exactly five ordered feedback rows and rejects private/provider fields recursively', async () => {
-    const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
-      promptOrder,
-      status: promptOrder === 1 ? 'scored' : 'no_response',
-      legacy: promptOrder === 1,
-      assessment: promptOrder === 1 ? assessment : null,
-    }));
+    const feedback = feedbackRows(assessment, true);
     await expect(
       createCandidateMmiApi(
         rpcClient([{ data: feedback, error: null }]),
@@ -316,12 +350,7 @@ describe('candidate MMI API transcript boundary', () => {
         },
       },
     };
-    const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
-      promptOrder,
-      status: promptOrder === 1 ? 'scored' : 'no_response',
-      legacy: promptOrder === 1,
-      assessment: promptOrder === 1 ? decimalAssessment : null,
-    }));
+    const feedback = feedbackRows(decimalAssessment, true);
     await expect(
       createCandidateMmiApi(
         rpcClient([{ data: feedback, error: null }]),
@@ -330,14 +359,8 @@ describe('candidate MMI API transcript boundary', () => {
   });
 
   it('accepts only a hydrated schema-v3 assessment when legacy is false', async () => {
-    const rubric = { schemaVersion: 3, questionScorePct: 50, criteria: [
-      { criterionId: 'criterion-1', achieved: true, weightPct: 50, bulletText: 'Act safely.', domain: 'ethics' },
-      { criterionId: 'criterion-2', achieved: false, weightPct: 50, bulletText: 'Explain clearly.', domain: null },
-    ] };
-    const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
-      promptOrder, status: promptOrder === 1 ? 'scored' : 'no_response',
-      legacy: false, assessment: promptOrder === 1 ? rubric : null,
-    }));
+    const rubric = rubricAssessment;
+    const feedback = feedbackRows(rubric, false);
     await expect(createCandidateMmiApi(rpcClient([{ data: feedback, error: null }])).feedback(sessionId)).resolves.toEqual(feedback);
     await expect(createCandidateMmiApi(rpcClient([{ data: [{ ...feedback[0], legacy: true }, ...feedback.slice(1)], error: null }])).feedback(sessionId)).rejects.toMatchObject({ kind: 'invalid_response' });
   });
@@ -374,11 +397,7 @@ describe('candidate MMI API transcript boundary', () => {
       },
     ];
     for (const invalidAssessment of invalidAssessments) {
-      const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
-        promptOrder,
-        status: promptOrder === 1 ? 'scored' : 'no_response',
-        assessment: promptOrder === 1 ? invalidAssessment : null,
-      }));
+      const feedback = feedbackRows(invalidAssessment, false);
       await expect(
         createCandidateMmiApi(
           rpcClient([{ data: feedback, error: null }]),

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const practiceScreenPath = resolve(process.cwd(), 'app/(tabs)/practice.tsx');
 const candidateStationPath = resolve(process.cwd(), 'app/practice/mmi-station.tsx');
+const rubricChecklistPath = resolve(process.cwd(), 'src/components/mmi/RubricChecklist.tsx');
 const legacySessionPath = resolve(process.cwd(), 'app/practice/session.tsx');
 const browserSpeechMigrationPath = resolve(
   process.cwd(),
@@ -76,7 +77,8 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/Start station/);
     expect(routeSource).toMatch(/Browser speech service/);
     expect(routeSource).toMatch(/does not record or store\s+audio/i);
-    expect(routeSource).toMatch(/transcript is saved/i);
+    expect(routeSource).toMatch(/transcript text is temporary/i);
+    expect(routeSource).toMatch(/within 24 hours/i);
     expect(routeSource).toMatch(/startStation/);
     expect(routeSource).toMatch(/speechPort\(\)\.preflight/);
   });
@@ -128,10 +130,25 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/\.feedback\(/);
     expect(routeSource).toMatch(/3_000/);
     expect(routeSource).toMatch(/60_000/);
-    expect(routeSource).toMatch(/Overall score/);
-    expect(routeSource).toMatch(/Improvement tip/);
-    expect(routeSource).toMatch(/Transcript-only feedback/);
+    expect(routeSource).toMatch(/Question \{item\.promptOrder\} · \{assessment\.questionScorePct\}%/);
+    expect(routeSource).toMatch(/Covered/);
+    expect(routeSource).toMatch(/Next time/);
+    expect(routeSource).toMatch(/temporary transcript expired/i);
+    expect(routeSource).not.toMatch(/Overall score/);
+    expect(routeSource).not.toMatch(/Improvement tip/);
+    expect(routeSource).not.toMatch(/Transcript-only feedback/);
+    expect(routeSource).not.toMatch(/dimensions|RadarChart|evidence/);
     expect(routeSource).not.toMatch(/accent evaluation|speaking pace|eye contact|body language/i);
+  });
+
+  it('renders rubric points as accessible, non-interactive achieved checkboxes', () => {
+    const checklistSource = readFileSync(rubricChecklistPath, 'utf8');
+
+    expect(checklistSource).toMatch(/accessibilityRole="checkbox"/);
+    expect(checklistSource).toMatch(/accessibilityState=\{\{ checked: criterion\.achieved \}\}/);
+    expect(checklistSource).toMatch(/criterion\.bulletText/);
+    expect(checklistSource).toMatch(/criterion\.weightPct/);
+    expect(checklistSource).not.toMatch(/transcript|evidence/i);
   });
 
   it('contains no browser media capture or audio persistence surface and supports terminal leave behavior', () => {

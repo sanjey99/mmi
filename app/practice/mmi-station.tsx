@@ -11,6 +11,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ConfirmAction } from '../../src/components/feedback/ConfirmAction';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
+import { RubricChecklist } from '../../src/components/mmi/RubricChecklist';
 import { Button } from '../../src/components/ui/Button';
 import {
   createCandidateMmiApi,
@@ -19,7 +20,10 @@ import {
 } from '../../src/features/candidateMmi/api';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
-import { candidateMmiScoringFailureMessage } from '../../src/features/candidateMmi/scoringSummary';
+import {
+  candidateMmiScoringFailureMessage,
+  summarizeCandidateMmiAssessment,
+} from '../../src/features/candidateMmi/scoringSummary';
 import { createBrowserSpeechPort } from '../../src/features/candidateMmi/speechPort';
 import {
   CANDIDATE_MMI_TRANSCRIPT_MAX_CODE_POINTS,
@@ -146,35 +150,34 @@ function feedbackIsTerminal(feedback: readonly CandidateMmiFeedback[]): boolean 
 
 function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
   const assessment = item.assessment;
+  const rubricSummary = assessment?.schemaVersion === 3
+    ? summarizeCandidateMmiAssessment(assessment)
+    : null;
   return (
     <View style={styles.feedbackCard}>
-      <Text style={styles.label}>Response {item.promptOrder}</Text>
-      {assessment ? (
-        assessment.schemaVersion === 3 ? (
+      {rubricSummary && assessment?.schemaVersion === 3 ? (
           <>
-            <Text style={styles.score}>Question score · {assessment.questionScorePct}%</Text>
-            {assessment.criteria.map((criterion) => (
-              <Text key={criterion.criterionId} style={styles.feedbackText}>
-                {criterion.achieved ? 'Met' : 'Not met'} · {criterion.bulletText}
-              </Text>
-            ))}
+            <Text style={styles.score}>Question {item.promptOrder} · {assessment.questionScorePct}%</Text>
+            <RubricChecklist criteria={assessment.criteria} />
+            <Text style={styles.feedbackHeading}>Covered</Text>
+            {rubricSummary.covered.length > 0 ? rubricSummary.covered.map((criterion) => (
+              <Text key={criterion.criterionId} style={styles.feedbackText}>• {criterion.bulletText}</Text>
+            )) : <Text style={styles.feedbackText}>No rubric points were achieved.</Text>}
+            <Text style={styles.feedbackHeading}>Next time</Text>
+            {rubricSummary.nextTime.length > 0 ? rubricSummary.nextTime.map((criterion) => (
+              <Text key={criterion.criterionId} style={styles.feedbackText}>• {criterion.bulletText}</Text>
+            )) : <Text style={styles.feedbackText}>Every rubric point was achieved.</Text>}
           </>
-        ) : (
-          <>
-            <Text style={styles.score}>Overall score · {assessment.overallPct}%</Text>
-            {assessment.strengths.map((strength) => (
-              <Text key={strength} style={styles.feedbackText}>• {strength}</Text>
-            ))}
-            <Text style={styles.feedbackHeading}>Improvement tip</Text>
-            <Text style={styles.feedbackText}>{assessment.improvementTip}</Text>
-          </>
-        )
+      ) : assessment ? (
+        <Text style={styles.feedbackText}>This historic result cannot be shown as a rubric checklist.</Text>
       ) : (
         <Text style={styles.feedbackText}>
           {item.status === 'no_response'
             ? 'No saved response was available to score.'
             : item.status === 'pending' || item.status === 'in_progress'
               ? 'Feedback is being prepared…'
+              : item.status === 'feedback_unavailable'
+                ? 'Feedback is unavailable because the temporary transcript expired before scoring completed.'
               : 'Feedback is unavailable for this response.'}
         </Text>
       )}
@@ -618,8 +621,8 @@ export default function CandidateMmiStationScreen() {
             <Text style={styles.reading}>
               Your browser or platform may send microphone audio to its speech
               provider for transcription. This app does not record or store
-              audio. Only the editable transcript is saved for your responses
-              and transcript-only feedback.
+              audio. Editable transcript text is temporary: it is deleted after
+              successful scoring, or within 24 hours if an assessment is unresolved.
             </Text>
           </View>
           <Text style={styles.status}>
@@ -673,7 +676,7 @@ export default function CandidateMmiStationScreen() {
           </Text>
           {projection.phase === 'completed' ? (
             <>
-              <Text style={styles.status}>Transcript-only feedback · five responses in station order</Text>
+              <Text style={styles.status}>Rubric results · five questions in station order</Text>
               {feedback?.map((item) => <FeedbackCard key={item.promptOrder} item={item} />) ?? (
                 <Text style={styles.reading}>Preparing feedback…</Text>
               )}

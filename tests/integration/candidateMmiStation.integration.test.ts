@@ -865,6 +865,24 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       assert.equal(scoreError, null, scoreError?.message);
       assert.deepEqual(scored, { status: 'scored' });
 
+      const { data: promptSnapshots, error: promptSnapshotsError } = await service
+        .from('candidate_mmi_station_prompt_snapshots')
+        .select('prompt_order,rubric_snapshot')
+        .eq('session_id', sessionId)
+        .order('prompt_order');
+      assert.equal(promptSnapshotsError, null, promptSnapshotsError?.message);
+      assert.equal(promptSnapshots?.length, 5);
+      const criteriaForPrompt = (promptOrder: number) => {
+        const snapshot = promptSnapshots?.find(
+          (item) => item.prompt_order === promptOrder,
+        );
+        const rubricSnapshot = snapshot?.rubric_snapshot as {
+          criteria: Array<{ criterionId: string; bulletText: string; domain: string | null }>;
+        } | null;
+        assert.ok(rubricSnapshot?.criteria.length);
+        return rubricSnapshot.criteria;
+      };
+
       const { data: feedback, error: feedbackError } = await owner.client.rpc(
         'get_candidate_mmi_station_feedback',
         { p_session_id: sessionId },
@@ -879,10 +897,16 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
             bulletText: criterion.bulletText, domain: criterion.domain,
           })),
         } },
-        { promptOrder: 2, status: 'no_response', legacy: false, assessment: null },
-        { promptOrder: 3, status: 'no_response', legacy: false, assessment: null },
-        { promptOrder: 4, status: 'no_response', legacy: false, assessment: null },
-        { promptOrder: 5, status: 'no_response', legacy: false, assessment: null },
+        ...[2, 3, 4, 5].map((promptOrder) => ({
+          promptOrder, status: 'no_response', legacy: false, assessment: {
+            schemaVersion: 3, questionScorePct: 0,
+            criteria: criteriaForPrompt(promptOrder).map((criterion) => ({
+              criterionId: criterion.criterionId, achieved: false,
+              weightPct: Number((100 / criteriaForPrompt(promptOrder).length).toFixed(2)),
+              bulletText: criterion.bulletText, domain: criterion.domain,
+            })),
+          },
+        })),
       ]);
 
       const { data: otherFeedback, error: otherFeedbackError } = await other.client.rpc(
