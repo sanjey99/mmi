@@ -31,7 +31,7 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Service providers and AI processing',
     paragraphs: [
-      'Vercel serves the static web application. Supabase provides authentication, database, and Edge Function services. When scoring is enabled, the server sends the selected prompt and submitted answer to the AI provider configured by the founding team. Authorized founders may review product feedback and support records.',
+      'Vercel serves the static web application. Supabase provides authentication, database, and Edge Function services. When scoring is enabled, the server sends the selected prompt and submitted answer to the AI provider configured by the founding team. Browser speech and AI providers may process data under their own terms and retention practices. Authorized founders may review product feedback and support records.',
       'These providers may process data in countries outside your own. Contractual safeguards, project regions, provider settings, and current subprocessor lists must be confirmed before a wider round. We do not sell preview personal data or use it for advertising.',
     ],
   },
@@ -45,7 +45,7 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Retention and your choices',
     paragraphs: [
-      'Structured practice outcomes are kept while needed to operate the invited test, investigate issues, evaluate the product, and meet applicable obligations. MMI transcript text is deleted after successful scoring or within 24 hours when unresolved; raw MMI audio is never stored. Exact production retention periods for other records must be approved before the approximately 100-person round.',
+      'Structured practice outcomes are kept while needed to operate the invited test, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete MMI transcript text after successful scoring or within 24 hours when unresolved; raw MMI audio is never stored by us. External speech and AI providers may retain or process data under their own terms. Exact production retention periods for other records must be approved before the approximately 100-person round.',
       'Ask the founding team to access, correct, export, restrict, object to use of, or delete information associated with your invited account. The available rights depend on the applicable law and legal basis. You may also raise a concern with the relevant data-protection authority; UK participants can contact the Information Commissioner’s Office.',
     ],
   },

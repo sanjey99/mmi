@@ -1,5 +1,4 @@
 import type { CandidateMmiPromptOrder } from './types';
-import { MMI_DIMENSIONS, type MmiAssessment } from '../mmi/types';
 
 export type CandidateMmiApiErrorKind =
   | 'access_denied'
@@ -79,18 +78,9 @@ export type CandidateMmiFinalization = Readonly<{
   finalizedAt: string;
   scoringStatus: CandidateMmiScoringStatus;
 }>;
-export type CandidateMmiDimension = (typeof MMI_DIMENSIONS)[number];
-export type CandidateMmiPublicDimensionResult =
-  MmiAssessment['dimensions'][CandidateMmiDimension];
 type CandidateMmiLegacyAssessment = Readonly<{
   schemaVersion?: never;
-  dimensions: Readonly<
-    Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>
-  >;
   overallPct: number;
-  strengths: readonly string[];
-  improvements: readonly string[];
-  improvementTip: string;
   rubricVersion: number;
 }>;
 export type CandidateMmiCriterionResult = Readonly<{
@@ -176,21 +166,7 @@ const finalizationKeys = [
 const feedbackKeys = ['assessment', 'legacy', 'promptOrder', 'status'] as const;
 const rubricAssessmentKeys = ['criteria', 'questionScorePct', 'schemaVersion'] as const;
 const rubricCriterionKeys = ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct'] as const;
-const assessmentKeys = [
-  'dimensions',
-  'improvementTip',
-  'improvements',
-  'overallPct',
-  'rubricVersion',
-  'strengths',
-] as const;
-const dimensionResultKeys = [
-  'applicable',
-  'evidence',
-  'improvement',
-  'score',
-] as const;
-const dimensions = MMI_DIMENSIONS;
+const legacyAssessmentKeys = ['overallPct', 'rubricVersion'] as const;
 const scoringStatuses = [
   'pending',
   'in_progress',
@@ -225,16 +201,11 @@ function parseIsoTimestamp(value: unknown): Date | null {
 function codePointLength(value: string): number {
   return Array.from(value).length;
 }
-function isPublicText(value: unknown): value is string {
+function isPublicText(value: unknown, maximumCodePoints = 1_000): value is string {
   return (
     typeof value === 'string' &&
-    codePointLength(value) <= 1_000 &&
+    codePointLength(value) <= maximumCodePoints &&
     value.trim().length > 0
-  );
-}
-function isPublicTextArray(value: unknown): value is readonly string[] {
-  return (
-    Array.isArray(value) && value.length <= 20 && value.every(isPublicText)
   );
 }
 function isPromptOrder(value: unknown): value is CandidateMmiPromptOrder {
@@ -421,62 +392,17 @@ function parseLegacyAssessment(value: unknown): CandidateMmiLegacyAssessment {
   const result = record(value);
   if (
     result === null ||
-    !hasExactKeys(result, assessmentKeys) ||
+    !hasExactKeys(result, legacyAssessmentKeys) ||
     typeof result.overallPct !== 'number' ||
     !Number.isFinite(result.overallPct) ||
     result.overallPct < 0 ||
     result.overallPct > 100 ||
     typeof result.rubricVersion !== 'number' ||
-    !Number.isInteger(result.rubricVersion) ||
-    result.rubricVersion < 1 ||
-    !isPublicText(result.improvementTip) ||
-    !isPublicTextArray(result.strengths) ||
-    !isPublicTextArray(result.improvements)
+    !Number.isInteger(result.rubricVersion) || result.rubricVersion < 1
   )
     return invalidResponse();
-
-  const valueDimensions = record(result.dimensions);
-  if (valueDimensions === null || !hasExactKeys(valueDimensions, dimensions))
-    return invalidResponse();
-  const parsedDimensions = {} as Record<
-    CandidateMmiDimension,
-    CandidateMmiPublicDimensionResult
-  >;
-  for (const dimension of dimensions) {
-    const item = record(valueDimensions[dimension]);
-    const hasValidOptionalText =
-      (item?.evidence === null || isPublicText(item?.evidence)) &&
-      (item?.improvement === null || isPublicText(item?.improvement));
-    const applicableScore =
-      typeof item?.score === 'number' &&
-      Number.isInteger(item.score) &&
-      item.score >= 1 &&
-      item.score <= 5;
-    const inapplicableValuesAreNull =
-      item?.score === null &&
-      item.evidence === null &&
-      item.improvement === null;
-    if (
-      item === null ||
-      !hasExactKeys(item, dimensionResultKeys) ||
-      typeof item.applicable !== 'boolean' ||
-      !hasValidOptionalText ||
-      (item.applicable ? !applicableScore : !inapplicableValuesAreNull)
-    )
-      return invalidResponse();
-    parsedDimensions[dimension] = Object.freeze({
-      score: item.score as CandidateMmiPublicDimensionResult['score'],
-      applicable: item.applicable,
-      evidence: item.evidence as string | null,
-      improvement: item.improvement as string | null,
-    });
-  }
   return Object.freeze({
-    dimensions: Object.freeze(parsedDimensions),
     overallPct: result.overallPct,
-    strengths: Object.freeze([...result.strengths]),
-    improvements: Object.freeze([...result.improvements]),
-    improvementTip: result.improvementTip,
     rubricVersion: result.rubricVersion,
   });
 }
@@ -493,11 +419,11 @@ export function parseCandidateAssessment(value: unknown): CandidateMmiPublicAsse
     const criterion = record(value);
     if (
       criterion === null || !hasExactKeys(criterion, rubricCriterionKeys) ||
-      !isPublicText(criterion.criterionId) || typeof criterion.achieved !== 'boolean' ||
+      !isPublicText(criterion.criterionId, 100) || typeof criterion.achieved !== 'boolean' ||
       typeof criterion.weightPct !== 'number' || !Number.isFinite(criterion.weightPct) ||
       criterion.weightPct <= 0 || criterion.weightPct > 100 ||
-      !isPublicText(criterion.bulletText) ||
-      (criterion.domain !== null && !isPublicText(criterion.domain))
+      !isPublicText(criterion.bulletText, 2_000) ||
+      (criterion.domain !== null && !isPublicText(criterion.domain, 100))
     ) return invalidResponse();
     return Object.freeze({
       criterionId: criterion.criterionId, achieved: criterion.achieved,
@@ -533,8 +459,8 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
         row.promptOrder !== promptOrder ||
         !isScoringStatus(row.status) ||
         typeof row.legacy !== 'boolean' ||
-        (row.status === 'scored' || row.status === 'no_response') !==
-          (row.assessment !== null) ||
+        (row.status === 'scored' && row.assessment === null) ||
+        (row.status !== 'scored' && row.status !== 'no_response' && row.assessment !== null) ||
         (row.status !== 'scored' && row.legacy)
       )
         return invalidResponse();
@@ -548,7 +474,7 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
               ? parseLegacyAssessment(row.assessment)
               : parseCandidateAssessment(row.assessment)
             : row.status === 'no_response'
-              ? parseCandidateAssessment(row.assessment)
+              ? row.assessment === null ? null : parseCandidateAssessment(row.assessment)
               : null,
       });
     }),

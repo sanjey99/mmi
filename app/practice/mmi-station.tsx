@@ -148,6 +148,14 @@ function feedbackIsTerminal(feedback: readonly CandidateMmiFeedback[]): boolean 
   );
 }
 
+function retryablePromptOrders(feedback: readonly CandidateMmiFeedback[] | null): readonly CandidateMmiPromptOrder[] {
+  return feedback === null
+    ? MMI_PROMPT_ORDERS
+    : feedback
+      .filter((item) => item.status === 'pending' || item.status === 'failed')
+      .map((item) => item.promptOrder);
+}
+
 function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
   const assessment = item.assessment;
   const rubricSummary = assessment?.schemaVersion === 3
@@ -168,16 +176,19 @@ function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
               <Text key={criterion.criterionId} style={styles.feedbackText}>• {criterion.bulletText}</Text>
             )) : <Text style={styles.feedbackText}>Every rubric point was achieved.</Text>}
           </>
-      ) : assessment ? (
-        <Text style={styles.feedbackText}>This historic result cannot be shown as a rubric checklist.</Text>
+      ) : assessment && item.legacy && 'overallPct' in assessment ? (
+        <>
+          <Text style={styles.score}>Question {item.promptOrder} · Legacy score {assessment.overallPct}%</Text>
+          <Text style={styles.feedbackText}>Recorded with legacy rubric version {assessment.rubricVersion}; checklist detail is unavailable.</Text>
+        </>
       ) : (
         <Text style={styles.feedbackText}>
           {item.status === 'no_response'
-            ? 'No saved response was available to score.'
+            ? 'No response was saved. A compatible rubric result is unavailable for this question.'
             : item.status === 'pending' || item.status === 'in_progress'
               ? 'Feedback is being prepared…'
               : item.status === 'feedback_unavailable'
-                ? 'Feedback is unavailable because the temporary transcript expired before scoring completed.'
+                ? 'Feedback is unavailable because the temporary transcript expired before scoring completed. Start a new station to try this question again.'
               : 'Feedback is unavailable for this response.'}
         </Text>
       )}
@@ -505,8 +516,17 @@ export default function CandidateMmiStationScreen() {
 
     let failureMessage: string | null = null;
     try {
+      let existingFeedback: readonly CandidateMmiFeedback[] | null = null;
+      try {
+        existingFeedback = await api().feedback(completedId);
+        setFeedback(existingFeedback);
+      } catch {
+        // Preserve the existing safe generic failure after the scoring attempt.
+      }
+      const promptOrders = retryablePromptOrders(existingFeedback);
+      if (promptOrders.length === 0) return;
       const outcomes = await Promise.allSettled(
-        MMI_PROMPT_ORDERS.map((promptOrder) =>
+        promptOrders.map((promptOrder) =>
           scoringApi().scoreCandidateResponse(completedId, promptOrder),
         ),
       );
@@ -558,10 +578,10 @@ export default function CandidateMmiStationScreen() {
   }, [api, completedSessionId]);
 
   const retryAiScoring = useCallback(() => {
-    if (!completedSessionId || scoringInProgress) return;
+    if (!completedSessionId || scoringInProgress || retryablePromptOrders(feedback).length === 0) return;
     completedScoringSessionRef.current = null;
     void scoreCompletedStation(completedSessionId);
-  }, [completedSessionId, scoreCompletedStation, scoringInProgress]);
+  }, [completedSessionId, feedback, scoreCompletedStation, scoringInProgress]);
 
   useEffect(() => () => {
     if (checkpointTimerRef.current) clearTimeout(checkpointTimerRef.current);
@@ -621,8 +641,9 @@ export default function CandidateMmiStationScreen() {
             <Text style={styles.reading}>
               Your browser or platform may send microphone audio to its speech
               provider for transcription. This app does not record or store
-              audio. Editable transcript text is temporary: it is deleted after
-              successful scoring, or within 24 hours if an assessment is unresolved.
+              audio. Our application and database delete editable transcript text
+              after successful scoring, or within 24 hours if an assessment is unresolved.
+              Your browser speech provider may process audio under its own terms.
             </Text>
           </View>
           <Text style={styles.status}>
@@ -694,12 +715,14 @@ export default function CandidateMmiStationScreen() {
                     message={scoringFailureMessage}
                     tone="error"
                   />
-                  <Button
-                    label="Retry AI scoring"
-                    onPress={retryAiScoring}
-                    variant="secondary"
-                    labelStyle={styles.actionLabel}
-                  />
+                  {retryablePromptOrders(feedback).length > 0 ? (
+                    <Button
+                      label="Retry AI scoring"
+                      onPress={retryAiScoring}
+                      variant="secondary"
+                      labelStyle={styles.actionLabel}
+                    />
+                  ) : null}
                 </>
               ) : null}
               {feedbackMessage ? <InlineNotice title="Feedback update" message={feedbackMessage} tone="warning" /> : null}

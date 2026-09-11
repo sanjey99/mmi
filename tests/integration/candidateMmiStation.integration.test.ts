@@ -865,6 +865,13 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       assert.equal(scoreError, null, scoreError?.message);
       assert.deepEqual(scored, { status: 'scored' });
 
+      const { error: legacySnapshotError } = await service
+        .from('candidate_mmi_station_prompt_snapshots')
+        .update({ rubric_snapshot: { version: 0 } })
+        .eq('session_id', sessionId)
+        .eq('prompt_order', 2);
+      assert.equal(legacySnapshotError, null, legacySnapshotError?.message);
+
       const { data: promptSnapshots, error: promptSnapshotsError } = await service
         .from('candidate_mmi_station_prompt_snapshots')
         .select('prompt_order,rubric_snapshot')
@@ -897,7 +904,8 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
             bulletText: criterion.bulletText, domain: criterion.domain,
           })),
         } },
-        ...[2, 3, 4, 5].map((promptOrder) => ({
+        { promptOrder: 2, status: 'no_response', legacy: false, assessment: null },
+        ...[3, 4, 5].map((promptOrder) => ({
           promptOrder, status: 'no_response', legacy: false, assessment: {
             schemaVersion: 3, questionScorePct: 0,
             criteria: criteriaForPrompt(promptOrder).map((criterion) => ({

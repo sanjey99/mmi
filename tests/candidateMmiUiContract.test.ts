@@ -77,7 +77,7 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/Start station/);
     expect(routeSource).toMatch(/Browser speech service/);
     expect(routeSource).toMatch(/does not record or store\s+audio/i);
-    expect(routeSource).toMatch(/transcript text is temporary/i);
+    expect(routeSource).toMatch(/application and database delete editable transcript text/i);
     expect(routeSource).toMatch(/within 24 hours/i);
     expect(routeSource).toMatch(/startStation/);
     expect(routeSource).toMatch(/speechPort\(\)\.preflight/);
@@ -133,7 +133,9 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/Question \{item\.promptOrder\} · \{assessment\.questionScorePct\}%/);
     expect(routeSource).toMatch(/Covered/);
     expect(routeSource).toMatch(/Next time/);
+    expect(routeSource).toMatch(/Legacy score/);
     expect(routeSource).toMatch(/temporary transcript expired/i);
+    expect(routeSource).toMatch(/Start a new station to try this question again/);
     expect(routeSource).not.toMatch(/Overall score/);
     expect(routeSource).not.toMatch(/Improvement tip/);
     expect(routeSource).not.toMatch(/Transcript-only feedback/);

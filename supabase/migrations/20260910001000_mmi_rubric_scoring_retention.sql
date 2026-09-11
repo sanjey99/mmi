@@ -319,7 +319,24 @@ BEGIN
           ELSE false
         END,
         'assessment', CASE
-          WHEN response.scoring_status = 'no_response' THEN jsonb_build_object(
+          WHEN response.scoring_status = 'no_response'
+            AND jsonb_typeof(snapshot.rubric_snapshot) = 'object'
+            AND jsonb_typeof(snapshot.rubric_snapshot->'version') = 'number'
+            AND snapshot.rubric_snapshot->>'version' = '1'
+            AND jsonb_typeof(snapshot.rubric_snapshot->'criteria') = 'array'
+            AND jsonb_array_length(snapshot.rubric_snapshot->'criteria') BETWEEN 1 AND 20
+            AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(snapshot.rubric_snapshot->'criteria') AS criterion(value)
+              WHERE jsonb_typeof(criterion.value) <> 'object'
+                OR (SELECT count(*) FROM jsonb_object_keys(criterion.value)) <> 3
+                OR jsonb_typeof(criterion.value->'criterionId') <> 'string'
+                OR char_length(btrim(criterion.value->>'criterionId')) NOT BETWEEN 1 AND 100
+                OR jsonb_typeof(criterion.value->'bulletText') <> 'string'
+                OR char_length(btrim(criterion.value->>'bulletText')) NOT BETWEEN 1 AND 2000
+                OR (criterion.value->'domain' <> 'null'::jsonb AND jsonb_typeof(criterion.value->'domain') <> 'string')
+                OR (jsonb_typeof(criterion.value->'domain') = 'string' AND char_length(btrim(criterion.value->>'domain')) NOT BETWEEN 1 AND 100)
+            )
+            THEN jsonb_build_object(
             'schemaVersion', 3,
             'questionScorePct', 0,
             'criteria', (
@@ -338,7 +355,10 @@ BEGIN
           )
           WHEN response.scoring_status <> 'scored' THEN NULL
           WHEN COALESCE((response.public_assessment->>'schemaVersion')::integer, 0) <> 3
-            THEN response.public_assessment
+            THEN jsonb_build_object(
+              'overallPct', response.public_assessment->'overallPct',
+              'rubricVersion', response.public_assessment->'rubricVersion'
+            )
           ELSE jsonb_build_object(
             'schemaVersion', 3,
             'questionScorePct', response.public_assessment->'questionScorePct',

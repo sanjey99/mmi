@@ -59,7 +59,7 @@ const abandonedProjection = Object.freeze({
   phaseStartedAt: '2026-08-26T00:01:10.000Z',
   phaseEndsAt: '2026-08-26T00:01:10.000Z',
 });
-const assessment = Object.freeze({
+const unsafeLegacyAssessment = Object.freeze({
   dimensions: {
     structure: {
       score: 4,
@@ -98,6 +98,7 @@ const assessment = Object.freeze({
   improvementTip: 'Name the escalation triggers explicitly.',
   rubricVersion: 1,
 });
+const legacyAssessment = Object.freeze({ overallPct: 70, rubricVersion: 1 });
 const rubricAssessment = Object.freeze({
   schemaVersion: 3 as const,
   questionScorePct: 25,
@@ -156,7 +157,15 @@ describe('candidate MMI API transcript boundary', () => {
       { ...rubricAssessment, criteria: [...rubricAssessment.criteria, { ...rubricAssessment.criteria[0], criterionId: 'CRIT_1' }] },
       { ...rubricAssessment, criteria: rubricAssessment.criteria.map((criterion, index) => index === 3 ? { ...criterion, weightPct: 24 } : criterion) },
       { ...rubricAssessment, questionScorePct: 50 },
+      { ...rubricAssessment, criteria: rubricAssessment.criteria.map((criterion, index) => index === 0 ? { ...criterion, criterionId: 'x'.repeat(101) } : criterion) },
+      { ...rubricAssessment, criteria: rubricAssessment.criteria.map((criterion, index) => index === 0 ? { ...criterion, domain: 'x'.repeat(101) } : criterion) },
+      { ...rubricAssessment, criteria: rubricAssessment.criteria.map((criterion, index) => index === 0 ? { ...criterion, bulletText: 'x'.repeat(2_001) } : criterion) },
     ]) expect(() => parseCandidateAssessment(malformed)).toThrow('Candidate MMI response is invalid.');
+
+    expect(parseCandidateAssessment({
+      ...rubricAssessment,
+      criteria: rubricAssessment.criteria.map((criterion, index) => index === 0 ? { ...criterion, bulletText: 'x'.repeat(2_000) } : criterion),
+    }).criteria[0]?.bulletText).toHaveLength(2_000);
   });
 
   it('accepts exact scenario and terminal projections, including PostgreSQL ISO offsets', async () => {
@@ -292,7 +301,7 @@ describe('candidate MMI API transcript boundary', () => {
   });
 
   it('parses exactly five ordered feedback rows and rejects private/provider fields recursively', async () => {
-    const feedback = feedbackRows(assessment, true);
+    const feedback = feedbackRows(legacyAssessment, true);
     await expect(
       createCandidateMmiApi(
         rpcClient([{ data: feedback, error: null }]),
@@ -303,7 +312,7 @@ describe('candidate MMI API transcript boundary', () => {
       [
         {
           ...feedback[0],
-          assessment: { ...assessment, providerReasoning: 'private' },
+          assessment: { ...legacyAssessment, providerReasoning: 'private' },
         },
         ...feedback.slice(1),
       ],
@@ -311,14 +320,7 @@ describe('candidate MMI API transcript boundary', () => {
         {
           ...feedback[0],
           assessment: {
-            ...assessment,
-            dimensions: {
-              ...assessment.dimensions,
-              structure: {
-                ...assessment.dimensions.structure,
-                model: 'private',
-              },
-            },
+            ...unsafeLegacyAssessment,
           },
         },
         ...feedback.slice(1),
@@ -336,26 +338,16 @@ describe('candidate MMI API transcript boundary', () => {
       ).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 
-  it('mirrors the public assessment shape: decimal percentages and valid applicable dimensions are accepted', async () => {
-    const decimalAssessment = {
-      ...assessment,
-      overallPct: 70.1,
-      dimensions: {
-        ...assessment.dimensions,
-        structure: {
-          score: 4,
-          applicable: true,
-          evidence: 'Prioritised immediate safety.',
-          improvement: 'State escalation triggers.',
-        },
-      },
-    };
-    const feedback = feedbackRows(decimalAssessment, true);
+  it('accepts a labelled legacy score but rejects legacy narrative and evidence fields', async () => {
+    const feedback = feedbackRows({ ...legacyAssessment, overallPct: 70.1 }, true);
     await expect(
       createCandidateMmiApi(
         rpcClient([{ data: feedback, error: null }]),
       ).feedback(sessionId),
     ).resolves.toEqual(feedback);
+    await expect(
+      createCandidateMmiApi(rpcClient([{ data: feedbackRows(unsafeLegacyAssessment, true), error: null }])).feedback(sessionId),
+    ).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 
   it('accepts only a hydrated schema-v3 assessment when legacy is false', async () => {
@@ -367,34 +359,9 @@ describe('candidate MMI API transcript boundary', () => {
 
   it('rejects assessment values the public contract forbids', async () => {
     const invalidAssessments = [
-      { ...assessment, overallPct: 100.1 },
-      { ...assessment, strengths: [' '] },
-      { ...assessment, strengths: Array.from({ length: 21 }, () => 'valid') },
-      { ...assessment, improvementTip: 'x'.repeat(1_001) },
-      {
-        ...assessment,
-        dimensions: {
-          ...assessment.dimensions,
-          structure: {
-            score: null,
-            applicable: true,
-            evidence: null,
-            improvement: null,
-          },
-        },
-      },
-      {
-        ...assessment,
-        dimensions: {
-          ...assessment.dimensions,
-          communication: {
-            score: 1,
-            applicable: false,
-            evidence: null,
-            improvement: null,
-          },
-        },
-      },
+      { ...legacyAssessment, overallPct: 100.1 },
+      { ...legacyAssessment, rubricVersion: 0 },
+      unsafeLegacyAssessment,
     ];
     for (const invalidAssessment of invalidAssessments) {
       const feedback = feedbackRows(invalidAssessment, false);
