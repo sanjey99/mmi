@@ -39,6 +39,12 @@ const handler = createManageAiKeyHandler({
       .upsert({ key: 'ai_api_key', value: apiKey }, { onConflict: 'key' });
     return { error };
   },
+  async clearKey() {
+    const { error } = await serviceClient
+      .from('app_config')
+      .upsert({ key: 'ai_api_key', value: null }, { onConflict: 'key' });
+    return { error };
+  },
 }, Deno.env.get('APP_ALLOWED_ORIGINS') ?? '');
 
 Deno.serve(handler);

@@ -12,6 +12,7 @@ export interface ManageAiKeyRepository {
   getAdminStatus: (userId: string) => Promise<RepositoryResult<{ isAdmin?: boolean }>>;
   getKeyConfigured: () => Promise<RepositoryResult<{ configured?: boolean }>>;
   replaceKey: (apiKey: string) => Promise<{ error?: unknown }>;
+  clearKey: () => Promise<{ error?: unknown }>;
 }
 
 export function createManageAiKeyHandler(
@@ -53,6 +54,15 @@ export function createManageAiKeyHandler(
       const result = await repository.getKeyConfigured();
       if (result.error) return http.json({ error: 'Unable to load AI key status' }, 500);
       return http.json({ configured: Boolean(result.configured) });
+    }
+
+    if (action === 'clear') {
+      const confirmed = body && typeof body === 'object'
+        && (body as { confirm?: unknown }).confirm === true;
+      if (!confirmed) return http.json({ error: 'Explicit confirmation is required' }, 400);
+      const result = await repository.clearKey();
+      if (result.error) return http.json({ error: 'Unable to clear the AI key' }, 500);
+      return http.json({ configured: false });
     }
 
     const authorization = authorizeKeyReplacement(body, true);

@@ -37,6 +37,7 @@ export default defineConfig({
       'tests/candidateMmiUiContract.test.ts',
       'tests/adminMmiValidation.test.ts',
       'tests/adminMmiApi.test.ts',
+      'tests/adminMmiUiContract.test.ts',
       'tests/cofounderFeedback.test.ts',
       'tests/cofounderFeedbackPolicy.test.ts',
       'tests/cofounderHostedReconciliationPolicy.test.ts',

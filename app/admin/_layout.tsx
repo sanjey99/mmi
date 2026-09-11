@@ -28,6 +28,16 @@ export default function AdminLayout() {
         contentStyle: { backgroundColor: colors.bg.primary },
         animation: 'slide_from_right',
       }}
-    />
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="stations" />
+      <Stack.Screen name="station-editor" />
+      <Stack.Screen name="panels" />
+      <Stack.Screen name="ai-config" />
+      <Stack.Screen name="usage" />
+      <Stack.Screen name="assessments" />
+      <Stack.Screen name="assessment" />
+      <Stack.Screen name="questions" />
+    </Stack>
   );
 }

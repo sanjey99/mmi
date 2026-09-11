@@ -12,6 +12,7 @@ function repository(overrides: Partial<ManageAiKeyRepository> = {}): ManageAiKey
     getAdminStatus: vi.fn(async () => ({ isAdmin: true })),
     getKeyConfigured: vi.fn(async () => ({ configured: true })),
     replaceKey: vi.fn(async () => ({})),
+    clearKey: vi.fn(async () => ({})),
     ...overrides,
   };
 }
@@ -133,6 +134,20 @@ describe('manage-ai-key handler', () => {
 
     expect(response.status).toBe(400);
     expect(repo.replaceKey).not.toHaveBeenCalled();
+  });
+
+  it('clears a key only after explicit confirmation and returns only its configured state', async () => {
+    const repo = repository();
+    const handler = createManageAiKeyHandler(repo, allowedOrigin);
+
+    const rejected = await handler(request(JSON.stringify({ action: 'clear' })));
+    expect(rejected.status).toBe(400);
+    expect(repo.clearKey).not.toHaveBeenCalled();
+
+    const accepted = await handler(request(JSON.stringify({ action: 'clear', confirm: true })));
+    expect(accepted.status).toBe(200);
+    expect(repo.clearKey).toHaveBeenCalledOnce();
+    expect(await accepted.json()).toEqual({ configured: false });
   });
 
   it('returns safe errors for status and write failures', async () => {
