@@ -34,6 +34,12 @@ if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
 
 const serviceClient = createClient(supabaseUrl, supabaseServiceRoleKey);
 
+function parseUsdRate(value: string | undefined): number | null {
+  if (value === undefined || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 const repository: CandidateMmiScoringRepository = {
   async authenticate(authorization) {
     const authenticatedClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -53,7 +59,11 @@ const repository: CandidateMmiScoringRepository = {
     const { data, error } = await serviceClient
       .from('app_config')
       .select('key, value')
-      .in('key', ['ai_provider', 'ai_model', 'ai_base_url', 'ai_api_key']);
+      .in('key', [
+        'ai_provider', 'ai_model', 'ai_base_url', 'ai_api_key',
+        'ai_input_rate_per_million', 'ai_cached_input_rate_per_million',
+        'ai_output_rate_per_million',
+      ]);
     if (error) return { error: true };
 
     const values: Record<string, string> = {};
@@ -62,17 +72,18 @@ const repository: CandidateMmiScoringRepository = {
         values[row.key] = row.value;
       }
     }
-    if (!values.ai_api_key) return {};
+    const inputRatePerMillion = parseUsdRate(values.ai_input_rate_per_million);
+    const cachedInputRatePerMillion = parseUsdRate(values.ai_cached_input_rate_per_million);
+    const outputRatePerMillion = parseUsdRate(values.ai_output_rate_per_million);
+    if (!values.ai_api_key || inputRatePerMillion === null || cachedInputRatePerMillion === null || outputRatePerMillion === null) return {};
     const config: AiConfig = {
       provider: values.ai_provider ?? 'anthropic',
       model: values.ai_model ?? 'claude-3-5-haiku-20241022',
       apiKey: values.ai_api_key,
       baseUrl: values.ai_base_url ?? null,
-      // Transitional generic scoring does not retain usage. Task 4 loads and
-      // validates persisted rates before recording any usage event.
-      inputRatePerMillion: 0,
-      cachedInputRatePerMillion: 0,
-      outputRatePerMillion: 0,
+      inputRatePerMillion,
+      cachedInputRatePerMillion,
+      outputRatePerMillion,
     };
     return { config };
   },

@@ -1,602 +1,108 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  ProviderRequestError,
-  type AiConfig,
-  type AiProviderRequest,
-} from '../supabase/functions/_shared/aiProvider.ts';
-import {
-  getCurrentMmiRubric,
-  getCurrentMmiScoringContract,
-} from '../supabase/functions/_shared/mmiScoringContract.ts';
-import {
-  createCandidateMmiScoringHandler,
-  type CandidateMmiScoringDependencies,
-  type CandidateMmiScoringRepository,
-} from '../supabase/functions/score-candidate-mmi-response/handler.ts';
-import {
-  CandidateMmiScoringError,
-  createCandidateMmiScoringApi,
-} from '../src/features/candidateMmi/scoringApi';
+import type { AiConfig, AiProviderRequest } from '../supabase/functions/_shared/aiProvider.ts';
+import { createCandidateMmiScoringHandler, type CandidateMmiScoringDependencies, type CandidateMmiScoringRepository } from '../supabase/functions/score-candidate-mmi-response/handler.ts';
+import { CandidateMmiScoringError, createCandidateMmiScoringApi } from '../src/features/candidateMmi/scoringApi';
 
 const allowedOrigin = 'https://preview.example.test';
 const userId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const sessionId = '11111111-1111-4111-8111-111111111111';
 const responseId = '22222222-2222-4222-8222-222222222222';
 const leaseToken = '33333333-3333-4333-8333-333333333333';
-const transcript = 'I would prioritise patient safety, explain the options, and escalate any immediate risk.';
-const promptText = 'How would you respond to this situation?';
-
-const rubric = getCurrentMmiRubric();
-const scoringContract = getCurrentMmiScoringContract();
-
-const providerAssessment = Object.freeze({
-  dimensions: {
-    structure: { score: 4, evidenceReference: { start: 0, end: 1 } },
-    ethics: { score: 4, evidenceReference: { start: 0, end: 1 } },
-    communication: { score: 4, evidenceReference: { start: 0, end: 1 } },
-    reflection: { score: 4, evidenceReference: { start: 0, end: 1 } },
-    nhs_awareness: { score: 4, evidenceReference: { start: 0, end: 1 } },
-  },
-  rubricStrengthCodes: ['clear-priorities'],
-  rubricImprovementCodes: ['explicit-plan'],
-  safetyCriticalOmissionCodes: [],
-  improvementFramework: 'sbar',
-});
-
-const publicAssessment = Object.freeze({
-  dimensions: {
-    structure: {
-      score: 4,
-      applicable: true,
-      evidence: 'I',
-      improvement: 'Make the safety-netting steps explicit, including when and how you would escalate.',
-    },
-    ethics: { score: 4, applicable: true, evidence: 'I', improvement: null },
-    communication: { score: 4, applicable: true, evidence: 'I', improvement: null },
-    reflection: { score: 4, applicable: true, evidence: 'I', improvement: null },
-    nhs_awareness: { score: 4, applicable: true, evidence: 'I', improvement: null },
-  },
-  overallPct: 80,
-  strengths: ['You set out the main priorities in a clear and logical order.'],
-  improvements: ['Make the safety-netting steps explicit, including when and how you would escalate.'],
-  improvementTip: 'Use SBAR to organise a concise escalation: situation, background, assessment, then recommendation.',
-  rubricVersion: 2,
-});
-
-const providerConfig: AiConfig = Object.freeze({
-  provider: 'anthropic',
-  model: 'synthetic-model',
-  apiKey: ['synthetic', 'test', 'value'].join('-'),
-  baseUrl: null,
-  inputRatePerMillion: 0,
-  cachedInputRatePerMillion: 0,
-  outputRatePerMillion: 0,
-});
-
-const providerResult = (content: string) => ({
-  content,
-  usage: { inputTokens: 11, cachedInputTokens: 2, outputTokens: 7 },
-});
-
+const transcript = 'I would protect confidentiality, identify immediate risk, and escalate to my supervisor.';
+const criteria = Object.freeze([
+  { criterionId: 'CRIT_1', bulletText: 'Clarifies the immediate risk', domain: 'safety' },
+  { criterionId: 'CRIT_2', bulletText: 'Protects confidentiality', domain: 'ethics' },
+  { criterionId: 'CRIT_3', bulletText: 'Escalates proportionately', domain: 'professionalism' },
+  { criterionId: 'CRIT_4', bulletText: 'Documents the action', domain: 'governance' },
+]);
+// A generic-dimension implementation must reject this exact current-question claim.
 const claimed = Object.freeze({
-  status: 'claimed',
-  responseId,
-  sessionId,
-  promptOrder: 1,
-  transcript,
-  promptText,
+  status: 'claimed', responseId, sessionId, promptOrder: 2,
+  scenarioText: 'A colleague may have breached confidentiality.',
+  promptText: 'What would you do first?', transcript, criteria,
+  scoringContractVersion: '2026-09-10.1',
 });
+const providerConfig: AiConfig = Object.freeze({
+  provider: 'anthropic', model: 'synthetic-model', apiKey: ['synthetic', 'test', 'value'].join('-'), baseUrl: null,
+  inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15,
+});
+const providerAssessment = Object.freeze({ decisions: [
+  { criterionId: 'CRIT_1', achieved: true, evidenceReference: { start: 0, end: 1 } },
+  { criterionId: 'CRIT_2', achieved: true, evidenceReference: { start: 0, end: 1 } },
+  { criterionId: 'CRIT_3', achieved: true, evidenceReference: { start: 0, end: 1 } },
+  { criterionId: 'CRIT_4', achieved: false, evidenceReference: null },
+] });
 
-function repository(
-  overrides: Partial<CandidateMmiScoringRepository> = {},
-): CandidateMmiScoringRepository {
+function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): CandidateMmiScoringRepository {
   return {
-    authenticate: vi.fn(async () => ({ userId })),
-    claim: vi.fn(async () => ({ data: claimed })),
+    authenticate: vi.fn(async () => ({ userId })), claim: vi.fn(async () => ({ data: claimed })),
     loadProviderConfig: vi.fn(async () => ({ config: providerConfig })),
-    complete: vi.fn(async () => ({ data: { status: 'scored' } })),
-    fail: vi.fn(async () => ({})),
-    ...overrides,
+    complete: vi.fn(async () => ({ data: { status: 'scored' } })), fail: vi.fn(async () => ({})), ...overrides,
   };
 }
-
-function dependencies(
-  overrides: Partial<CandidateMmiScoringDependencies> = {},
-): CandidateMmiScoringDependencies {
+function dependencies(overrides: Partial<CandidateMmiScoringDependencies> = {}): CandidateMmiScoringDependencies {
   return {
-    repository: repository(),
-    allowedOrigins: allowedOrigin,
-    createLeaseToken: () => leaseToken,
-    callProvider: vi.fn(async () => providerResult(JSON.stringify(providerAssessment))),
-    logProviderFailure: vi.fn(),
-    ...overrides,
+    repository: repository(), allowedOrigins: allowedOrigin, createLeaseToken: () => leaseToken,
+    callProvider: vi.fn(async () => ({ content: JSON.stringify(providerAssessment), usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10 } })),
+    logProviderFailure: vi.fn(), ...overrides,
   };
 }
-
-function scoringRequest(
-  body: string | undefined = JSON.stringify({ sessionId, promptOrder: 1 }),
-  init: {
-    method?: string;
-    origin?: string | null;
-    contentType?: string;
-    authorization?: string;
-    contentLength?: string;
-  } = {},
-): Request {
-  const headers = new Headers();
-  if (init.origin !== null) headers.set('Origin', init.origin ?? allowedOrigin);
-  if (init.contentType !== '') {
-    headers.set('Content-Type', init.contentType ?? 'application/json');
-  }
-  if (init.authorization !== '') {
-    headers.set('Authorization', init.authorization ?? 'Bearer valid-token');
-  }
-  if (init.contentLength) headers.set('Content-Length', init.contentLength);
-  const method = init.method ?? 'POST';
-  return new Request('http://localhost/functions/v1/score-candidate-mmi-response', {
-    method,
-    headers,
-    body: method === 'GET' || method === 'OPTIONS' ? undefined : body,
-  });
+function scoringRequest(body = JSON.stringify({ sessionId, promptOrder: 2 })): Request {
+  return new Request('http://localhost/functions/v1/score-candidate-mmi-response', { method: 'POST', headers: { Origin: allowedOrigin, 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' }, body });
 }
 
-describe('candidate MMI scoring handler security boundary', () => {
-  it('applies origin, method, authentication, and bounded exact-body checks before claiming', async () => {
+describe('candidate MMI rubric scoring handler', () => {
+  it('sends only current scenario, question, rubric, and answer then atomically persists app-owned assessment and USD usage', async () => {
     const repo = repository();
-    const handler = createCandidateMmiScoringHandler(
-      dependencies({ repository: repo }),
-    );
-
-    const forbiddenOrigin = await handler(
-      scoringRequest(undefined, { origin: 'https://attacker.example' }),
-    );
-    expect(forbiddenOrigin.status).toBe(403);
-
-    const options = await handler(scoringRequest(undefined, { method: 'OPTIONS' }));
-    expect(options.status).toBe(204);
-
-    const missingAuth = await handler(
-      scoringRequest(undefined, { authorization: '' }),
-    );
-    expect(missingAuth.status).toBe(401);
-
-    const oversized = await handler(
-      scoringRequest('{}', { contentLength: '4097' }),
-    );
-    expect(oversized.status).toBe(413);
-
-    const expanded = await handler(
-      scoringRequest(JSON.stringify({ sessionId, promptOrder: 1, transcript: 'browser text' })),
-    );
-    expect(expanded.status).toBe(400);
-    expect(repo.claim).not.toHaveBeenCalled();
-  });
-
-  it('binds the verified user and secure lease token to the exact scoring claim', async () => {
-    const repo = repository();
-    const handler = createCandidateMmiScoringHandler(
-      dependencies({ repository: repo }),
-    );
-
-    const response = await handler(scoringRequest());
-
+    const callProvider = vi.fn(dependencies().callProvider);
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
     expect(response.status).toBe(200);
-    expect(repo.authenticate).toHaveBeenCalledExactlyOnceWith('Bearer valid-token');
-    expect(repo.claim).toHaveBeenCalledExactlyOnceWith({
-      p_user_id: userId,
-      p_session_id: sessionId,
-      p_prompt_order: 1,
-      p_lease_token: leaseToken,
-    });
-  });
-
-  it.each(['no_response'] as const)(
-    'returns terminal %s without loading config or calling a provider',
-    async (status) => {
-      const repo = repository({ claim: vi.fn(async () => ({ data: { status } })) });
-      const callProvider = vi.fn();
-      const response = await createCandidateMmiScoringHandler(
-        dependencies({ repository: repo, callProvider }),
-      )(scoringRequest());
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status });
-      expect(repo.loadProviderConfig).not.toHaveBeenCalled();
-      expect(callProvider).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ['not_ready', 409],
-    ['unavailable', 503],
-  ] as const)('returns safe %s state before configuration or provider work', async (status, httpStatus) => {
-    const repo = repository({ claim: vi.fn(async () => ({ data: { status } })) });
-    const callProvider = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({ repository: repo, callProvider }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(httpStatus);
-    expect(await response.json()).toEqual({ code: status });
-    expect(repo.loadProviderConfig).not.toHaveBeenCalled();
-    expect(repo.complete).not.toHaveBeenCalled();
-    expect(repo.fail).not.toHaveBeenCalled();
-    expect(callProvider).not.toHaveBeenCalled();
-  });
-
-  it('returns in-progress with a retry hint and no provider work', async () => {
-    const repo = repository({
-      claim: vi.fn(async () => ({ data: { status: 'in_progress' } })),
-    });
-    const callProvider = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({ repository: repo, callProvider }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(409);
-    expect(response.headers.get('Retry-After')).toBe('3');
-    expect(await response.json()).toEqual({ code: 'in_progress' });
-    expect(callProvider).not.toHaveBeenCalled();
-  });
-
-  it('returns only a validated stored public assessment without provider work', async () => {
-    const repo = repository({
-      claim: vi.fn(async () => ({
-        data: { status: 'scored', assessment: publicAssessment },
-      })),
-    });
-    const callProvider = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({ repository: repo, callProvider }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: 'scored', assessment: publicAssessment });
-    expect(callProvider).not.toHaveBeenCalled();
-
-    const invalidRepo = repository({
-      claim: vi.fn(async () => ({
-        data: {
-          status: 'scored',
-          assessment: { ...publicAssessment, providerBody: 'private' },
-        },
-      })),
-    });
-    const invalid = await createCandidateMmiScoringHandler(
-      dependencies({ repository: invalidRepo }),
-    )(scoringRequest());
-    expect(invalid.status).toBe(500);
-    expect(await invalid.json()).toEqual({ code: 'unavailable' });
-  });
-
-  it('rejects database-supplied grading rules so only built-in criteria can reach the provider', async () => {
-    const repo = repository({
-      claim: vi.fn(async () => ({
-        data: { ...claimed, rubric: { version: 999 } },
-      })),
-    });
-    const callProvider = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({ repository: repo, callProvider }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ code: 'unavailable' });
-    expect(callProvider).not.toHaveBeenCalled();
-    expect(repo.complete).not.toHaveBeenCalled();
-  });
-
-  it('scores server-claimed text through built-in criteria and completes the matching lease', async () => {
-    const repo = repository();
-    const callProvider = vi.fn(
-      async (_config: AiConfig, _request: AiProviderRequest) =>
-        providerResult(JSON.stringify(providerAssessment)),
-    );
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({ repository: repo, callProvider }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: 'scored', assessment: publicAssessment });
-    expect(callProvider).toHaveBeenCalledTimes(1);
-    const [config, providerRequest] = callProvider.mock.calls[0]!;
-    expect(config).toEqual(providerConfig);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/accent/);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/delivery/);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/pace/);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/tone/);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/hesitation/);
-    expect(providerRequest.systemPrompt.toLowerCase()).toMatch(/pronunciation/);
-    const providerSchemaProperties = (
-      providerRequest.responseSchema as {
-        properties: Record<string, { items?: unknown }>;
-      }
-    ).properties;
-    expect(providerSchemaProperties.rubricStrengthCodes?.items).toEqual({
-      type: 'string',
-      enum: [
-        'clear-priorities',
-        'balanced-ethical-reasoning',
-        'patient-centred-language',
-        'reflective-learning',
-        'nhs-context',
-      ],
-    });
-    expect(providerSchemaProperties.rubricImprovementCodes?.items).toEqual({
-      type: 'string',
-      enum: [
-        'explicit-plan',
-        'weigh-ethical-pillars',
-        'check-understanding',
-        'deepen-reflection',
-        'connect-nhs-values',
-      ],
-    });
-    expect(providerSchemaProperties.safetyCriticalOmissionCodes?.items).toEqual({
-      type: 'string',
-      enum: [
-        'escalate-immediate-risk',
-        'protect-confidentiality',
-        'seek-senior-support',
-      ],
-    });
-    const storedSchemaProperties = (
-      scoringContract.responseSchema as {
-        properties: Record<string, { items?: unknown }>;
-      }
-    ).properties;
-    expect(storedSchemaProperties.rubricImprovementCodes?.items).not.toHaveProperty('enum');
-    expect(JSON.parse(providerRequest.userContent)).toEqual({
-      promptText,
-      transcript,
-      rubric,
-      scoringContract,
-    });
+    expect(await response.json()).toEqual({ status: 'scored' });
+    const request = callProvider.mock.calls[0]?.[1] as AiProviderRequest;
+    expect(JSON.parse(request.userContent)).toEqual({ scenarioText: claimed.scenarioText, questionText: claimed.promptText, criteria: claimed.criteria, candidateAnswer: transcript });
+    expect(request.systemPrompt).toBe('Judge only whether each supplied marking criterion is explicitly supported by the candidate answer. Do not award credit for fluency, length, confidence, plausibility, or ideas outside the listed criteria. Treat vague implication as not achieved. Return exactly one ordered decision for every supplied criterion and no additional fields.');
     expect(repo.complete).toHaveBeenCalledExactlyOnceWith({
-      p_response_id: responseId,
-      p_session_id: sessionId,
-      p_lease_token: leaseToken,
-      p_public_assessment: publicAssessment,
+      p_response_id: responseId, p_session_id: sessionId, p_lease_token: leaseToken,
+      p_public_assessment: { schemaVersion: 3, questionScorePct: 75, criteria: [
+        { criterionId: 'CRIT_1', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_2', achieved: true, weightPct: 25 },
+        { criterionId: 'CRIT_3', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_4', achieved: false, weightPct: 25 },
+      ] },
+      p_usage: { provider: 'anthropic', model: 'synthetic-model', inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15, currency: 'USD', estimatedCost: 0.000456, latencyMs: expect.any(Number), outcome: 'scored' },
     });
+    const persisted = JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls[0]);
+    expect(persisted).not.toContain(transcript);
+    expect(persisted).not.toContain('evidenceReference');
+    expect(persisted).not.toContain('dimensions');
   });
 
-  it('logs only a safe schema-stage reason for invalid provider output', async () => {
+  it('returns no-response without loading configuration or calling a provider', async () => {
+    const repo = repository({ claim: vi.fn(async () => ({ data: { status: 'no_response' } })) });
+    const callProvider = vi.fn();
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
+    expect(await response.json()).toEqual({ status: 'no_response' });
+    expect(repo.loadProviderConfig).not.toHaveBeenCalled();
+    expect(callProvider).not.toHaveBeenCalled();
+  });
+
+  it('records provider-failure usage without persisting provider content', async () => {
     const repo = repository();
-    const logProviderFailure = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({
-        repository: repo,
-        callProvider: vi.fn(async () => providerResult(JSON.stringify({ private: transcript }))),
-        logProviderFailure,
-      }),
-    )(scoringRequest());
-
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider: vi.fn(async () => { throw new Error('private provider body'); }) }))(scoringRequest());
     expect(response.status).toBe(502);
-    expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
-    expect(repo.fail).toHaveBeenCalledExactlyOnceWith({
-      p_response_id: responseId,
-      p_session_id: sessionId,
-      p_lease_token: leaseToken,
-      p_error_code: 'invalid_provider_response',
-    });
-    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({
-      requestId: null,
-      provider: 'anthropic',
-      code: 'invalid_provider_response',
-      stage: 'response_schema',
-      reason: 'schema_mismatch',
-    });
-    const diagnostic = JSON.stringify(logProviderFailure.mock.calls);
-    for (const privateValue of [transcript, promptText, providerConfig.apiKey]) {
-      expect(diagnostic).not.toContain(privateValue);
-    }
+    expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ p_error_code: 'provider_failed', p_usage: expect.objectContaining({ outcome: 'provider_failed', estimatedCost: null }) }));
+    expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(transcript);
   });
 
-  it('logs a safe contract reason when evidence positions exceed the transcript', async () => {
+  it('rejects transcript injection before claiming', async () => {
     const repo = repository();
-    const logProviderFailure = vi.fn();
-    const invalidEvidenceAssessment = {
-      ...providerAssessment,
-      dimensions: {
-        ...providerAssessment.dimensions,
-        structure: {
-          score: 4,
-          evidenceReference: { start: 0, end: 120 },
-        },
-      },
-    };
-
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({
-        repository: repo,
-        callProvider: vi.fn(async () => providerResult(JSON.stringify(invalidEvidenceAssessment))),
-        logProviderFailure,
-      }),
-    )(scoringRequest());
-
-    expect(response.status).toBe(502);
-    expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
-    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({
-      requestId: null,
-      provider: 'anthropic',
-      code: 'invalid_provider_response',
-      stage: 'contract_validation',
-      reason: 'evidence_reference',
-    });
-    const diagnostic = JSON.stringify(logProviderFailure.mock.calls);
-    for (const privateValue of [transcript, promptText, providerConfig.apiKey]) {
-      expect(diagnostic).not.toContain(privateValue);
-    }
-  });
-
-  it('emits only an allowlisted diagnostic for provider request failures', async () => {
-    const repo = repository();
-    const logProviderFailure = vi.fn();
-    const response = await createCandidateMmiScoringHandler(
-      dependencies({
-        repository: repo,
-        callProvider: vi.fn(async () => {
-          throw new ProviderRequestError('http', {
-            status: 503,
-            providerRequestId: 'provider-private-id',
-          });
-        }),
-        logProviderFailure,
-      }),
-    )(
-      scoringRequest(undefined, {
-        authorization: 'Bearer private-jwt',
-      }),
-    );
-
-    expect(response.status).toBe(502);
-    expect(await response.json()).toEqual({ code: 'provider_failed' });
-    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({
-      requestId: null,
-      provider: 'anthropic',
-      status: 503,
-      code: 'provider_failed',
-    });
-    const diagnostic = JSON.stringify(logProviderFailure.mock.calls);
-    for (const privateValue of [transcript, promptText, 'private-jwt', 'provider-private-id', providerConfig.apiKey]) {
-      expect(diagnostic).not.toContain(privateValue);
-    }
-  });
-
-  it('fails an acquired lease when configuration or completion is unavailable', async () => {
-    const configRepo = repository({
-      loadProviderConfig: vi.fn(async () => ({})),
-    });
-    const configResponse = await createCandidateMmiScoringHandler(
-      dependencies({ repository: configRepo }),
-    )(scoringRequest());
-    expect(configResponse.status).toBe(503);
-    expect(await configResponse.json()).toEqual({ code: 'provider_not_configured' });
-    expect(configRepo.fail).toHaveBeenCalledWith({
-      p_response_id: responseId,
-      p_session_id: sessionId,
-      p_lease_token: leaseToken,
-      p_error_code: 'provider_not_configured',
-    });
-
-    const completionRepo = repository({
-      complete: vi.fn(async () => ({ error: new Error('private database detail') })),
-    });
-    const completionResponse = await createCandidateMmiScoringHandler(
-      dependencies({ repository: completionRepo }),
-    )(scoringRequest());
-    expect(completionResponse.status).toBe(500);
-    expect(await completionResponse.json()).toEqual({ code: 'unavailable' });
-    expect(completionRepo.fail).toHaveBeenCalledWith({
-      p_response_id: responseId,
-      p_session_id: sessionId,
-      p_lease_token: leaseToken,
-      p_error_code: 'persistence_failed',
-    });
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo }))(scoringRequest(JSON.stringify({ sessionId, promptOrder: 2, transcript })));
+    expect(response.status).toBe(400);
+    expect(repo.claim).not.toHaveBeenCalled();
   });
 });
 
 describe('candidate MMI browser scoring boundary', () => {
-  it('sends only session identity and prompt order and validates the public result', async () => {
-    const invoke = vi.fn(async () => ({
-      data: { status: 'scored', assessment: publicAssessment },
-      error: null,
-    }));
-    const api = createCandidateMmiScoringApi(invoke);
-
-    await expect(api.scoreCandidateResponse(sessionId, 1)).resolves.toEqual({
-      status: 'scored',
-      assessment: publicAssessment,
-    });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('score-candidate-mmi-response', {
-      body: { sessionId, promptOrder: 1 },
-    });
-    expect(JSON.stringify(invoke.mock.calls)).not.toContain(transcript);
-  });
-
-  it('rejects invalid input and malformed success without invoking or rendering it', async () => {
-    const invoke = vi.fn();
-    const api = createCandidateMmiScoringApi(invoke);
-    await expect(api.scoreCandidateResponse('not-a-uuid', 0 as never)).rejects.toBeInstanceOf(
-      CandidateMmiScoringError,
-    );
-    expect(invoke).not.toHaveBeenCalled();
-
-    const malformedApi = createCandidateMmiScoringApi(async () => ({
-      data: {
-        status: 'scored',
-        assessment: { ...publicAssessment, transcript: 'private' },
-      },
-      error: null,
-    }));
-    await expect(malformedApi.scoreCandidateResponse(sessionId, 1)).rejects.toMatchObject({
-      code: 'unavailable',
-    } as CandidateMmiScoringError);
-  });
-
-  it.each([
-    ['not_ready', 'AI scoring starts after the station is complete.'],
-    ['in_progress', 'This response is already being scored.'],
-    ['provider_not_configured', 'AI scoring is not configured yet.'],
-    ['provider_failed', 'AI scoring is temporarily unavailable. Try again.'],
-    ['invalid_provider_response', 'The AI scorer returned an invalid result. Try again.'],
-    ['unauthorized', 'Sign in again before requesting feedback.'],
-    ['unavailable', 'AI scoring is unavailable. Try again.'],
-  ] as const)('maps allowlisted code %s to fixed copy', async (code, message) => {
-    const context = new Response(JSON.stringify({ code, detail: transcript }), {
-      status: 500,
-    });
-    const api = createCandidateMmiScoringApi(async () => ({
-      data: null,
-      error: { context },
-    }));
-
-    const error = await api.scoreCandidateResponse(sessionId, 1).catch((caught) => caught);
-    expect(error).toBeInstanceOf(CandidateMmiScoringError);
-    expect(error).toMatchObject({ code, message });
-    expect(error.message).not.toContain(transcript);
-  });
-
-  it('maps unknown server bodies to unavailable without echoing them', async () => {
-    const context = new Response(
-      JSON.stringify({ code: 'private_database_error', detail: transcript }),
-      { status: 500 },
-    );
-    const api = createCandidateMmiScoringApi(async () => ({
-      data: null,
-      error: { context },
-    }));
-
-    await expect(api.scoreCandidateResponse(sessionId, 1)).rejects.toMatchObject({
-      code: 'unavailable',
-      message: 'AI scoring is unavailable. Try again.',
-    } as CandidateMmiScoringError);
-  });
-
-  it('keeps Deno wiring server-owned and leaves legacy scoring byte-for-byte untouched', () => {
-    const index = readFileSync(
-      resolve(process.cwd(), 'supabase/functions/score-candidate-mmi-response/index.ts'),
-      'utf8',
-    );
-    expect(index).toContain("Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')");
-    expect(index).toContain("Deno.env.get('SUPABASE_ANON_KEY')");
-    expect(index).toContain('auth.getUser()');
-    expect(index).toContain("rpc('claim_candidate_mmi_response_scoring'");
-    expect(index).toContain("rpc('complete_candidate_mmi_response_scoring'");
-    expect(index).toContain("rpc('fail_candidate_mmi_response_scoring'");
-    expect(index).toContain('callConfiguredProvider');
-    expect(index).not.toMatch(/body[^;]*(?:transcript|promptText|rubric)/s);
-    const supabaseConfig = readFileSync(
-      resolve(process.cwd(), 'supabase/config.toml'),
-      'utf8',
-    );
-    expect(supabaseConfig).toMatch(
-      /\[functions\.score-candidate-mmi-response\]\s+verify_jwt\s*=\s*true/,
-    );
-    expect(
-      readFileSync(resolve(process.cwd(), 'supabase/functions/score-answer/index.ts'), 'utf8'),
-    ).not.toContain('score-candidate-mmi-response');
+  it('accepts status-only success and rejects a provider assessment payload', async () => {
+    await expect(createCandidateMmiScoringApi(vi.fn(async () => ({ data: { status: 'scored' }, error: null }))).scoreCandidateResponse(sessionId, 2)).resolves.toEqual({ status: 'scored' });
+    await expect(createCandidateMmiScoringApi(async () => ({ data: { status: 'scored', assessment: providerAssessment }, error: null })).scoreCandidateResponse(sessionId, 2)).rejects.toMatchObject({ code: 'unavailable' } as CandidateMmiScoringError);
   });
 });

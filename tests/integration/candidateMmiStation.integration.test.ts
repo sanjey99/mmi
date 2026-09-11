@@ -44,21 +44,6 @@ const run = describe.runIf(canRunLocalProfileElevationTests(process.env));
 const fixturePrefix = `single-mmi-${randomUUID().slice(0, 8)}`;
 const password = `Local-only-${randomUUID()}!`;
 
-const validAssessment = {
-  dimensions: {
-    structure: { score: 4, applicable: true, evidence: null, improvement: null },
-    ethics: { score: 3, applicable: true, evidence: null, improvement: null },
-    communication: { score: null, applicable: false, evidence: null, improvement: null },
-    reflection: { score: null, applicable: false, evidence: null, improvement: null },
-    nhs_awareness: { score: null, applicable: false, evidence: null, improvement: null },
-  },
-  overallPct: 70,
-  strengths: ['clear-priorities'],
-  improvements: ['explicit-safety-netting'],
-  improvementTip: 'Make the safety-netting steps explicit, including when and how you would escalate.',
-  rubricVersion: 1,
-} as const;
-
 type CandidatePayload = {
   artifact_version: number;
   source_namespace: string;
@@ -833,9 +818,12 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       );
       assert.equal(claimError, null, claimError?.message);
       assert.deepEqual(Object.keys(claim as Record<string, unknown>).sort(), [
+        'criteria',
         'promptOrder',
         'promptText',
         'responseId',
+        'scenarioText',
+        'scoringContractVersion',
         'sessionId',
         'status',
         'transcript',
@@ -843,6 +831,25 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       assert.equal((claim as { status: string }).status, 'claimed');
       assert.equal((claim as { transcript: string }).transcript, transcript);
       assert.equal(sha256((claim as { promptText: string }).promptText), promptHashes[0]);
+      assert.equal((claim as { scoringContractVersion: string }).scoringContractVersion, '2026-09-10.1');
+      assert.equal(typeof (claim as { scenarioText: unknown }).scenarioText, 'string');
+      const criteria = (claim as { criteria: Array<{ criterionId: string; bulletText: string; domain: string | null }> }).criteria;
+      assert.ok(criteria.length > 0);
+      const validAssessment = {
+        schemaVersion: 3,
+        questionScorePct: 0,
+        criteria: criteria.map((criterion) => ({
+          criterionId: criterion.criterionId,
+          achieved: false,
+          weightPct: Number((100 / criteria.length).toFixed(2)),
+        })),
+      };
+      const usage = {
+        provider: 'anthropic', model: 'local-contract-test', inputTokens: 1,
+        cachedInputTokens: 0, outputTokens: 1, inputRatePerMillion: 0,
+        cachedInputRatePerMillion: 0, outputRatePerMillion: 0, currency: 'USD',
+        estimatedCost: 0, latencyMs: 1, outcome: 'scored',
+      } as const;
 
       const responseId = (claim as { responseId: string }).responseId;
       const { data: scored, error: scoreError } = await service.rpc(
@@ -852,6 +859,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
           p_session_id: sessionId,
           p_lease_token: leaseToken,
           p_public_assessment: validAssessment,
+          p_usage: usage,
         },
       );
       assert.equal(scoreError, null, scoreError?.message);
@@ -863,11 +871,18 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       );
       assert.equal(feedbackError, null, feedbackError?.message);
       assert.deepEqual(feedback, [
-        { promptOrder: 1, status: 'scored', assessment: validAssessment },
-        { promptOrder: 2, status: 'no_response', assessment: null },
-        { promptOrder: 3, status: 'no_response', assessment: null },
-        { promptOrder: 4, status: 'no_response', assessment: null },
-        { promptOrder: 5, status: 'no_response', assessment: null },
+        { promptOrder: 1, status: 'scored', legacy: false, assessment: {
+          schemaVersion: 3, questionScorePct: 0,
+          criteria: criteria.map((criterion) => ({
+            criterionId: criterion.criterionId, achieved: false,
+            weightPct: Number((100 / criteria.length).toFixed(2)),
+            bulletText: criterion.bulletText, domain: criterion.domain,
+          })),
+        } },
+        { promptOrder: 2, status: 'no_response', legacy: false, assessment: null },
+        { promptOrder: 3, status: 'no_response', legacy: false, assessment: null },
+        { promptOrder: 4, status: 'no_response', legacy: false, assessment: null },
+        { promptOrder: 5, status: 'no_response', legacy: false, assessment: null },
       ]);
 
       const { data: otherFeedback, error: otherFeedbackError } = await other.client.rpc(
@@ -877,12 +892,22 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       assert.equal(otherFeedback, null);
       assert.ok(otherFeedbackError);
 
+      const { data: immediatelyErased, error: immediateReadError } = await service
+        .from('candidate_mmi_station_responses')
+        .select('finalized_transcript,public_assessment,transcript_purged_at')
+        .eq('id', responseId)
+        .single();
+      assert.equal(immediateReadError, null, immediateReadError?.message);
+      assert.equal(immediatelyErased?.finalized_transcript, null);
+      assert.deepEqual(immediatelyErased?.public_assessment, validAssessment);
+      assert.ok(immediatelyErased?.transcript_purged_at);
+
       const { data: purgeResult, error: purgeError } = await service.rpc(
         'purge_expired_candidate_mmi_free_text',
         { p_now: new Date(Date.now() + 8 * 24 * 60 * 60 * 1_000).toISOString() },
       );
       assert.equal(purgeError, null, purgeError?.message);
-      assert.equal((purgeResult as { purged: number }).purged >= 1, true);
+      assert.equal((purgeResult as { purged: number }).purged, 0);
       const { data: purged, error: purgeReadError } = await service
         .from('candidate_mmi_station_responses')
         .select('finalized_transcript,public_assessment,transcript_purged_at')

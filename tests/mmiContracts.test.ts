@@ -10,6 +10,7 @@ import type * as EdgeContracts from '../supabase/functions/_shared/mmiContracts'
 const clientContractsPath = new URL('../src/features/mmi/types.ts', import.meta.url).href;
 const edgeContractsPath = new URL('../supabase/functions/_shared/mmiContracts.ts', import.meta.url).href;
 const scoringContractPath = new URL('../supabase/functions/_shared/mmiScoringContract.ts', import.meta.url).href;
+const rubricAssessmentPath = new URL('../supabase/functions/_shared/rubricAssessment.ts', import.meta.url).href;
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url).href);
 const require = createRequire(import.meta.url);
 const localTscPath = require.resolve('typescript/bin/tsc');
@@ -34,6 +35,7 @@ const {
   parseProviderAssessmentForContract,
   validateJsonSchema,
 } = await import(scoringContractPath);
+const { toPublicRubricAssessment } = await import(rubricAssessmentPath);
 
 type Assert<T extends true> = T;
 type Equal<X, Y> =
@@ -158,6 +160,25 @@ function publicOutputContext() {
 }
 
 describe('MMI contracts', () => {
+  it('keeps rubric-v3 persistence app-owned and free of provider evidence', () => {
+    const criteria = [
+      { criterionId: 'CRIT_1', bulletText: 'Identify risk', domain: 'safety' },
+      { criterionId: 'CRIT_2', bulletText: 'Escalate', domain: 'professionalism' },
+    ] as const;
+    const assessment = toPublicRubricAssessment([
+      { criterionId: 'CRIT_1', achieved: true, evidenceReference: { start: 0, end: 1 } },
+      { criterionId: 'CRIT_2', achieved: false, evidenceReference: null },
+    ], criteria, 'a');
+    assert.deepEqual(assessment, {
+      schemaVersion: 3,
+      questionScorePct: 50,
+      criteria: [
+        { criterionId: 'CRIT_1', achieved: true, weightPct: 50 },
+        { criterionId: 'CRIT_2', achieved: false, weightPct: 50 },
+      ],
+    });
+    assert.doesNotMatch(JSON.stringify(assessment), /evidenceReference|Identify risk/);
+  });
   it('keeps every client and Edge declaration plus runtime allowlists aligned', () => {
     assert.deepEqual(MMI_DIMENSIONS, clientContracts.MMI_DIMENSIONS);
     assert.deepEqual(MMI_IMPROVEMENT_FRAMEWORKS, clientContracts.MMI_IMPROVEMENT_FRAMEWORKS);
