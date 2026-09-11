@@ -24,6 +24,37 @@ const privateArtifactPaths = [
   '/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-1.json',
   '/supabase/imports/20260825_med_interview_question_bank/normalized-stations-part-2.json',
 ] as const;
+const v2PrivatePayloadKeys = Object.freeze([
+  'stations',
+  'panel_questions',
+  'station_id',
+  'category',
+  'topic',
+  'difficulty',
+  'university_tags',
+  'prep_time_sec',
+  'status',
+  'image_url',
+  'scenario_text',
+  'sub_questions',
+  'sub_q_id',
+  'order_num',
+  'source_flat_id',
+  'combined_text',
+  'question_text',
+  'time_limit_sec',
+  'model_answer',
+  'model_answer_cached',
+  'criteria',
+  'marking_criteria',
+  'criterion_id',
+  'bullet_text',
+  'source_weight',
+  'domain',
+  'panel_note',
+  'panel_notes',
+  'question_id',
+] as const);
 
 async function exists(filePath: string) {
   try {
@@ -41,35 +72,43 @@ async function runGeneratorProbe(program: string) {
   return JSON.parse(stdout) as Record<string, unknown>;
 }
 
-function assertNoPrivatePromptFields(value: unknown): void {
+function assertNoPrivatePayloadFields(value: unknown): void {
   if (Array.isArray(value)) {
-    for (const entry of value) assertNoPrivatePromptFields(entry);
+    for (const entry of value) assertNoPrivatePayloadFields(entry);
     return;
   }
   if (!value || typeof value !== 'object') return;
 
   for (const [key, entry] of Object.entries(value)) {
-    expect(key).not.toMatch(/^(scenario_text|question_text|model_answer|model_answer_cached|criteria|marking_criteria|bullet_text|panel_note|panel_notes)$/i);
-    assertNoPrivatePromptFields(entry);
+    expect(v2PrivatePayloadKeys as readonly string[]).not.toContain(key);
+    assertNoPrivatePayloadFields(entry);
   }
 }
 
 describe('normalized candidate MMI station import policy', () => {
-  it('rejects every private payload field name from tracked metadata', () => {
-    for (const privateKey of [
-      'scenario_text',
-      'question_text',
-      'model_answer',
-      'model_answer_cached',
-      'criteria',
-      'marking_criteria',
-      'bullet_text',
-      'panel_note',
-      'panel_notes',
-    ]) {
-      expect(() => assertNoPrivatePromptFields({ [privateKey]: 'synthetic private value' })).toThrow();
+  it('rejects every v2 private payload schema field from tracked metadata', () => {
+    for (const privateKey of v2PrivatePayloadKeys) {
+      expect(() => assertNoPrivatePayloadFields({ [privateKey]: 'synthetic private value' })).toThrow();
     }
-    expect(() => assertNoPrivatePromptFields({ criteria_per_candidate_sub_question: { min: 4, max: 4 } })).not.toThrow();
+    expect(() => assertNoPrivatePayloadFields({
+      artifact_version: 2,
+      source: { basename: 'med_interview_question_bank.xlsx', sha256: expectedSourceHash },
+      normalized_flow: {
+        candidate_station_count: 155,
+        candidate_sub_question_count: 775,
+        candidate_criterion_count: 3100,
+        panel_question_count: 10,
+        criteria_per_candidate_sub_question: { min: 4, max: 4 },
+        timing: { scenario_seconds: 60, response_seconds: 120, response_count: 5, total_seconds: 660 },
+      },
+      private_artifacts: {
+        'normalized-stations-part-1.json': {
+          sha256: 'a'.repeat(64),
+          canonical_jsonb_payload_sha256: 'b'.repeat(64),
+        },
+      },
+      policy: { criteria_preserved: true, orphaned_criteria: 'reject_and_report' },
+    })).not.toThrow();
   });
 
   it('ships a verified local-only generator instead of inferring candidate groups from prompt wording', async () => {
@@ -145,7 +184,7 @@ describe('normalized candidate MMI station import policy', () => {
       name,
       artifact.canonical_jsonb_payload_sha256,
     ]))).toEqual(expectedCanonicalPayloadFingerprints);
-    assertNoPrivatePromptFields(manifest);
+    assertNoPrivatePayloadFields(manifest);
   });
 
   it('normalizes ordered criteria and admin-only panel notes without copying model answers into prompts', async () => {
