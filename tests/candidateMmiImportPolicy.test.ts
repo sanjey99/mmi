@@ -387,6 +387,8 @@ else:
       expect(sql).toMatch(new RegExp(`revoke\\s+all(?:\\s+privileges)?\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+public\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*service_role`, 'i'));
     }
     expect(sql).toMatch(/to_regclass\s*\(\s*'public\.mmi_marking_criteria_legacy_20260910'\s*\)\s+is\s+not\s+null[\s\S]*?raise\s+exception/i);
+    expect(sql).toMatch(/v_relation_kind\s+is\s+distinct\s+from\s+'r'/i);
+    expect(sql).not.toMatch(/v_relation_kind\s+not\s+in\s*\([^)]*'p'/i);
     expect(sql).toMatch(/alter\s+table\s+public\.mmi_marking_criteria\s+rename\s+to\s+mmi_marking_criteria_legacy_20260910/i);
     expect(sql).toMatch(/alter\s+table\s+public\.mmi_marking_criteria_legacy_20260910\s+enable\s+row\s+level\s+security/i);
     expect(sql).toMatch(/revoke\s+all(?:\s+privileges)?\s+on\s+table\s+public\.mmi_marking_criteria_legacy_20260910\s+from\s+public\s*,\s*anon\s*,\s*authenticated\s*,\s*service_role/i);
@@ -414,6 +416,14 @@ else:
     expect(sql).toMatch(/source_time_limit_sec\s+in\s*\(\s*90\s*,\s*120\s*\)/i);
     expect(sql).toMatch(/check\s*\(\s*status\s+in\s*\(\s*'draft'\s*,\s*'published'\s*,\s*'archived'\s*\)\s*\)/i);
     expect(sql).toMatch(/create\s+trigger\s+mmi_station_versions_immutable[\s\S]*?before\s+update\s+or\s+delete[\s\S]*?on\s+public\.mmi_station_versions/i);
+    expect(sql).toMatch(/tg_op\s*=\s*'UPDATE'[\s\S]*?old\.created_by\s+is\s+not\s+null[\s\S]*?new\.created_by\s+is\s+null/i);
+    for (const immutableColumn of ['station_id', 'version', 'content_snapshot', 'created_at']) {
+      expect(sql).toMatch(new RegExp(
+        `new\\.${immutableColumn}\\s+is\\s+not\\s+distinct\\s+from\\s+old\\.${immutableColumn}`,
+        'i',
+      ));
+    }
+    expect(sql).toMatch(/new\.created_by\s+is\s+null[\s\S]*?return\s+new[\s\S]*?raise\s+exception/i);
     expect(sql).toMatch(/raise\s+exception[\s\S]*?errcode\s*=\s*'55000'/i);
 
     expect(sql).toMatch(/create\s+or\s+replace\s+function\s+public\.import_normalized_mmi_station_batch/i);

@@ -73,7 +73,7 @@ BEGIN
     WHERE namespace.nspname = 'public'
       AND relation.relname = 'mmi_marking_criteria';
 
-    IF v_relation_kind NOT IN ('r', 'p') THEN
+    IF v_relation_kind IS DISTINCT FROM 'r' THEN
       RAISE EXCEPTION 'hosted MMI marking-criteria relation has an unsupported kind';
     END IF;
 
@@ -203,6 +203,17 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp
 AS $function$
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.created_by IS NOT NULL
+      AND NEW.created_by IS NULL
+      AND NEW.station_id IS NOT DISTINCT FROM OLD.station_id
+      AND NEW.version IS NOT DISTINCT FROM OLD.version
+      AND NEW.content_snapshot IS NOT DISTINCT FROM OLD.content_snapshot
+      AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+
   RAISE EXCEPTION USING
     ERRCODE = '55000',
     MESSAGE = 'MMI station versions are immutable';

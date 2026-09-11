@@ -108,6 +108,13 @@ type ParsedFlatCsv = {
 
 type ImportedQuestionBatch = { ids: string[] };
 type AuthenticatedClient = { client: SupabaseClient; userId: string };
+type StationVersionFingerprint = {
+  stationId: string;
+  version: number;
+  contentSha256: string;
+  createdBy: string | null;
+  createdAt: string;
+};
 
 let parseQuestionCsv: (csvText: string) => ParsedFlatCsv;
 let importQuestionRows: (
@@ -187,12 +194,15 @@ function assertLegacyCriteriaCompatibility(): void {
     '--set', 'ON_ERROR_STOP=1',
     '--dbname', process.env.SUPABASE_TEST_DB_URL,
     '--command',
-    "SELECT (SELECT count(*) FROM public.mmi_marking_criteria_legacy_20260910), c.relrowsecurity, NOT (has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')) FROM pg_class AS c WHERE c.oid = 'public.mmi_marking_criteria_legacy_20260910'::regclass;",
+    "SELECT (SELECT count(*) FROM public.mmi_marking_criteria_legacy_20260910), c.relkind, c.relrowsecurity, NOT (has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')), primary_key_proof.conname, primary_key_proof.index_name FROM pg_class AS c CROSS JOIN LATERAL (SELECT constraint_row.conname, index_relation.relname AS index_name FROM pg_constraint AS constraint_row JOIN pg_index AS index_row ON index_row.indexrelid = constraint_row.conindid AND index_row.indrelid = c.oid JOIN pg_class AS index_relation ON index_relation.oid = index_row.indexrelid WHERE constraint_row.conrelid = c.oid AND constraint_row.contype = 'p') AS primary_key_proof WHERE c.oid = 'public.mmi_marking_criteria_legacy_20260910'::regclass;",
   ], { encoding: 'utf8' }).trim();
-  const [rowCount, rlsEnabled, aclClosed] = proof.split('|');
+  const [rowCount, relationKind, rlsEnabled, aclClosed, primaryKeyName, primaryKeyIndexName] = proof.split('|');
   assert.ok(Number(rowCount) > 0, 'expected the hosted-compatibility fixture row to survive archival');
+  assert.equal(relationKind, 'r', 'expected the archived hosted relation to remain an ordinary table');
   assert.equal(rlsEnabled, 't');
   assert.equal(aclClosed, 't');
+  assert.ok(primaryKeyName, 'expected the archived hosted primary-key constraint to survive');
+  assert.ok(primaryKeyIndexName, 'expected the archived hosted primary-key index to survive');
 }
 
 function groupCounts(rows: readonly { sub_q_id: string }[]): number[] {
@@ -247,8 +257,9 @@ function restoreFlatPanelIdentity(rowId: string, panelId: string, corruptedSourc
   ]);
 }
 
-function assertStationVersionMutationsRejected(stationId: string): void {
+function assertStationVersionMutationsRejected(stationId: string, version = 1): void {
   assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(Number.isSafeInteger(version) && version > 0);
   assert.ok(process.env.SUPABASE_TEST_DB_URL);
   execFileSync('psql', [
     '--no-psqlrc',
@@ -256,8 +267,42 @@ function assertStationVersionMutationsRejected(stationId: string): void {
     '--set', 'ON_ERROR_STOP=1',
     '--dbname', process.env.SUPABASE_TEST_DB_URL,
     '--command',
-    `DO $immutability$ BEGIN BEGIN UPDATE public.mmi_station_versions SET content_snapshot = content_snapshot WHERE station_id = '${stationId}' AND version = 1; RAISE EXCEPTION 'station version update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN DELETE FROM public.mmi_station_versions WHERE station_id = '${stationId}' AND version = 1; RAISE EXCEPTION 'station version delete was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; END; $immutability$;`,
+    `DO $immutability$ BEGIN BEGIN UPDATE public.mmi_station_versions SET station_id = station_id WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station identity update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN UPDATE public.mmi_station_versions SET version = version WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station version update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN UPDATE public.mmi_station_versions SET content_snapshot = content_snapshot WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station content update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN UPDATE public.mmi_station_versions SET created_by = created_by WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station author update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN UPDATE public.mmi_station_versions SET created_at = created_at WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station timestamp update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN DELETE FROM public.mmi_station_versions WHERE station_id = '${stationId}' AND version = ${version}; RAISE EXCEPTION 'station version delete was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; END; $immutability$;`,
   ]);
+}
+
+function stationVersionFingerprint(stationId: string, version: number): StationVersionFingerprint {
+  assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(Number.isSafeInteger(version) && version > 0);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  const value = execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `SELECT json_build_object('stationId', station_id, 'version', version, 'contentSha256', encode(sha256(convert_to(content_snapshot::text, 'UTF8')), 'hex'), 'createdBy', created_by, 'createdAt', created_at::text) FROM public.mmi_station_versions WHERE station_id = '${stationId}' AND version = ${version};`,
+  ], { encoding: 'utf8' }).trim();
+  assert.ok(value, 'expected station version fingerprint');
+  return JSON.parse(value) as StationVersionFingerprint;
+}
+
+function createStationVersionWithAuthor(stationId: string, version: number, authorId: string): StationVersionFingerprint {
+  assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(Number.isSafeInteger(version) && version > 1);
+  assert.match(authorId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `INSERT INTO public.mmi_station_versions (station_id, version, content_snapshot, created_by, created_at) SELECT station_id, ${version}, content_snapshot, '${authorId}'::uuid, created_at FROM public.mmi_station_versions WHERE station_id = '${stationId}' AND version = 1;`,
+  ]);
+  return stationVersionFingerprint(stationId, version);
 }
 
 function assertResponseProjection(
@@ -581,6 +626,36 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     assertStationVersionMutationsRejected(version!.station_id);
     assert.equal(Object.keys(promptHashesByStation).length, 155);
     assert.equal(Object.values(promptHashesByStation).every(prompts => prompts.length === 5), true);
+  });
+
+  it('allows only the foreign-key author cleanup while preserving immutable version bytes', async () => {
+    const { data: stationVersion, error: stationVersionError } = await service
+      .from('mmi_station_versions')
+      .select('station_id')
+      .eq('version', 1)
+      .limit(1)
+      .single();
+    assert.equal(stationVersionError, null, stationVersionError?.message);
+    assert.ok(stationVersion);
+
+    const email = `${fixturePrefix}-version-author@example.test`;
+    const { data: authorData, error: authorError } = await service.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    assert.equal(authorError, null, authorError?.message);
+    assert.ok(authorData.user);
+
+    const before = createStationVersionWithAuthor(stationVersion.station_id, 2, authorData.user.id);
+    assert.equal(before.createdBy, authorData.user.id);
+
+    const { error: deleteAuthorError } = await service.auth.admin.deleteUser(authorData.user.id);
+    assert.equal(deleteAuthorError, null, deleteAuthorError?.message);
+
+    const after = stationVersionFingerprint(stationVersion.station_id, 2);
+    assert.deepEqual(after, { ...before, createdBy: null });
+    assertStationVersionMutationsRejected(stationVersion.station_id, 2);
   });
 
   it('opens the exact scenario without a flag, notice, or rubric and denies every cross-account action', async () => {
