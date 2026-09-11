@@ -8,3 +8,28 @@ export function parseUsdRate(value: string | undefined): number | null {
 export function isValidEstimatedUsdCost(value: number): boolean {
   return Number.isFinite(value) && value >= 0 && value <= 99_999_999.99999999;
 }
+
+/**
+ * PostgreSQL stores the derived dollar amount as NUMERIC(16,8).  Rates have
+ * six decimal places per million, so do this in integer micro-rate units and
+ * round half-up to eight dollar places instead of trusting binary floats.
+ */
+export function calculateEstimatedUsdCost(
+  inputTokens: number,
+  cachedInputTokens: number,
+  outputTokens: number,
+  inputRatePerMillion: number,
+  cachedInputRatePerMillion: number,
+  outputRatePerMillion: number,
+): number {
+  const toMicroRate = (rate: number): bigint => BigInt(Math.round(rate * 1_000_000));
+  const numerator =
+    BigInt(inputTokens) * toMicroRate(inputRatePerMillion) +
+    BigInt(cachedInputTokens) * toMicroRate(cachedInputRatePerMillion) +
+    BigInt(outputTokens) * toMicroRate(outputRatePerMillion);
+  // numerator / 10^12 dollars; convert to 10^-8 dollars => divide by 10^4.
+  const roundedUnits = (numerator + 5_000n) / 10_000n;
+  const cost = Number(roundedUnits) / 100_000_000;
+  if (!isValidEstimatedUsdCost(cost)) throw new Error('candidate_mmi_usage_cost_out_of_range');
+  return cost;
+}

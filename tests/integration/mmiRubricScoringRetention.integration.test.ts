@@ -98,6 +98,23 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     assert.equal(persisted, 'scored|<null>|1');
   });
 
+  it('rounds six-decimal provider rates to NUMERIC(16,8) while atomically purging transcript and draft', async () => {
+    const fixture = createResponseFixture('precision transcript');
+    const precisionLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: precisionLease });
+    assert.equal(claim.error, null, claim.error?.message);
+    sql(`INSERT INTO public.candidate_mmi_station_response_drafts(session_id,prompt_order,transcript,client_revision,accepted_at) VALUES ('${fixture.sessionId}',1,'precision draft',1,clock_timestamp());`);
+    const criteria = (claim.data as { criteria: Array<{ criterionId: string }> }).criteria;
+    // Raw formula: 123 * 0.123456 / 1,000,000 = 0.000015185088.
+    const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: precisionLease,
+      p_public_assessment: assessmentFor(criteria),
+      p_usage: scoredUsage({ inputTokens: 123, inputRatePerMillion: 0.123456, estimatedCost: 0.00001519 }),
+    });
+    assert.equal(completion.error, null, completion.error?.message);
+    assert.equal(sql(`SELECT estimated_cost::text || '|' || (SELECT coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}') || '|' || (SELECT count(*) FROM public.candidate_mmi_station_response_drafts WHERE session_id='${fixture.sessionId}') FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '0.00001519|<null>|0');
+  });
+
   it('rolls back completion when inserting its usage event fails, leaving an unscored retryable transcript', async () => {
     const fixture = createResponseFixture('retryable transcript');
     const failedLease = randomUUID();
