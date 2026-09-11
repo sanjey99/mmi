@@ -14,6 +14,7 @@ import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { RubricChecklist } from '../../src/components/mmi/RubricChecklist';
 import { Button } from '../../src/components/ui/Button';
 import {
+  CandidateMmiApiError,
   createCandidateMmiApi,
   type CandidateMmiFeedback,
   type CandidateMmiServerProjection,
@@ -626,8 +627,12 @@ export default function CandidateMmiStationScreen() {
         pathname: '/practice/mmi-station' as never,
         params: { sessionId: nextProjection.sessionId },
       });
-    } catch {
-      setErrorMessage('The MMI station could not start. Try again.');
+    } catch (error) {
+      setErrorMessage(
+        error instanceof CandidateMmiApiError && error.kind === 'active_session_scope_mismatch'
+          ? error.message
+          : 'The MMI station could not start. Try again.',
+      );
       setStarting(false);
     }
   };
@@ -670,9 +675,9 @@ export default function CandidateMmiStationScreen() {
             <Text style={styles.label}>Browser speech service</Text>
             <Text style={styles.reading}>
               Your browser or platform may send microphone audio to its speech
-              provider for transcription. This app does not record or store
-              audio. Our application and database delete editable transcript text
-              after successful scoring, or within 24 hours if an assessment is unresolved.
+              provider for transcription. This app and its database store no raw
+              audio. Finalized transcript text is deleted immediately after successful scoring;
+              unresolved transcript text is automatically deleted within 24 hours.
               Your browser speech provider may process audio under its own terms.
             </Text>
           </View>

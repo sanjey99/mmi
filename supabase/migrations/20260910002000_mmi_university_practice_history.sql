@@ -353,7 +353,7 @@ $function$;
 CREATE OR REPLACE FUNCTION public.start_candidate_mmi_station_session(p_scope text DEFAULT 'all')
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
 DECLARE
-  v_user_id uuid := auth.uid(); v_session_id uuid; v_station_id text; v_target text;
+  v_user_id uuid := auth.uid(); v_session_id uuid; v_active_scope text; v_station_id text; v_target text;
   v_now timestamptz := clock_timestamp(); v_version integer; v_content jsonb; v_prompt jsonb; v_count integer := 0; v_content_valid boolean;
 BEGIN
   IF v_user_id IS NULL OR auth.role() IS DISTINCT FROM 'authenticated' THEN RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='authentication required'; END IF;
@@ -361,10 +361,15 @@ BEGIN
   SELECT public.canonical_mmi_university_tag(university_target) INTO v_target FROM public.profiles WHERE id=v_user_id;
   IF p_scope='target' AND v_target IS NULL THEN RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='candidate_university_target_required'; END IF;
   PERFORM pg_advisory_xact_lock(hashtext(v_user_id::text));
-  SELECT id INTO v_session_id FROM public.candidate_mmi_station_sessions
+  SELECT id, practice_scope INTO v_session_id, v_active_scope FROM public.candidate_mmi_station_sessions
   WHERE user_id=v_user_id AND abandoned_at IS NULL AND v_now<started_at+interval '660 seconds'
   ORDER BY started_at DESC LIMIT 1 FOR UPDATE;
-  IF v_session_id IS NOT NULL THEN RETURN public.get_candidate_mmi_station_session(v_session_id); END IF;
+  IF v_session_id IS NOT NULL THEN
+    IF v_active_scope IS DISTINCT FROM p_scope THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='candidate_mmi_active_session_scope_mismatch';
+    END IF;
+    RETURN public.get_candidate_mmi_station_session(v_session_id);
+  END IF;
   SELECT station.station_id INTO v_station_id FROM public.mmi_stations AS station
   LEFT JOIN public.candidate_mmi_station_sessions AS previous ON previous.user_id=v_user_id AND previous.station_id=station.station_id
   WHERE public.is_complete_published_mmi_station(station.station_id)

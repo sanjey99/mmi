@@ -91,6 +91,27 @@ DELETE FROM public.mmi_stations WHERE source_namespace='university_test';`);
     assert.equal(missingTarget.error?.code, '22023');
     const nullScope = await owner.rpc('start_candidate_mmi_station_session', { p_scope: null });
     assert.equal(nullScope.error?.code, '22023');
+    const targetStarted = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'target' });
+    assert.equal(targetStarted.error, null, targetStarted.error?.message);
+    const targetSessionId = (targetStarted.data as { sessionId: string }).sessionId;
+    const targetResumed = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'target' });
+    assert.equal(targetResumed.error, null, targetResumed.error?.message);
+    assert.equal((targetResumed.data as { sessionId: string }).sessionId, targetSessionId);
+    const targetToAll = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'all' });
+    assert.equal(targetToAll.error?.code, 'P0001');
+    assert.equal(targetToAll.error?.message, 'candidate_mmi_active_session_scope_mismatch');
+    sql(`UPDATE public.candidate_mmi_station_sessions SET abandoned_at=clock_timestamp() WHERE id='${targetSessionId}';`);
+
+    const allStarted = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'all' });
+    assert.equal(allStarted.error, null, allStarted.error?.message);
+    const allSessionId = (allStarted.data as { sessionId: string }).sessionId;
+    const allResumed = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'all' });
+    assert.equal(allResumed.error, null, allResumed.error?.message);
+    assert.equal((allResumed.data as { sessionId: string }).sessionId, allSessionId);
+    const allToTarget = await owner.rpc('start_candidate_mmi_station_session', { p_scope: 'target' });
+    assert.equal(allToTarget.error?.code, 'P0001');
+    assert.equal(allToTarget.error?.message, 'candidate_mmi_active_session_scope_mismatch');
+    sql(`UPDATE public.candidate_mmi_station_sessions SET abandoned_at=clock_timestamp() WHERE id='${allSessionId}';`);
     for (const invalidStationId of [stationId, archivedStationId, wrongTimingStationId, missingQuestionStationId, criterionlessStationId]) {
       assert.equal(sql(`SELECT public.is_complete_published_mmi_station('${invalidStationId}');`), 'f');
     }

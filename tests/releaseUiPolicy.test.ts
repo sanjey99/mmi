@@ -19,6 +19,11 @@ describe('final release UI policy', () => {
     expect(privacy).toContain('Our application and database never store raw MMI audio');
     expect(privacy).toContain('delete MMI transcript text immediately after successful scoring and within 24 hours when unresolved');
     expect(privacy).toContain('External speech and AI providers may retain or process data under their own terms');
+    const progress = read('app/(tabs)/progress.tsx');
+    const stationSetup = read('app/practice/mmi-station.tsx');
+    expect(progress).toContain('Our application and database store no raw audio; finalized transcript text is deleted immediately after successful scoring, and unresolved transcript text is automatically deleted within 24 hours.');
+    expect(stationSetup).toMatch(/This app and its database store no raw\s+audio\. Finalized transcript text is deleted immediately after successful scoring;\s+unresolved transcript text is automatically deleted within 24 hours\./);
+    expect(stationSetup).toContain('Your browser speech provider may process audio under its own terms.');
     expect(legalFooter).toContain("router.push('/terms')");
     expect(legalFooter).toContain("router.push('/privacy')");
     expect(read('app/(auth)/login.tsx')).toContain('<LegalFooter />');

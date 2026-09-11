@@ -18,7 +18,7 @@ export default function ProgressScreen() {
     return () => { active = false; };
   }, [api]);
   return <ScreenWrapper>
-    <View style={styles.headingRow}><Text style={styles.eyebrow}>REVIEW ROOM</Text><Text style={styles.title}>Progress record</Text><Text style={styles.subtitle}>Only structured rubric outcomes from this account appear here. Responses and transcripts are not retained.</Text></View>
+    <View style={styles.headingRow}><Text style={styles.eyebrow}>REVIEW ROOM</Text><Text style={styles.title}>Progress record</Text><Text style={styles.subtitle}>Only structured rubric outcomes from this account appear here. Our application and database store no raw audio; finalized transcript text is deleted immediately after successful scoring, and unresolved transcript text is automatically deleted within 24 hours.</Text></View>
     <Text style={styles.sectionLabel}>RECENT MMI STATIONS</Text>
     {unavailable ? <Card><Text style={styles.emptyText}>Your progress record is unavailable right now.</Text></Card> : null}
     {!unavailable && history.length === 0 ? <Card style={styles.emptyCard}><Text style={styles.emptyCode}>NO COMPLETED STATIONS</Text><Text style={styles.emptyText}>Complete a practice station to open your rubric progress record.</Text><Button label="Go to practice" onPress={() => router.push('/(tabs)/practice')} style={styles.emptyAction} /></Card> : null}

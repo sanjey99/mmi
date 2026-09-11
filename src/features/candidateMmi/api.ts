@@ -7,6 +7,7 @@ export type CandidateMmiApiErrorKind =
   | 'response_closed'
   | 'response_not_closed'
   | 'in_progress'
+  | 'active_session_scope_mismatch'
   | 'unavailable';
 const errorMessages: Readonly<Record<CandidateMmiApiErrorKind, string>> =
   Object.freeze({
@@ -16,6 +17,7 @@ const errorMessages: Readonly<Record<CandidateMmiApiErrorKind, string>> =
     response_closed: 'Candidate MMI response is closed.',
     response_not_closed: 'Candidate MMI response is not ready to close.',
     in_progress: 'Candidate MMI request is already in progress.',
+    active_session_scope_mismatch: 'Finish or leave your active MMI station before switching practice pools.',
     unavailable: 'Candidate MMI is unavailable.',
   });
 export class CandidateMmiApiError extends Error {
@@ -635,6 +637,8 @@ function mapRpcError(
     return new CandidateMmiApiError('response_not_closed');
   if (code === 'P0001' && message === 'stale_candidate_mmi_checkpoint')
     return new CandidateMmiApiError('in_progress');
+  if (code === 'P0001' && message === 'candidate_mmi_active_session_scope_mismatch')
+    return new CandidateMmiApiError('active_session_scope_mismatch');
   return new CandidateMmiApiError('unavailable');
 }
 

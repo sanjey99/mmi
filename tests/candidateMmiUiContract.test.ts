@@ -98,9 +98,13 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/Test microphone/);
     expect(routeSource).toMatch(/Start station/);
     expect(routeSource).toMatch(/Browser speech service/);
-    expect(routeSource).toMatch(/does not record or store\s+audio/i);
-    expect(routeSource).toMatch(/application and database delete editable transcript text/i);
+    expect(routeSource).toMatch(/store no raw\s+audio/i);
+    expect(routeSource).toMatch(/finalized transcript text is deleted/i);
+    expect(routeSource).toMatch(/immediately after successful scoring/i);
     expect(routeSource).toMatch(/within 24 hours/i);
+    expect(routeSource).toMatch(/provider may process audio under its own terms/i);
+    expect(routeSource).toMatch(/active_session_scope_mismatch/);
+    expect(routeSource).toMatch(/active_session_scope_mismatch'\s*\? error\.message/);
     expect(routeSource).toMatch(/startStation/);
     expect(routeSource).toMatch(/speechPort\(\)\.preflight/);
   });

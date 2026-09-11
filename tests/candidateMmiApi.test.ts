@@ -173,6 +173,18 @@ describe('candidate MMI API transcript boundary', () => {
     }
   });
 
+  it('maps an active station with a different practice scope to an actionable error', async () => {
+    const api = createCandidateMmiApi(rpcClient([{
+      data: null,
+      error: { code: 'P0001', message: 'candidate_mmi_active_session_scope_mismatch' },
+    }]));
+
+    await expect(api.start('target')).rejects.toMatchObject({
+      kind: 'active_session_scope_mismatch',
+      message: 'Finish or leave your active MMI station before switching practice pools.',
+    });
+  });
+
   it('uses a scoped start without changing the existing session lifecycle calls', async () => {
     const client = rpcClient([{ data: scenarioProjection, error: null }]);
     await expect(createCandidateMmiApi(client).start('target')).resolves.toEqual(scenarioProjection);
