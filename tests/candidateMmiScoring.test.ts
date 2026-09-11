@@ -75,6 +75,11 @@ const providerConfig: AiConfig = Object.freeze({
   outputRatePerMillion: 0,
 });
 
+const providerResult = (content: string) => ({
+  content,
+  usage: { inputTokens: 11, cachedInputTokens: 2, outputTokens: 7 },
+});
+
 const claimed = Object.freeze({
   status: 'claimed',
   responseId,
@@ -104,7 +109,7 @@ function dependencies(
     repository: repository(),
     allowedOrigins: allowedOrigin,
     createLeaseToken: () => leaseToken,
-    callProvider: vi.fn(async () => JSON.stringify(providerAssessment)),
+    callProvider: vi.fn(async () => providerResult(JSON.stringify(providerAssessment))),
     logProviderFailure: vi.fn(),
     ...overrides,
   };
@@ -287,7 +292,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     const repo = repository();
     const callProvider = vi.fn(
       async (_config: AiConfig, _request: AiProviderRequest) =>
-        JSON.stringify(providerAssessment),
+        providerResult(JSON.stringify(providerAssessment)),
     );
     const response = await createCandidateMmiScoringHandler(
       dependencies({ repository: repo, callProvider }),
@@ -363,7 +368,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     const response = await createCandidateMmiScoringHandler(
       dependencies({
         repository: repo,
-        callProvider: vi.fn(async () => JSON.stringify({ private: transcript })),
+        callProvider: vi.fn(async () => providerResult(JSON.stringify({ private: transcript }))),
         logProviderFailure,
       }),
     )(scoringRequest());
@@ -406,7 +411,7 @@ describe('candidate MMI scoring handler security boundary', () => {
     const response = await createCandidateMmiScoringHandler(
       dependencies({
         repository: repo,
-        callProvider: vi.fn(async () => JSON.stringify(invalidEvidenceAssessment)),
+        callProvider: vi.fn(async () => providerResult(JSON.stringify(invalidEvidenceAssessment))),
         logProviderFailure,
       }),
     )(scoringRequest());

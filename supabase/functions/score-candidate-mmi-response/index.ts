@@ -6,6 +6,7 @@
  * scoring input and the service-owned lease.
  */
 
+// @ts-ignore Deno resolves this URL import at deployment time.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   callConfiguredProvider,
@@ -16,6 +17,12 @@ import {
   type CandidateMmiProviderFailureDiagnostic,
   type CandidateMmiScoringRepository,
 } from './handler.ts';
+
+type EdgeDeno = Readonly<{
+  env: Readonly<{ get: (name: string) => string | undefined }>;
+  serve: (handler: (request: Request) => Response | Promise<Response>) => void;
+}>;
+const Deno: EdgeDeno = (globalThis as typeof globalThis & { Deno: EdgeDeno }).Deno;
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -61,6 +68,11 @@ const repository: CandidateMmiScoringRepository = {
       model: values.ai_model ?? 'claude-3-5-haiku-20241022',
       apiKey: values.ai_api_key,
       baseUrl: values.ai_base_url ?? null,
+      // Transitional generic scoring does not retain usage. Task 4 loads and
+      // validates persisted rates before recording any usage event.
+      inputRatePerMillion: 0,
+      cachedInputRatePerMillion: 0,
+      outputRatePerMillion: 0,
     };
     return { config };
   },

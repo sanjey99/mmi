@@ -287,6 +287,17 @@ describe('callConfiguredProvider', () => {
       { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
       { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
     )).resolves.toEqual({ content: 'provider response', usage: null });
+
+    for (const prompt_tokens_details of [null, 3, 'invalid', []]) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        choices: [{ message: { content: 'provider response' } }],
+        usage: { prompt_tokens: 4, prompt_tokens_details, completion_tokens: 7 },
+      }))));
+      await expect(callConfiguredProvider(
+        { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
+        { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+      )).resolves.toEqual({ content: 'provider response', usage: null });
+    }
   });
 
   it('uses a redirect-rejecting 60-second request and keeps credentials and prompts out of thrown errors', async () => {

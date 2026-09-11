@@ -55,8 +55,9 @@ if (process.env.VITEST) {
   });
 
   it('validates evidence offsets by Unicode code point, not UTF-16 code unit', () => {
-    expect(parseRubricProviderAssessment(JSON.stringify({ decisions }), criteria, 'Safe escalation is required.')).toEqual(decisions);
-    expect(() => parseRubricProviderAssessment(JSON.stringify({ decisions: [{ ...decisions[0], evidenceReference: { start: 0, end: 30 } }, ...decisions.slice(1)] }), criteria, '😀abc')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+    const unicodeDecisions = [{ ...decisions[0], evidenceReference: { start: 0, end: 4 } }, ...decisions.slice(1)];
+    expect(parseRubricProviderAssessment(JSON.stringify({ decisions: unicodeDecisions }), criteria, '😀abc')).toEqual(unicodeDecisions);
+    expect(() => parseRubricProviderAssessment(JSON.stringify({ decisions: [{ ...decisions[0], evidenceReference: { start: 0, end: 5 } }, ...decisions.slice(1)] }), criteria, '😀abc')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
   });
   });
 } else {

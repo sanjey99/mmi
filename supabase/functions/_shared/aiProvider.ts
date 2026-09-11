@@ -180,9 +180,10 @@ function providerTokenUsage(provider: string, payload: unknown): AiTokenUsage | 
   }
   const promptTokens = record.prompt_tokens;
   const details = record.prompt_tokens_details;
-  const cachedInputTokens = details !== null && typeof details === 'object' && !Array.isArray(details)
-    ? (details as Record<string, unknown>).cached_tokens ?? 0
-    : 0;
+  if (details !== undefined && (details === null || typeof details !== 'object' || Array.isArray(details))) return null;
+  const cachedInputTokens = details === undefined
+    ? 0
+    : (details as Record<string, unknown>).cached_tokens ?? 0;
   const outputTokens = record.completion_tokens;
   if (!validTokenCount(promptTokens) || !validTokenCount(cachedInputTokens) || !validTokenCount(outputTokens) || cachedInputTokens > promptTokens) return null;
   return Object.freeze({ inputTokens: Math.max(promptTokens - cachedInputTokens, 0), cachedInputTokens, outputTokens });

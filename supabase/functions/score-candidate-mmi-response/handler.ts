@@ -1,5 +1,6 @@
 import {
   ProviderRequestError,
+  type AiProviderResult,
   sanitizeDiagnosticRequestId,
   type AiConfig,
   type AiProviderRequest,
@@ -113,7 +114,7 @@ export interface CandidateMmiScoringDependencies {
   callProvider: (
     config: AiConfig,
     request: AiProviderRequest,
-  ) => Promise<unknown>;
+  ) => Promise<AiProviderResult>;
   logProviderFailure: (
     diagnostic: CandidateMmiProviderFailureDiagnostic,
   ) => void;
@@ -609,9 +610,9 @@ export function createCandidateMmiScoringHandler(
       return http.json({ code: 'provider_not_configured' }, 503);
     }
 
-    let providerPayload: unknown;
+    let providerResult: AiProviderResult;
     try {
-      providerPayload = await callProvider(configuration.config, {
+      providerResult = await callProvider(configuration.config, {
         systemPrompt: `${scoringContract.assessorInstructions} ${SCORING_SYSTEM_SUFFIX}`,
         userContent: formatProviderContent(claim, rubric, scoringContract),
         maxTokens: 768,
@@ -644,7 +645,8 @@ export function createCandidateMmiScoringHandler(
     try {
       let rawAssessment: unknown;
       try {
-        rawAssessment = parseProviderJson(providerPayload);
+        // Usage is intentionally ignored until Task 4 persists it atomically.
+        rawAssessment = parseProviderJson(providerResult.content);
       } catch {
         throw new InvalidProviderAssessmentError('json_parse', 'malformed_json');
       }
