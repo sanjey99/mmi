@@ -124,10 +124,10 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
       p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: precisionLease,
       p_public_assessment: assessmentFor(criteria),
-      p_usage: scoredUsage({ inputTokens: 9007199254740991, inputRatePerMillion: 0.000001, estimatedCost: '9007.19925474' }),
+      p_usage: scoredUsage({ inputTokens: 9007199254740991, outputTokens: 2, inputRatePerMillion: 0.01, outputRatePerMillion: 0.01, estimatedCost: '90071992.54740993' }),
     });
     assert.equal(completion.error, null, completion.error?.message);
-    assert.equal(sql(`SELECT estimated_cost::text FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '9007.19925474');
+    assert.equal(sql(`SELECT estimated_cost::text FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '90071992.54740993');
   });
 
   it('rolls back completion when inserting its usage event fails, leaving an unscored retryable transcript', async () => {
@@ -147,6 +147,20 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
     assert.ok(completion.error);
     assert.equal(sql(`SELECT scoring_status || '|' || finalized_transcript FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}';`), 'in_progress|retryable transcript');
     assert.equal(sql(`SELECT count(*) FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '0');
+  });
+
+  it('persists overflow failure usage without purging a claimed response transcript', async () => {
+    const fixture = createResponseFixture('overflow retry transcript');
+    const overflowLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: overflowLease });
+    assert.equal(claim.error, null, claim.error?.message);
+    const failed = await service.rpc('fail_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: overflowLease,
+      p_error_code: 'usage_cost_overflow',
+      p_usage: scoredUsage({ provider: 'overflow-provider', model: 'overflow-model', inputTokens: 2_000_000, cachedInputTokens: 3, outputTokens: 4, inputRatePerMillion: 99_999_999.999999, cachedInputRatePerMillion: 1, outputRatePerMillion: 2, estimatedCost: null, latencyMs: 321, outcome: 'persistence_failed' }),
+    });
+    assert.equal(failed.error, null, failed.error?.message);
+    assert.equal(sql(`SELECT response.scoring_status || '|' || response.finalized_transcript || '|' || usage.provider || '|' || usage.model || '|' || usage.input_tokens || '|' || usage.cached_input_tokens || '|' || usage.output_tokens || '|' || usage.input_rate_per_million::text || '|' || usage.cached_input_rate_per_million::text || '|' || usage.output_rate_per_million::text || '|' || coalesce(usage.estimated_cost::text,'<null>') || '|' || usage.latency_ms || '|' || usage.outcome FROM public.candidate_mmi_station_responses response JOIN public.mmi_ai_usage_events usage ON usage.response_id=response.id WHERE response.id='${fixture.responseId}';`), 'failed|overflow retry transcript|overflow-provider|overflow-model|2000000|3|4|99999999.999999|1.000000|2.000000|<null>|321|persistence_failed');
   });
 
   it('rejects numeric-string schema versions, unequal weights, and malformed usage envelopes', async () => {

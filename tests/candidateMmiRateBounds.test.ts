@@ -25,8 +25,8 @@ describe('candidate MMI USD numeric bounds', () => {
     expect(calculateEstimatedUsdCost(1, 0, 0, 0.005, 0, 0)).toBe('0.00000001');
   });
 
-  it('keeps costs above Number scaled-integer precision lossless and reports NUMERIC overflow', () => {
-    expect(calculateEstimatedUsdCost(9_007_199_254_740_991, 0, 0, 0.000001, 0, 0)).toBe('9007.19925474');
+  it('keeps a scaled amount above Number precision lossless and reports NUMERIC overflow', () => {
+    expect(calculateEstimatedUsdCost(9_007_199_254_740_991, 0, 2, 0.01, 0, 0.01)).toBe('90071992.54740993');
     expect(calculateEstimatedUsdCost(9_007_199_254_740_991, 0, 0, 99_999_999.999999, 0, 0)).toBeNull();
   });
 });
