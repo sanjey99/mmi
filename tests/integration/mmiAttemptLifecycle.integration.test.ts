@@ -154,13 +154,14 @@ describe('MMI authenticated attempt lifecycle contracts', () => {
     assertNoHiddenFields({ attempt: { phase: 'preparing', station: { studentBrief: 'safe' } } });
   });
 
-  it('pins the exact retained scoring contract and a complete response schema in every snapshot', async () => {
+  it('pins the exact legacy scoring contract and a complete response schema in every snapshot', async () => {
     const sql = read(migrationPath);
     const match = sql.match(/v_contract_snapshot\s+JSONB\s*:=\s*\$contract\$([\s\S]*?)\$contract\$::JSONB/i);
     assert.ok(match, 'expected a canonical Task 4 contract literal');
     const contractModule = await import('../../supabase/functions/_shared/mmiScoringContract' + '.ts') as any;
-    const { createMmiScoringContractSnapshot, CURRENT_MMI_SCORING_CONTRACT_VERSION } = contractModule;
-    assert.deepEqual(JSON.parse(match[1]), createMmiScoringContractSnapshot(CURRENT_MMI_SCORING_CONTRACT_VERSION));
+    const { createMmiScoringContractSnapshot } = contractModule;
+    const legacyContractVersion = '2026-08-17.1';
+    assert.deepEqual(JSON.parse(match[1]), createMmiScoringContractSnapshot(legacyContractVersion));
     const create = functionBody(sql, 'create_mmi_attempt');
     assert.match(create, /scoring_contract_version[\s\S]*?v_contract_snapshot->>'version'/i);
     assert.match(create, /response_schema_snapshot[\s\S]*?v_contract_snapshot->'responseSchema'/i);

@@ -386,6 +386,14 @@ else:
       expect(sql).toMatch(new RegExp(`alter\\s+table\\s+public\\.${table}\\s+enable\\s+row\\s+level\\s+security`, 'i'));
       expect(sql).toMatch(new RegExp(`revoke\\s+all(?:\\s+privileges)?\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+public\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*service_role`, 'i'));
     }
+    expect(sql).toMatch(/to_regclass\s*\(\s*'public\.mmi_marking_criteria_legacy_20260910'\s*\)\s+is\s+not\s+null[\s\S]*?raise\s+exception/i);
+    expect(sql).toMatch(/alter\s+table\s+public\.mmi_marking_criteria\s+rename\s+to\s+mmi_marking_criteria_legacy_20260910/i);
+    expect(sql).toMatch(/alter\s+table\s+public\.mmi_marking_criteria_legacy_20260910\s+enable\s+row\s+level\s+security/i);
+    expect(sql).toMatch(/revoke\s+all(?:\s+privileges)?\s+on\s+table\s+public\.mmi_marking_criteria_legacy_20260910\s+from\s+public\s*,\s*anon\s*,\s*authenticated\s*,\s*service_role/i);
+    expect(sql).toMatch(/revoke\s+select\s*\([^)]*\)\s*,\s*insert\s*\([^)]*\)\s*,\s*update\s*\([^)]*\)\s*,\s*references\s*\([^)]*\)[\s\S]*?mmi_marking_criteria_legacy_20260910/i);
+    expect(sql).toMatch(/legacy MMI marking-criteria archive privilege postcondition failed/i);
+    expect(sql).toMatch(/constraint\s+mmi_rubric_criteria_v2_pkey\s+primary\s+key\s*\(\s*criterion_id\s*\)/i);
+    expect(sql).toMatch(/constraint\s+mmi_rubric_criteria_v2_sub_q_order_key\s+unique\s*\(\s*sub_q_id\s*,\s*order_num\s*\)/i);
     expect(sql).toMatch(/foreach\s+v_role\s+in\s+array\s+array\[\s*'anon'\s*,\s*'authenticated'\s*\]/i);
     for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
       expect(sql).toMatch(new RegExp(`has_table_privilege\\(v_role,\\s*v_table,\\s*'${privilege}'\\)`, 'i'));
@@ -394,7 +402,7 @@ else:
       expect(sql).toMatch(new RegExp(`has_any_column_privilege\\(v_role,\\s*v_table,\\s*'${privilege}'\\)`, 'i'));
     }
 
-    expect(sql).toMatch(/criterion_id\s+text\s+primary\s+key/i);
+    expect(sql).toMatch(/criterion_id\s+text\s+not\s+null/i);
     expect(sql).toMatch(/sub_q_id\s+text\s+not\s+null\s+references\s+public\.mmi_sub_questions\s*\(\s*sub_q_id\s*\)\s+on\s+delete\s+cascade/i);
     expect(sql).toMatch(/unique\s*\(\s*sub_q_id\s*,\s*order_num\s*\)/i);
     expect(sql).toMatch(/bullet_text\s+text\s+not\s+null[\s\S]*?between\s+1\s+and\s+2000/i);
@@ -402,10 +410,16 @@ else:
     expect(sql).toMatch(/primary\s+key\s*\(\s*station_id\s*,\s*version\s*\)/i);
     expect(sql).toMatch(/add\s+column\s+content_version\s+integer\s+not\s+null\s+default\s+1/i);
     expect(sql).toMatch(/add\s+column\s+archived_at\s+timestamptz/i);
+    expect(sql).toMatch(/add\s+column\s+source_time_limit_sec\s+integer\s+not\s+null\s+default\s+120/i);
+    expect(sql).toMatch(/source_time_limit_sec\s+in\s*\(\s*90\s*,\s*120\s*\)/i);
     expect(sql).toMatch(/check\s*\(\s*status\s+in\s*\(\s*'draft'\s*,\s*'published'\s*,\s*'archived'\s*\)\s*\)/i);
+    expect(sql).toMatch(/create\s+trigger\s+mmi_station_versions_immutable[\s\S]*?before\s+update\s+or\s+delete[\s\S]*?on\s+public\.mmi_station_versions/i);
+    expect(sql).toMatch(/raise\s+exception[\s\S]*?errcode\s*=\s*'55000'/i);
 
     expect(sql).toMatch(/create\s+or\s+replace\s+function\s+public\.import_normalized_mmi_station_batch/i);
     expect(sql).toMatch(/create\s+or\s+replace\s+function\s+public\.finalize_normalized_mmi_station_import/i);
+    expect(sql).toContain('950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e');
+    expect(sql).toContain('31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c');
     expect(sql).toMatch(/p_payload\s*-\s*array\s*\[\s*'artifact_version'\s*,\s*'source_namespace'\s*,\s*'source_manifest_sha256'\s*,\s*'stations'\s*,\s*'panel_questions'\s*\]\s*<>\s*'\{\}'::jsonb/i);
     expect(sql).toMatch(/v_station\s*-\s*array\s*\[\s*'station_id'[\s\S]*?'sub_questions'\s*\]\s*<>\s*'\{\}'::jsonb/i);
     expect(sql).toMatch(/v_question\s*-\s*array\s*\[\s*'sub_q_id'[\s\S]*?'marking_criteria'\s*\]\s*<>\s*'\{\}'::jsonb/i);
@@ -430,6 +444,10 @@ else:
     expect(postcondition).toBeGreaterThanOrEqual(0);
     expect(snapshotInsert).toBeGreaterThan(postcondition);
     expect(sql).toMatch(/having\s+count\s*\(\s*c\.criterion_id\s*\)\s*<>\s*4/i);
+    expect(sql).toMatch(/v_source_120_count\s*<>\s*772[\s\S]*?v_source_90_count\s*<>\s*3[\s\S]*?v_other_source_duration_count\s*<>\s*0/i);
+    expect((sql.match(/\bexcept\b/gi) ?? [])).toHaveLength(2);
+    expect(sql).toMatch(/panel\.question_id\s*=\s*question\.source_flat_id/i);
+    expect(sql).toMatch(/'sourceTimeLimitSec'\s*,\s*q\.source_time_limit_sec/i);
     expect(sql).toMatch(/jsonb_agg\s*\([\s\S]*?order\s+by\s+(?:q\.)?order_num/i);
     expect(sql).toMatch(/jsonb_agg\s*\([\s\S]*?order\s+by\s+(?:c\.)?order_num/i);
   });

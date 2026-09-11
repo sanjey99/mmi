@@ -22,6 +22,10 @@ ALTER TABLE public.mmi_stations
   ADD COLUMN content_version integer NOT NULL DEFAULT 1,
   ADD COLUMN archived_at timestamptz;
 
+ALTER TABLE public.mmi_sub_questions
+  ADD COLUMN source_time_limit_sec integer NOT NULL DEFAULT 120
+  CHECK (source_time_limit_sec IN (90, 120));
+
 ALTER TABLE public.mmi_stations
   DROP CONSTRAINT IF EXISTS mmi_stations_status_check;
 ALTER TABLE public.mmi_stations
@@ -46,8 +50,114 @@ ALTER TABLE public.mmi_normalized_station_import_batches
     AND sub_question_count BETWEEN 1 AND 775
   );
 
+-- The clean migration chain does not create this assessor table, while the
+-- reviewed hosted catalog already contains an older relation with this name.
+-- Preserve that relation and all of its dependencies by OID, then reserve the
+-- original name for the normalized v2 contract below.
+DO $criteria_compatibility$
+DECLARE
+  v_relation_kind "char";
+  v_columns text;
+  v_privilege text;
+  v_role text;
+BEGIN
+  IF to_regclass('public.mmi_marking_criteria_legacy_20260910') IS NOT NULL THEN
+    RAISE EXCEPTION 'legacy MMI marking-criteria archive already exists';
+  END IF;
+
+  IF to_regclass('public.mmi_marking_criteria') IS NOT NULL THEN
+    SELECT relation.relkind
+    INTO v_relation_kind
+    FROM pg_class AS relation
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname = 'mmi_marking_criteria';
+
+    IF v_relation_kind NOT IN ('r', 'p') THEN
+      RAISE EXCEPTION 'hosted MMI marking-criteria relation has an unsupported kind';
+    END IF;
+
+    ALTER TABLE public.mmi_marking_criteria
+      RENAME TO mmi_marking_criteria_legacy_20260910;
+    ALTER TABLE public.mmi_marking_criteria_legacy_20260910
+      ENABLE ROW LEVEL SECURITY;
+
+    SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+    INTO v_columns
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'mmi_marking_criteria_legacy_20260910';
+    IF v_columns IS NULL THEN
+      RAISE EXCEPTION 'legacy MMI marking-criteria archive has no columns';
+    END IF;
+
+    EXECUTE format(
+      'REVOKE SELECT (%1$s), INSERT (%1$s), UPDATE (%1$s), REFERENCES (%1$s) ON TABLE public.mmi_marking_criteria_legacy_20260910 FROM PUBLIC, anon, authenticated, service_role',
+      v_columns
+    );
+    REVOKE ALL ON TABLE public.mmi_marking_criteria_legacy_20260910
+      FROM PUBLIC, anon, authenticated, service_role;
+
+    FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      FOREACH v_privilege IN ARRAY ARRAY[
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+      ] LOOP
+        IF has_table_privilege(
+          v_role,
+          'public.mmi_marking_criteria_legacy_20260910',
+          v_privilege
+        ) THEN
+          RAISE EXCEPTION 'legacy MMI marking-criteria archive privilege postcondition failed';
+        END IF;
+      END LOOP;
+      IF current_setting('server_version_num')::integer >= 150000
+        AND has_table_privilege(
+          v_role,
+          'public.mmi_marking_criteria_legacy_20260910',
+          'MAINTAIN'
+        ) THEN
+        RAISE EXCEPTION 'legacy MMI marking-criteria archive privilege postcondition failed';
+      END IF;
+      FOREACH v_privilege IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        IF has_any_column_privilege(
+          v_role,
+          'public.mmi_marking_criteria_legacy_20260910',
+          v_privilege
+        ) THEN
+          RAISE EXCEPTION 'legacy MMI marking-criteria archive privilege postcondition failed';
+        END IF;
+      END LOOP;
+    END LOOP;
+
+    IF EXISTS (
+      SELECT 1
+      FROM pg_class AS relation
+      CROSS JOIN LATERAL aclexplode(
+        COALESCE(relation.relacl, acldefault('r', relation.relowner))
+      ) AS acl
+      WHERE relation.oid = 'public.mmi_marking_criteria_legacy_20260910'::regclass
+        AND acl.grantee = 0
+        AND acl.privilege_type IN (
+          'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
+        )
+    ) OR EXISTS (
+      SELECT 1
+      FROM pg_attribute AS attribute
+      CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+      WHERE attribute.attrelid = 'public.mmi_marking_criteria_legacy_20260910'::regclass
+        AND attribute.attnum > 0
+        AND NOT attribute.attisdropped
+        AND acl.grantee = 0
+        AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+    ) THEN
+      RAISE EXCEPTION 'legacy MMI marking-criteria archive privilege postcondition failed';
+    END IF;
+  END IF;
+END;
+$criteria_compatibility$;
+
 CREATE TABLE public.mmi_marking_criteria (
-  criterion_id text PRIMARY KEY,
+  criterion_id text NOT NULL,
   sub_q_id text NOT NULL REFERENCES public.mmi_sub_questions(sub_q_id) ON DELETE CASCADE,
   order_num integer NOT NULL CHECK (order_num > 0),
   bullet_text text NOT NULL CHECK (char_length(btrim(bullet_text)) BETWEEN 1 AND 2000),
@@ -56,7 +166,8 @@ CREATE TABLE public.mmi_marking_criteria (
   source_namespace text NOT NULL,
   source_manifest_sha256 text NOT NULL CHECK (source_manifest_sha256 ~ '^[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  UNIQUE (sub_q_id, order_num)
+  CONSTRAINT mmi_rubric_criteria_v2_pkey PRIMARY KEY (criterion_id),
+  CONSTRAINT mmi_rubric_criteria_v2_sub_q_order_key UNIQUE (sub_q_id, order_num)
 );
 
 CREATE TABLE public.mmi_panel_questions (
@@ -86,7 +197,26 @@ CREATE TABLE public.mmi_station_versions (
   PRIMARY KEY (station_id, version)
 );
 
-CREATE INDEX mmi_marking_criteria_sub_question_order
+CREATE FUNCTION public.reject_mmi_station_version_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp
+AS $function$
+BEGIN
+  RAISE EXCEPTION USING
+    ERRCODE = '55000',
+    MESSAGE = 'MMI station versions are immutable';
+END;
+$function$;
+
+CREATE TRIGGER mmi_station_versions_immutable
+BEFORE UPDATE OR DELETE ON public.mmi_station_versions
+FOR EACH ROW EXECUTE FUNCTION public.reject_mmi_station_version_mutation();
+
+REVOKE ALL ON FUNCTION public.reject_mmi_station_version_mutation()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE INDEX mmi_rubric_criteria_v2_sub_question_order
   ON public.mmi_marking_criteria (sub_q_id, order_num);
 CREATE INDEX mmi_panel_questions_status
   ON public.mmi_panel_questions (status);
@@ -166,14 +296,14 @@ BEGIN
 
   IF p_batch_id = 'normalized-stations-part-1' THEN
     v_expected_artifact_sha256 := '9b1b7831331f0d0c8802a4d288f8bb529f8cf4b974c8c76803b044228e8865f3';
-    v_expected_payload_fingerprint := 'b94d0f3b9784062b9167551c80a7735d16ebbdc5b62ee57af9dedf650c477fe9';
+    v_expected_payload_fingerprint := '950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e';
     v_expected_station_count := 80;
     v_expected_sub_question_count := 400;
     v_expected_criterion_count := 1600;
     v_expected_panel_count := 10;
   ELSIF p_batch_id = 'normalized-stations-part-2' THEN
     v_expected_artifact_sha256 := '4f056c38c91dcfe2460d7b8c7ebd1152551bee995b505c7458715a83a57744b1';
-    v_expected_payload_fingerprint := '9d97563e31ec023e5e9255169830bf69a67159d8aafab179b1601c8b94700ee6';
+    v_expected_payload_fingerprint := '31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c';
     v_expected_station_count := 75;
     v_expected_sub_question_count := 375;
     v_expected_criterion_count := 1500;
@@ -301,7 +431,7 @@ BEGIN
       -- Source duration is provenance-only and bounded here; the runtime row
       -- is canonicalized to the product's fixed 120-second response phase.
       IF (v_question->>'order_num')::integer <> v_question_index + 1
-        OR (v_question->>'time_limit_sec')::integer NOT BETWEEN 1 AND 600
+        OR (v_question->>'time_limit_sec')::integer NOT IN (90, 120)
         OR v_sub_q_id IS DISTINCT FROM v_station_id || '_Q' || (v_question_index + 1)::text
         OR v_sub_q_id = ANY(v_seen_sub_question_ids)
         OR v_source_flat_id = ANY(v_seen_flat_ids)
@@ -496,11 +626,12 @@ BEGIN
       v_sub_q_id := btrim(v_question->>'sub_q_id');
       v_source_flat_id := v_station_id || '/' || v_sub_q_id;
       INSERT INTO public.mmi_sub_questions (
-        sub_q_id, station_id, order_num, question_text, time_limit_sec,
+        sub_q_id, station_id, order_num, question_text, time_limit_sec, source_time_limit_sec,
         model_answer_cached, source_namespace, source_manifest_sha256,
         normalized_manifest_sha256, source_artifact_sha256, source_flat_id
       ) VALUES (
         v_sub_q_id, v_station_id, v_question_index + 1, v_question->>'question_text', 120,
+        (v_question->>'time_limit_sec')::integer,
         CASE WHEN jsonb_typeof(v_question->'model_answer_cached') = 'null' THEN NULL ELSE v_question->>'model_answer_cached' END,
         v_source_namespace, v_source_manifest_sha256, p_normalized_manifest_sha256,
         p_artifact_sha256, v_source_flat_id
@@ -509,6 +640,7 @@ BEGIN
         order_num = EXCLUDED.order_num,
         question_text = EXCLUDED.question_text,
         time_limit_sec = EXCLUDED.time_limit_sec,
+        source_time_limit_sec = EXCLUDED.source_time_limit_sec,
         model_answer_cached = EXCLUDED.model_answer_cached,
         source_namespace = EXCLUDED.source_namespace,
         source_manifest_sha256 = EXCLUDED.source_manifest_sha256,
@@ -593,6 +725,9 @@ DECLARE
   v_invalid_station_count integer;
   v_panel_sub_question_count integer;
   v_preserved_active_flat_question_count integer;
+  v_source_120_count integer;
+  v_source_90_count integer;
+  v_other_source_duration_count integer;
   v_first_finalization boolean;
 BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
@@ -611,7 +746,7 @@ BEGIN
       AND normalized_manifest_sha256 = p_normalized_manifest_sha256
       AND batch_id = 'normalized-stations-part-1'
       AND artifact_sha256 = '9b1b7831331f0d0c8802a4d288f8bb529f8cf4b974c8c76803b044228e8865f3'
-      AND payload_fingerprint = 'b94d0f3b9784062b9167551c80a7735d16ebbdc5b62ee57af9dedf650c477fe9'
+      AND payload_fingerprint = '950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e'
       AND station_count = 80 AND sub_question_count = 400
   ) OR NOT EXISTS (
     SELECT 1 FROM public.mmi_normalized_station_import_batches
@@ -620,7 +755,7 @@ BEGIN
       AND normalized_manifest_sha256 = p_normalized_manifest_sha256
       AND batch_id = 'normalized-stations-part-2'
       AND artifact_sha256 = '4f056c38c91dcfe2460d7b8c7ebd1152551bee995b505c7458715a83a57744b1'
-      AND payload_fingerprint = '9d97563e31ec023e5e9255169830bf69a67159d8aafab179b1601c8b94700ee6'
+      AND payload_fingerprint = '31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c'
       AND station_count = 75 AND sub_question_count = 375
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'normalized import is incomplete';
@@ -646,6 +781,15 @@ BEGIN
   FROM public.mmi_panel_questions AS panel
   WHERE panel.source_namespace = p_source_namespace
     AND panel.source_manifest_sha256 = p_source_manifest_sha256;
+  SELECT
+    count(*) FILTER (WHERE question.source_time_limit_sec = 120),
+    count(*) FILTER (WHERE question.source_time_limit_sec = 90),
+    count(*) FILTER (WHERE question.source_time_limit_sec NOT IN (90, 120))
+  INTO v_source_120_count, v_source_90_count, v_other_source_duration_count
+  FROM public.mmi_sub_questions AS question
+  WHERE question.source_namespace = p_source_namespace
+    AND question.source_manifest_sha256 = p_source_manifest_sha256
+    AND question.normalized_manifest_sha256 = p_normalized_manifest_sha256;
 
   SELECT count(*) INTO v_valid_station_count
   FROM (
@@ -675,6 +819,9 @@ BEGIN
     OR v_sub_question_count <> 775
     OR v_criterion_count <> 3100
     OR v_panel_count <> 10
+    OR v_source_120_count <> 772
+    OR v_source_90_count <> 3
+    OR v_other_source_duration_count <> 0
     OR v_valid_station_count <> 155
     OR v_invalid_station_count <> 0
     OR v_panel_sub_question_count <> 0
@@ -704,6 +851,57 @@ BEGIN
       WHERE question.source_namespace = p_source_namespace
         AND question.normalized_manifest_sha256 = p_normalized_manifest_sha256
         AND flat.id IS NULL
+    )
+    OR EXISTS (
+      SELECT flat.source_id
+      FROM public.questions AS flat
+      WHERE flat.source_namespace = p_source_namespace
+        AND flat.is_active IS TRUE
+      EXCEPT
+      SELECT expected.source_id
+      FROM (
+        SELECT question.source_flat_id AS source_id
+        FROM public.mmi_sub_questions AS question
+        WHERE question.source_namespace = p_source_namespace
+          AND question.source_manifest_sha256 = p_source_manifest_sha256
+          AND question.normalized_manifest_sha256 = p_normalized_manifest_sha256
+        UNION
+        SELECT panel.question_id
+        FROM public.mmi_panel_questions AS panel
+        WHERE panel.source_namespace = p_source_namespace
+          AND panel.source_manifest_sha256 = p_source_manifest_sha256
+      ) AS expected
+    )
+    OR EXISTS (
+      SELECT expected.source_id
+      FROM (
+        SELECT question.source_flat_id AS source_id
+        FROM public.mmi_sub_questions AS question
+        WHERE question.source_namespace = p_source_namespace
+          AND question.source_manifest_sha256 = p_source_manifest_sha256
+          AND question.normalized_manifest_sha256 = p_normalized_manifest_sha256
+        UNION
+        SELECT panel.question_id
+        FROM public.mmi_panel_questions AS panel
+        WHERE panel.source_namespace = p_source_namespace
+          AND panel.source_manifest_sha256 = p_source_manifest_sha256
+      ) AS expected
+      EXCEPT
+      SELECT flat.source_id
+      FROM public.questions AS flat
+      WHERE flat.source_namespace = p_source_namespace
+        AND flat.is_active IS TRUE
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM public.mmi_sub_questions AS question
+      JOIN public.mmi_panel_questions AS panel
+        ON panel.question_id = question.source_flat_id
+      WHERE question.source_namespace = p_source_namespace
+        AND question.source_manifest_sha256 = p_source_manifest_sha256
+        AND question.normalized_manifest_sha256 = p_normalized_manifest_sha256
+        AND panel.source_namespace = p_source_namespace
+        AND panel.source_manifest_sha256 = p_source_manifest_sha256
     ) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'normalized finalization checks failed';
   END IF;
@@ -730,6 +928,7 @@ BEGIN
             'orderNum', q.order_num,
             'questionText', q.question_text,
             'timeLimitSec', q.time_limit_sec,
+            'sourceTimeLimitSec', q.source_time_limit_sec,
             'modelAnswerCached', q.model_answer_cached,
             'criteria', (
               SELECT jsonb_agg(
@@ -796,6 +995,9 @@ BEGIN
     'candidateCriterionCount', v_criterion_count,
     'panelQuestionCount', v_panel_count,
     'stationVersionCount', v_station_version_count,
+    'source120SecondQuestionCount', v_source_120_count,
+    'source90SecondQuestionCount', v_source_90_count,
+    'otherSourceDurationCount', v_other_source_duration_count,
     'validStationCount', v_valid_station_count,
     'invalidStationCount', v_invalid_station_count,
     'excludedPanelQuestionCount', v_panel_count,

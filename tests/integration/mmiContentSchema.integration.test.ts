@@ -142,9 +142,12 @@ run('MMI content schema (isolated Supabase project only)', () => {
     );
   });
 
-  it('accepts only the audited draft and published status values', async () => {
+  it('accepts archived standard stations while rejecting unsupported status values', async () => {
+    const archived = await insertStandardStation('archived-standard-status', { status: 'archived' });
+    assert.equal(archived.status, 'archived');
+
     await assert.rejects(
-      insertStandardStation('invalid-standard-status', { status: 'archived' }),
+      insertStandardStation('invalid-standard-status', { status: 'unsupported' }),
       databaseErrorCode('23514'),
     );
     await assert.rejects(

@@ -33,6 +33,10 @@ const normalizedManifestPath = `${importDirectory}/normalized-station-manifest.j
 const sourceNamespace = 'med_interview_question_bank';
 const sourceManifestSha256 = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 const normalizedManifestSha256 = 'add7cf932a60e4573e3aca54c0cdecafd3c46c4421d245e2b3e71d8cbe8fa101';
+const expectedServerPayloadFingerprints = [
+  '950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e',
+  '31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c',
+] as const;
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
@@ -83,6 +87,9 @@ type FinalizationProof = {
   candidateCriterionCount: number;
   panelQuestionCount: number;
   stationVersionCount: number;
+  source120SecondQuestionCount: number;
+  source90SecondQuestionCount: number;
+  otherSourceDurationCount: number;
   validStationCount: number;
   invalidStationCount: number;
   excludedPanelQuestionCount: number;
@@ -131,12 +138,61 @@ function readNormalizedPayloads(): CandidatePayload[] {
   });
 }
 
+function serverJsonbPayloadSha256(payload: CandidatePayload): string {
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  const sqlLiteral = JSON.stringify(payload).replaceAll("'", "''");
+  const result = execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+  ], {
+    encoding: 'utf8',
+    input: `SELECT encode(sha256(convert_to(('${sqlLiteral}')::jsonb::text, 'UTF8')), 'hex');\n`,
+  }).trim();
+  assert.match(result, /^[a-f0-9]{64}$/);
+  return result;
+}
+
 async function countRows(client: SupabaseClient, table: string): Promise<number> {
   const { count, error } = await client
     .from(table)
     .select('*', { count: 'exact', head: true });
   assert.equal(error, null, error?.message);
   return count ?? 0;
+}
+
+function assertLegacyCriteriaCompatibility(): void {
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  const archiveState = execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    "SELECT CASE WHEN to_regclass('public.mmi_marking_criteria_legacy_20260910') IS NULL THEN 'absent' ELSE 'present' END;",
+  ], { encoding: 'utf8' }).trim();
+  assert.match(archiveState, /^(absent|present)$/);
+  if (archiveState === 'absent') return;
+
+  const proof = execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    "SELECT (SELECT count(*) FROM public.mmi_marking_criteria_legacy_20260910), c.relrowsecurity, NOT (has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR has_any_column_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')) FROM pg_class AS c WHERE c.oid = 'public.mmi_marking_criteria_legacy_20260910'::regclass;",
+  ], { encoding: 'utf8' }).trim();
+  const [rowCount, rlsEnabled, aclClosed] = proof.split('|');
+  assert.ok(Number(rowCount) > 0, 'expected the hosted-compatibility fixture row to survive archival');
+  assert.equal(rlsEnabled, 't');
+  assert.equal(aclClosed, 't');
 }
 
 function groupCounts(rows: readonly { sub_q_id: string }[]): number[] {
@@ -155,6 +211,52 @@ function setStationPublicationState(stationId: string, status: 'published' | 'ar
     '--dbname', process.env.SUPABASE_TEST_DB_URL,
     '--command',
     `UPDATE public.mmi_stations SET status = '${status}', archived_at = ${status === 'archived' ? 'clock_timestamp()' : 'NULL'} WHERE station_id = '${stationId}';`,
+  ]);
+}
+
+function corruptFlatPanelIdentity(panelId: string, replacementSourceId: string): string {
+  assert.match(panelId, /^PANEL_[0-9]{3}$/);
+  assert.match(replacementSourceId, /^PANEL_[0-9]{3}$/);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  const rowId = execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--tuples-only',
+    '--no-align',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `WITH changed AS (UPDATE public.questions SET source_id = '${replacementSourceId}' WHERE source_namespace = '${sourceNamespace}' AND source_id = '${panelId}' RETURNING id) SELECT id FROM changed;`,
+  ], { encoding: 'utf8' }).trim();
+  assert.match(rowId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return rowId;
+}
+
+function restoreFlatPanelIdentity(rowId: string, panelId: string, corruptedSourceId: string): void {
+  assert.match(rowId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.match(panelId, /^PANEL_[0-9]{3}$/);
+  assert.match(corruptedSourceId, /^PANEL_[0-9]{3}$/);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `WITH restored AS (UPDATE public.questions SET source_id = '${panelId}' WHERE id = '${rowId}'::uuid AND source_id = '${corruptedSourceId}' RETURNING id) SELECT 1 / CASE WHEN count(*) = 1 THEN 1 ELSE 0 END FROM restored;`,
+  ]);
+}
+
+function assertStationVersionMutationsRejected(stationId: string): void {
+  assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `DO $immutability$ BEGIN BEGIN UPDATE public.mmi_station_versions SET content_snapshot = content_snapshot WHERE station_id = '${stationId}' AND version = 1; RAISE EXCEPTION 'station version update was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; BEGIN DELETE FROM public.mmi_station_versions WHERE station_id = '${stationId}' AND version = 1; RAISE EXCEPTION 'station version delete was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; END; $immutability$;`,
   ]);
 }
 
@@ -256,6 +358,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     });
 
     service = createClient(url!, serviceRoleKey!, { auth: { persistSession: false } });
+    assertLegacyCriteriaCompatibility();
     const admin = await createAuthenticatedClient(service, 'admin', true);
     owner = await createAuthenticatedClient(service, 'owner');
     other = await createAuthenticatedClient(service, 'other');
@@ -276,11 +379,15 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
 
     const manifest = readNormalizedManifest();
     const payloads = readNormalizedPayloads();
-    canonicalizedSourceDurationCount = payloads
+    assert.deepEqual(payloads.map(serverJsonbPayloadSha256), expectedServerPayloadFingerprints);
+    const sourceDurations = payloads
       .flatMap(payload => payload.stations)
       .flatMap(station => station.sub_questions)
-      .filter(question => question.time_limit_sec !== 120)
-      .length;
+      .map(question => question.time_limit_sec);
+    assert.equal(sourceDurations.filter(duration => duration === 120).length, 772);
+    assert.equal(sourceDurations.filter(duration => duration === 90).length, 3);
+    assert.equal(sourceDurations.filter(duration => ![90, 120].includes(duration)).length, 0);
+    canonicalizedSourceDurationCount = sourceDurations.filter(duration => duration !== 120).length;
     const malformedPayload = structuredClone(payloads[0]!);
     malformedPayload.stations[0]!.sub_questions[0]!.marking_criteria[0]!.criterion_id = 'MMI_999_Q1_C1';
     const countsBeforeMalformedImport = await Promise.all([
@@ -320,6 +427,26 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
         p_payload: payload,
       });
       assert.equal(error, null, error?.message);
+    }
+
+    const panelId = payloads[0]!.panel_questions[0]!.question_id;
+    const corruptedSourceId = 'PANEL_999';
+    const versionCountBeforeCorruption = await countRows(service, 'mmi_station_versions');
+    const corruptedRowId = corruptFlatPanelIdentity(panelId, corruptedSourceId);
+    try {
+      const { data: corruptFinalization, error: corruptFinalizationError } = await service.rpc(
+        'finalize_normalized_mmi_station_import',
+        {
+          p_source_namespace: sourceNamespace,
+          p_source_manifest_sha256: sourceManifestSha256,
+          p_normalized_manifest_sha256: normalizedManifestSha256,
+        },
+      );
+      assert.equal(corruptFinalization, null);
+      assert.match(corruptFinalizationError?.message ?? '', /normalized finalization checks failed/i);
+      assert.equal(await countRows(service, 'mmi_station_versions'), versionCountBeforeCorruption);
+    } finally {
+      restoreFlatPanelIdentity(corruptedRowId, panelId, corruptedSourceId);
     }
 
     const { data, error } = await service.rpc('finalize_normalized_mmi_station_import', {
@@ -379,6 +506,9 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       candidateCriterionCount: 3100,
       panelQuestionCount: 10,
       stationVersionCount: 155,
+      source120SecondQuestionCount: 772,
+      source90SecondQuestionCount: 3,
+      otherSourceDurationCount: 0,
       validStationCount: 155,
       invalidStationCount: 0,
       excludedPanelQuestionCount: 10,
@@ -391,6 +521,18 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     assert.equal(await countRows(service, 'mmi_panel_questions'), 10);
     assert.equal(await countRows(service, 'mmi_station_versions'), 155);
     assert.equal(canonicalizedSourceDurationCount, 3);
+
+    const { data: durationRows, error: durationError } = await service
+      .from('mmi_sub_questions')
+      .select('time_limit_sec,source_time_limit_sec')
+      .order('sub_q_id')
+      .range(0, 774);
+    assert.equal(durationError, null, durationError?.message);
+    assert.equal(durationRows?.length, 775);
+    assert.equal(durationRows?.every(row => row.time_limit_sec === 120), true);
+    assert.equal(durationRows?.filter(row => row.source_time_limit_sec === 120).length, 772);
+    assert.equal(durationRows?.filter(row => row.source_time_limit_sec === 90).length, 3);
+    assert.equal(durationRows?.filter(row => ![90, 120].includes(row.source_time_limit_sec)).length, 0);
 
     const criterionOwners: Array<{ sub_q_id: string }> = [];
     for (let start = 0; start < 3100; start += 1000) {
@@ -408,7 +550,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
 
     const { data: version, error: versionError } = await service
       .from('mmi_station_versions')
-      .select('version,content_snapshot')
+      .select('station_id,version,content_snapshot')
       .limit(1)
       .single();
     assert.equal(versionError, null, versionError?.message);
@@ -426,10 +568,17 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       'topic',
       'universityTags',
     ].sort());
-    const snapshotQuestions = snapshot.questions as Array<{ criteria: unknown[] }>;
+    const snapshotQuestions = snapshot.questions as Array<{
+      criteria: unknown[];
+      sourceTimeLimitSec: number;
+      timeLimitSec: number;
+    }>;
     assert.equal(snapshotQuestions.length, 5);
     assert.equal(snapshotQuestions.every(question => question.criteria.length === 4), true);
+    assert.equal(snapshotQuestions.every(question => question.timeLimitSec === 120), true);
+    assert.equal(snapshotQuestions.every(question => [90, 120].includes(question.sourceTimeLimitSec)), true);
     assert.equal('panelNotes' in snapshot, false);
+    assertStationVersionMutationsRejected(version!.station_id);
     assert.equal(Object.keys(promptHashesByStation).length, 155);
     assert.equal(Object.values(promptHashesByStation).every(prompts => prompts.length === 5), true);
   });
