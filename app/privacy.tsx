@@ -14,7 +14,7 @@ const SECTIONS: readonly LegalSection[] = [
     paragraphs: ['We collect only information used to operate, secure, and evaluate the preview.'],
     points: [
       'Account and profile data: email address, name, target university, entry year, onboarding status, role, and account timestamps.',
-      'Practice data: selected question and category, session timing and status, AI-generated rubric scores and structured outcomes, and progress summaries. Raw MMI audio is never stored; MMI transcript text is temporary and is deleted after successful scoring or within 24 hours when an assessment remains unresolved.',
+      'Practice data: selected question and category, session timing and status, AI-generated rubric scores and structured outcomes, and progress summaries. Our application and database never store raw MMI audio; MMI transcript text is temporary and is deleted after successful scoring or within 24 hours when an assessment remains unresolved.',
       'Content operations: questions, guidance notes, tags, draft or published status, and configuration actions submitted by authorized administrators.',
       'Partner reports: category, severity, screen, message, app version, reply permission, and account ID. The review API hides the account ID when reply permission is off.',
       'Technical records: security, authentication, delivery, and error metadata processed by our hosting and backend providers. The app does not intentionally attach screenshots, browser logs, access tokens, answers, or transcripts to partner reports.',

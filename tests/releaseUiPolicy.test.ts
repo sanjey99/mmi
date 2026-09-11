@@ -16,6 +16,8 @@ describe('final release UI policy', () => {
     expect(privacy).toContain('Information we collect');
     expect(privacy).toContain('Service providers and AI processing');
     expect(privacy).toContain('Retention and your choices');
+    expect(privacy).toContain('Our application and database never store raw MMI audio');
+    expect(privacy).toContain('External speech and AI providers may retain or process data under their own terms');
     expect(legalFooter).toContain("router.push('/terms')");
     expect(legalFooter).toContain("router.push('/privacy')");
     expect(read('app/(auth)/login.tsx')).toContain('<LegalFooter />');
