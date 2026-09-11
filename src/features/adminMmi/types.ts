@@ -175,6 +175,7 @@ export type AdminMmiAssessmentSummary = Readonly<{
   userId: string;
   userDisplayName: string;
   stationId: string;
+  subQuestionId: string;
   promptOrder: number;
   questionScorePct: number;
   provider: string | null;
@@ -194,6 +195,7 @@ export type AdminMmiAssessmentDetail = Readonly<{
   userId: string;
   userDisplayName: string;
   stationId: string;
+  subQuestionId: string;
   promptOrder: number;
   questionScorePct: number;
   criteria: readonly Readonly<{

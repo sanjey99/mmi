@@ -54,6 +54,7 @@ ALTER TABLE public.mmi_admin_access_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mmi_admin_change_audit ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.mmi_admin_access_audit FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON TABLE public.mmi_admin_change_audit FROM PUBLIC, anon, authenticated, service_role;
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.app_config FROM authenticated;
 
 CREATE OR REPLACE FUNCTION public.require_mmi_admin()
 RETURNS uuid
@@ -476,6 +477,10 @@ BEGIN
       <> (SELECT count(DISTINCT criterion.value->>'criterionId') FROM jsonb_array_elements(question.value->'criteria') AS criterion(value))
       OR (SELECT count(*) FROM jsonb_array_elements(question.value->'criteria'))
       <> (SELECT count(DISTINCT criterion.value->>'order') FROM jsonb_array_elements(question.value->'criteria') AS criterion(value))
+  ) OR (
+    SELECT count(*) <> count(DISTINCT criterion.value->>'criterionId')
+    FROM jsonb_array_elements(p_station->'questions') AS question(value)
+    CROSS JOIN LATERAL jsonb_array_elements(question.value->'criteria') AS criterion(value)
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid_admin_station_criteria';
   END IF;
@@ -972,10 +977,13 @@ BEGIN
   RETURN (
     WITH filtered AS (
       SELECT response.id AS response_id,response.prompt_order,response.public_assessment,response.finalized_at,response.transcript_purged_at,
+        snapshot.sub_question_id,
         session.station_id,session.user_id,COALESCE(NULLIF(btrim(profile.full_name),''),'User '||left(session.user_id::text,8)) AS user_display_name,
         usage.provider,usage.model,usage.estimated_cost,usage.outcome
       FROM public.candidate_mmi_station_responses AS response
       JOIN public.candidate_mmi_station_sessions AS session ON session.id=response.session_id
+      JOIN public.candidate_mmi_station_prompt_snapshots AS snapshot
+        ON snapshot.session_id=response.session_id AND snapshot.prompt_order=response.prompt_order
       JOIN public.profiles AS profile ON profile.id=session.user_id
       LEFT JOIN LATERAL (
         SELECT event.provider,event.model,event.estimated_cost,event.outcome
@@ -995,7 +1003,7 @@ BEGIN
     SELECT jsonb_build_object(
       'items',COALESCE((SELECT jsonb_agg(jsonb_build_object(
         'responseId',page.response_id,'userId',page.user_id,'userDisplayName',page.user_display_name,
-        'stationId',page.station_id,'promptOrder',page.prompt_order,
+        'stationId',page.station_id,'subQuestionId',page.sub_question_id,'promptOrder',page.prompt_order,
         'questionScorePct',(page.public_assessment->>'questionScorePct')::numeric,
         'provider',page.provider,'model',page.model,
         'estimatedCost',CASE WHEN page.estimated_cost IS NULL THEN NULL ELSE to_char(page.estimated_cost,'FM99999999.00000000') END,
@@ -1020,11 +1028,25 @@ SET search_path = pg_catalog, public, pg_temp
 AS $function$
 DECLARE
   v_admin_id uuid;
-  v_response public.candidate_mmi_station_responses;
-  v_session public.candidate_mmi_station_sessions;
+  v_response_id public.candidate_mmi_station_responses.id%TYPE;
+  v_session_id public.candidate_mmi_station_responses.session_id%TYPE;
+  v_prompt_order public.candidate_mmi_station_responses.prompt_order%TYPE;
+  v_public_assessment public.candidate_mmi_station_responses.public_assessment%TYPE;
+  v_finalized_at public.candidate_mmi_station_responses.finalized_at%TYPE;
+  v_transcript_purged_at public.candidate_mmi_station_responses.transcript_purged_at%TYPE;
+  v_station_id public.candidate_mmi_station_sessions.station_id%TYPE;
+  v_user_id public.candidate_mmi_station_sessions.user_id%TYPE;
   v_display_name text;
-  v_snapshot public.candidate_mmi_station_prompt_snapshots;
-  v_usage public.mmi_ai_usage_events;
+  v_sub_question_id public.candidate_mmi_station_prompt_snapshots.sub_question_id%TYPE;
+  v_rubric_snapshot public.candidate_mmi_station_prompt_snapshots.rubric_snapshot%TYPE;
+  v_provider public.mmi_ai_usage_events.provider%TYPE;
+  v_model public.mmi_ai_usage_events.model%TYPE;
+  v_input_tokens public.mmi_ai_usage_events.input_tokens%TYPE;
+  v_cached_input_tokens public.mmi_ai_usage_events.cached_input_tokens%TYPE;
+  v_output_tokens public.mmi_ai_usage_events.output_tokens%TYPE;
+  v_estimated_cost public.mmi_ai_usage_events.estimated_cost%TYPE;
+  v_latency_ms public.mmi_ai_usage_events.latency_ms%TYPE;
+  v_outcome public.mmi_ai_usage_events.outcome%TYPE;
   v_audit_id uuid;
   v_criteria jsonb;
 BEGIN
@@ -1032,21 +1054,31 @@ BEGIN
   IF p_response_id IS NULL OR p_purpose NOT IN ('scoring_review','support','cost_review','quality_audit') THEN
     RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='invalid_admin_assessment_request';
   END IF;
-  SELECT * INTO v_response FROM public.candidate_mmi_station_responses AS response
+  SELECT response.id,response.session_id,response.prompt_order,response.public_assessment,
+         response.finalized_at,response.transcript_purged_at
+  INTO v_response_id,v_session_id,v_prompt_order,v_public_assessment,
+       v_finalized_at,v_transcript_purged_at
+  FROM public.candidate_mmi_station_responses AS response
   WHERE response.id=p_response_id AND response.scoring_status='scored'
     AND jsonb_typeof(response.public_assessment->'schemaVersion')='number'
     AND response.public_assessment->>'schemaVersion'='3';
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='admin_assessment_not_found'; END IF;
-  SELECT * INTO v_session FROM public.candidate_mmi_station_sessions AS session WHERE session.id=v_response.session_id;
+  SELECT session.station_id,session.user_id INTO v_station_id,v_user_id
+  FROM public.candidate_mmi_station_sessions AS session WHERE session.id=v_session_id;
   SELECT COALESCE(NULLIF(btrim(profile.full_name),''),'User '||left(profile.id::text,8)) INTO v_display_name
-  FROM public.profiles AS profile WHERE profile.id=v_session.user_id;
-  SELECT * INTO v_snapshot FROM public.candidate_mmi_station_prompt_snapshots AS snapshot
-  WHERE snapshot.session_id=v_response.session_id AND snapshot.prompt_order=v_response.prompt_order;
-  SELECT * INTO v_usage FROM public.mmi_ai_usage_events AS usage WHERE usage.response_id=v_response.id
+  FROM public.profiles AS profile WHERE profile.id=v_user_id;
+  SELECT snapshot.sub_question_id,snapshot.rubric_snapshot INTO v_sub_question_id,v_rubric_snapshot
+  FROM public.candidate_mmi_station_prompt_snapshots AS snapshot
+  WHERE snapshot.session_id=v_session_id AND snapshot.prompt_order=v_prompt_order;
+  SELECT usage.provider,usage.model,usage.input_tokens,usage.cached_input_tokens,
+         usage.output_tokens,usage.estimated_cost,usage.latency_ms,usage.outcome
+  INTO v_provider,v_model,v_input_tokens,v_cached_input_tokens,
+       v_output_tokens,v_estimated_cost,v_latency_ms,v_outcome
+  FROM public.mmi_ai_usage_events AS usage WHERE usage.response_id=v_response_id
   ORDER BY (usage.outcome='scored') DESC,usage.created_at DESC LIMIT 1;
 
   INSERT INTO public.mmi_admin_access_audit(admin_user_id,subject_user_id,response_id,purpose)
-  VALUES (v_admin_id,v_session.user_id,v_response.id,p_purpose) RETURNING id INTO v_audit_id;
+  VALUES (v_admin_id,v_user_id,v_response_id,p_purpose) RETURNING id INTO v_audit_id;
 
   SELECT jsonb_agg(jsonb_build_object(
     'criterionId',decision.value->>'criterionId',
@@ -1056,21 +1088,21 @@ BEGIN
     'weightPct',(decision.value->>'weightPct')::numeric
   ) ORDER BY decision.ordinality)
   INTO v_criteria
-  FROM jsonb_array_elements(v_response.public_assessment->'criteria') WITH ORDINALITY AS decision(value,ordinality)
-  JOIN LATERAL jsonb_array_elements(v_snapshot.rubric_snapshot->'criteria') AS rubric(value)
+  FROM jsonb_array_elements(v_public_assessment->'criteria') WITH ORDINALITY AS decision(value,ordinality)
+  JOIN LATERAL jsonb_array_elements(v_rubric_snapshot->'criteria') AS rubric(value)
     ON rubric.value->>'criterionId'=decision.value->>'criterionId';
-  IF v_criteria IS NULL OR jsonb_array_length(v_criteria)<>jsonb_array_length(v_response.public_assessment->'criteria') THEN
+  IF v_criteria IS NULL OR jsonb_array_length(v_criteria)<>jsonb_array_length(v_public_assessment->'criteria') THEN
     RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='admin_assessment_rubric_unavailable';
   END IF;
   RETURN jsonb_build_object(
-    'accessAuditId',v_audit_id,'responseId',v_response.id,'userId',v_session.user_id,
-    'userDisplayName',v_display_name,'stationId',v_session.station_id,'promptOrder',v_response.prompt_order,
-    'questionScorePct',(v_response.public_assessment->>'questionScorePct')::numeric,'criteria',v_criteria,
-    'provider',v_usage.provider,'model',v_usage.model,'inputTokens',v_usage.input_tokens,
-    'cachedInputTokens',v_usage.cached_input_tokens,'outputTokens',v_usage.output_tokens,
-    'estimatedCost',CASE WHEN v_usage.estimated_cost IS NULL THEN NULL ELSE to_char(v_usage.estimated_cost,'FM99999999.00000000') END,
-    'latencyMs',v_usage.latency_ms,'outcome',v_usage.outcome,'finalizedAt',v_response.finalized_at,
-    'scoredAt',COALESCE(v_response.transcript_purged_at,v_response.finalized_at)
+    'accessAuditId',v_audit_id,'responseId',v_response_id,'userId',v_user_id,
+    'userDisplayName',v_display_name,'stationId',v_station_id,'subQuestionId',v_sub_question_id,'promptOrder',v_prompt_order,
+    'questionScorePct',(v_public_assessment->>'questionScorePct')::numeric,'criteria',v_criteria,
+    'provider',v_provider,'model',v_model,'inputTokens',v_input_tokens,
+    'cachedInputTokens',v_cached_input_tokens,'outputTokens',v_output_tokens,
+    'estimatedCost',CASE WHEN v_estimated_cost IS NULL THEN NULL ELSE to_char(v_estimated_cost,'FM99999999.00000000') END,
+    'latencyMs',v_latency_ms,'outcome',v_outcome,'finalizedAt',v_finalized_at,
+    'scoredAt',COALESCE(v_transcript_purged_at,v_finalized_at)
   );
 END;
 $function$;

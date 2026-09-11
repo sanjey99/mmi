@@ -296,10 +296,10 @@ function parseAssessmentList(value: unknown): AdminMmiAssessmentList {
   const root = record(value); exact(root, ['items', 'total']);
   if (!Array.isArray(root.items) || root.items.length > 100) invalidResponse();
   const items = root.items.map((entry) => {
-    const row = record(entry); exact(row, ['costKnown', 'estimatedCost', 'model', 'outcome', 'promptOrder', 'provider', 'questionScorePct', 'responseId', 'scoredAt', 'stationId', 'userDisplayName', 'userId']);
+    const row = record(entry); exact(row, ['costKnown', 'estimatedCost', 'model', 'outcome', 'promptOrder', 'provider', 'questionScorePct', 'responseId', 'scoredAt', 'stationId', 'subQuestionId', 'userDisplayName', 'userId']);
     if (typeof row.costKnown !== 'boolean' || row.costKnown !== (row.estimatedCost !== null)) invalidResponse();
     return Object.freeze({
-      responseId: uuid(row.responseId), userId: uuid(row.userId), userDisplayName: text(row.userDisplayName, 200), stationId: sourceId(row.stationId),
+      responseId: uuid(row.responseId), userId: uuid(row.userId), userDisplayName: text(row.userDisplayName, 200), stationId: sourceId(row.stationId), subQuestionId: sourceId(row.subQuestionId),
       promptOrder: positiveWhole(row.promptOrder, 5), questionScorePct: decimal(row.questionScorePct), provider: nullableText(row.provider, 100),
       model: nullableText(row.model, 200), estimatedCost: optionalMoney(row.estimatedCost), costKnown: row.costKnown,
       outcome: row.outcome === null ? null : outcome(row.outcome), scoredAt: timestamp(row.scoredAt),
@@ -310,7 +310,7 @@ function parseAssessmentList(value: unknown): AdminMmiAssessmentList {
 
 function parseAssessment(value: unknown): AdminMmiAssessmentDetail {
   safeResponse(value);
-  const root = record(value); exact(root, ['accessAuditId', 'cachedInputTokens', 'criteria', 'estimatedCost', 'finalizedAt', 'inputTokens', 'latencyMs', 'model', 'outcome', 'outputTokens', 'promptOrder', 'provider', 'questionScorePct', 'responseId', 'scoredAt', 'stationId', 'userDisplayName', 'userId']);
+  const root = record(value); exact(root, ['accessAuditId', 'cachedInputTokens', 'criteria', 'estimatedCost', 'finalizedAt', 'inputTokens', 'latencyMs', 'model', 'outcome', 'outputTokens', 'promptOrder', 'provider', 'questionScorePct', 'responseId', 'scoredAt', 'stationId', 'subQuestionId', 'userDisplayName', 'userId']);
   if (!Array.isArray(root.criteria) || root.criteria.length < 1 || root.criteria.length > 20) invalidResponse();
   const criteria = root.criteria.map((entry) => {
     const row = record(entry); exact(row, ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct']);
@@ -323,7 +323,7 @@ function parseAssessment(value: unknown): AdminMmiAssessmentDetail {
   if (new Set(criteria.map((item) => item.criterionId)).size !== criteria.length || Math.abs(totalWeight - 100) > 0.01 || Math.abs(achievedWeight - questionScorePct) > 0.01) invalidResponse();
   return Object.freeze({
     accessAuditId: uuid(root.accessAuditId), responseId: uuid(root.responseId), userId: uuid(root.userId), userDisplayName: text(root.userDisplayName, 200),
-    stationId: sourceId(root.stationId), promptOrder: positiveWhole(root.promptOrder, 5), questionScorePct, criteria: Object.freeze(criteria),
+    stationId: sourceId(root.stationId), subQuestionId: sourceId(root.subQuestionId), promptOrder: positiveWhole(root.promptOrder, 5), questionScorePct, criteria: Object.freeze(criteria),
     provider: nullableText(root.provider, 100), model: nullableText(root.model, 200), inputTokens: nullableTokens(root.inputTokens),
     cachedInputTokens: nullableTokens(root.cachedInputTokens), outputTokens: nullableTokens(root.outputTokens), estimatedCost: optionalMoney(root.estimatedCost),
     latencyMs: root.latencyMs === null ? null : whole(root.latencyMs, 2_147_483_647), outcome: root.outcome === null ? null : outcome(root.outcome),

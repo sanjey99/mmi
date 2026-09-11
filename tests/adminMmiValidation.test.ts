@@ -131,4 +131,25 @@ describe('admin MMI station validation', () => {
       expect.objectContaining({ path: 'questions.1.criteria.0.bulletText', code: 'too_long' }),
     ]));
   });
+
+  it('rejects criterion IDs reused by different questions in the same station', () => {
+    const base = stationDraft();
+    const duplicatedAcrossQuestions: AdminMmiStationDraft = {
+      ...base,
+      questions: base.questions.map((question, index) => index === 1
+        ? {
+            ...question,
+            criteria: question.criteria.map((criterion, criterionIndex) => criterionIndex === 0
+              ? { ...criterion, criterionId: base.questions[0]!.criteria[0]!.criterionId }
+              : criterion),
+          }
+        : question),
+    };
+
+    expect(validateStationDraft(duplicatedAcrossQuestions, 'draft').issues)
+      .toContainEqual(expect.objectContaining({
+        path: 'questions.1.criteria.0.criterionId',
+        code: 'duplicate_criterion_id',
+      }));
+  });
 });

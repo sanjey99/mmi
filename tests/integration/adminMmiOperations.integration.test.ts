@@ -19,6 +19,7 @@ const serviceKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const suffix = randomUUID().replaceAll('-', '');
 const stationId = `ADMIN_${suffix}`;
+const duplicateStationId = `DUPLICATE_${suffix}`;
 const assessmentStationId = `ASSESS_${suffix}`;
 const panelId = `PANEL_${suffix}`;
 const adminEmail = `mmi-admin-${suffix}@example.test`;
@@ -30,6 +31,7 @@ let candidate: SupabaseClient;
 let adminId = '';
 let candidateId = '';
 let responseId = '';
+let appConfigSnapshot: string | null = null;
 
 function sql(statement: string): string {
   assert.ok(dbUrl);
@@ -77,6 +79,9 @@ function assertNoForbiddenKeys(value: unknown): void {
 run('privacy-safe MMI admin operations (explicit disposable local database only)', () => {
   beforeAll(async () => {
     service = createClient(url!, serviceKey!, { auth: { persistSession: false } });
+    appConfigSnapshot = sql(`SELECT COALESCE(jsonb_agg(to_jsonb(config) ORDER BY config.key), '[]'::jsonb)::text
+FROM public.app_config AS config
+WHERE config.key IN ('ai_api_key','ai_provider','ai_model','ai_base_url','ai_input_rate_per_million','ai_cached_input_rate_per_million','ai_output_rate_per_million');`);
     const createdAdmin = await service.auth.admin.createUser({ email: adminEmail, password, email_confirm: true, user_metadata: { full_name: 'Admin Reviewer' } });
     const createdCandidate = await service.auth.admin.createUser({ email: candidateEmail, password, email_confirm: true, user_metadata: { full_name: 'Candidate A' } });
     assert.equal(createdAdmin.error, null, createdAdmin.error?.message);
@@ -109,6 +114,14 @@ VALUES ('${candidateId}','${sessionId}','${responseId}','${randomUUID()}','anthr
   });
 
   afterAll(async () => {
+    if (appConfigSnapshot !== null) {
+      const snapshot = appConfigSnapshot.replaceAll("'", "''");
+      sql(`DELETE FROM public.app_config
+WHERE key IN ('ai_api_key','ai_provider','ai_model','ai_base_url','ai_input_rate_per_million','ai_cached_input_rate_per_million','ai_output_rate_per_million');
+INSERT INTO public.app_config(key,value,updated_at)
+SELECT restored.key,restored.value,restored.updated_at
+FROM jsonb_to_recordset('${snapshot}'::jsonb) AS restored(key text,value text,updated_at timestamptz);`);
+    }
     if (adminId || candidateId) {
       sql(`DELETE FROM public.mmi_admin_access_audit
 WHERE admin_user_id='${adminId}' OR subject_user_id='${candidateId}';
@@ -120,11 +133,11 @@ WHERE admin_user_id='${adminId}' OR target_id IN ('${stationId}','${panelId}','a
     sql(`DELETE FROM public.mmi_panel_questions WHERE question_id='${panelId}';
 BEGIN;
 SET LOCAL session_replication_role=replica;
-DELETE FROM public.mmi_station_versions WHERE station_id IN ('${stationId}','${assessmentStationId}');
+DELETE FROM public.mmi_station_versions WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');
 COMMIT;
-DELETE FROM public.mmi_marking_criteria WHERE sub_q_id LIKE '${stationId}_Q%' OR sub_q_id LIKE '${assessmentStationId}_Q%';
-DELETE FROM public.mmi_sub_questions WHERE station_id IN ('${stationId}','${assessmentStationId}');
-DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${assessmentStationId}');`);
+DELETE FROM public.mmi_marking_criteria WHERE sub_q_id LIKE '${stationId}_Q%' OR sub_q_id LIKE '${duplicateStationId}_Q%' OR sub_q_id LIKE '${assessmentStationId}_Q%';
+DELETE FROM public.mmi_sub_questions WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');
+DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicateStationId}','${assessmentStationId}');`);
   });
 
   it('requires an authenticated admin and keeps both audit tables private', async () => {
@@ -157,9 +170,38 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${assessmen
     assert.ok((await admin.rpc('delete_admin_mmi_station', { p_station_id: stationId })).error);
   });
 
+  it('rejects criterion IDs reused across questions without persisting a station or version', async () => {
+    const payload = completeStationPayload(duplicateStationId, null);
+    const duplicated = {
+      ...payload,
+      questions: payload.questions.map((question, index) => index === 1
+        ? {
+            ...question,
+            criteria: question.criteria.map((criterion) => ({
+              ...criterion,
+              criterionId: payload.questions[0]!.criteria[0]!.criterionId,
+            })),
+          }
+        : question),
+    };
+
+    const result = await admin.rpc('save_admin_mmi_station', {
+      p_station: duplicated,
+      p_expected_version: null,
+    });
+    assert.equal(result.error?.code, '22023');
+    assert.equal(sql(`SELECT count(*) FROM public.mmi_stations WHERE station_id='${duplicateStationId}';`), '0');
+    assert.equal(sql(`SELECT count(*) FROM public.mmi_station_versions WHERE station_id='${duplicateStationId}';`), '0');
+  });
+
   it('manages panels and non-secret AI settings without returning or changing the API key', async () => {
     const panel = await admin.rpc('save_admin_mmi_panel', { p_panel: { questionId: panelId, questionText: 'Why medicine?', stationType: 'panel', topic: 'motivation', difficulty: 'foundation', universityTags: ['all'], notes: 'Admin only note', modelAnswerCached: null, status: 'draft' } });
     assert.equal(panel.error, null, panel.error?.message);
+    const bypass = await admin.from('app_config').update({ value: 'unaudited-bypass' }).eq('key', 'ai_provider');
+    assert.equal(bypass.error?.code, '42501');
+    const edgeKeyWrite = await service.from('app_config').upsert({ key: 'ai_api_key', value: 'local-secret-must-survive' }, { onConflict: 'key' });
+    assert.equal(edgeKeyWrite.error, null, edgeKeyWrite.error?.message);
+    const auditsBefore = Number(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config';"));
     const saved = await admin.rpc('save_admin_ai_config', { p_provider: 'anthropic', p_model: 'local-model-2', p_base_url: null, p_input_rate: 2, p_cached_input_rate: 0.2, p_output_rate: 10 });
     assert.equal(saved.error, null, saved.error?.message);
     const config = await admin.rpc('get_admin_ai_config');
@@ -167,7 +209,8 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${assessmen
     assert.equal((config.data as { isConfigured: boolean }).isConfigured, true);
     assertNoForbiddenKeys(config.data);
     assert.equal(sql("SELECT value FROM public.app_config WHERE key='ai_api_key';"), 'local-secret-must-survive');
-    assert.equal(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config' AND metadata::text !~* 'secret|key';"), '1');
+    assert.equal(Number(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config';")), auditsBefore + 1);
+    assert.equal(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config' AND metadata::text ~* 'secret|key';"), '0');
   });
 
   it('returns allowlisted usage and structured assessment data and audits every detail view first', async () => {
@@ -178,14 +221,18 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${assessmen
     const list = await admin.rpc('list_admin_mmi_assessments', { p_filters: { userId: candidateId, limit: 20, offset: 0 } });
     assert.equal(list.error, null, list.error?.message);
     assertNoForbiddenKeys(list.data);
+    assert.equal((list.data as { items: Array<{ subQuestionId: string }> }).items[0]?.subQuestionId, `${assessmentStationId}_Q1`);
     const before = Number(sql(`SELECT count(*) FROM public.mmi_admin_access_audit WHERE response_id='${responseId}';`));
     const detail = await admin.rpc('get_admin_mmi_assessment', { p_response_id: responseId, p_purpose: 'quality_audit' });
     assert.equal(detail.error, null, detail.error?.message);
     assertNoForbiddenKeys(detail.data);
+    assert.equal((detail.data as { subQuestionId: string }).subQuestionId, `${assessmentStationId}_Q1`);
     assert.equal((detail.data as { criteria: Array<{ achieved: boolean }> }).criteria[0]?.achieved, true);
     assert.equal(Number(sql(`SELECT count(*) FROM public.mmi_admin_access_audit WHERE response_id='${responseId}' AND purpose='quality_audit';`)), before + 1);
     assert.equal((detail.data as { accessAuditId: string }).accessAuditId, sql(`SELECT id FROM public.mmi_admin_access_audit WHERE response_id='${responseId}' ORDER BY viewed_at DESC LIMIT 1;`));
     assert.equal((await candidate.rpc('get_admin_mmi_assessment', { p_response_id: responseId, p_purpose: 'support' })).error?.code, '42501');
+    const definition = sql("SELECT pg_get_functiondef('public.get_admin_mmi_assessment(uuid,text)'::regprocedure);");
+    assert.doesNotMatch(definition, /finalized_transcript|SELECT\s+\*/i);
   });
 
   it('rejects invalid purpose, unsafe base URLs, widened filters, and malformed publication', async () => {

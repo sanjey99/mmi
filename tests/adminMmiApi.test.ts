@@ -41,12 +41,12 @@ const usage = {
   rows: [{ usageId: auditId, userId: subjectId, userDisplayName: 'Candidate A', sessionId: adminId, responseId, stationId: 'MMI_001', promptOrder: 1, scope: 'target', targetUniversity: 'Oxford', provider: 'anthropic', model: 'claude-test', inputTokens: 100, cachedInputTokens: 5, outputTokens: 20, estimatedCost: '0.00020500', latencyMs: 350, outcome: 'scored', createdAt: timestamp }],
 };
 const assessments = {
-  items: [{ responseId, userId: subjectId, userDisplayName: 'Candidate A', stationId: 'MMI_001', promptOrder: 1, questionScorePct: 25, provider: 'anthropic', model: 'claude-test', estimatedCost: '0.00020500', costKnown: true, outcome: 'scored', scoredAt: timestamp }],
+  items: [{ responseId, userId: subjectId, userDisplayName: 'Candidate A', stationId: 'MMI_001', subQuestionId: 'MMI_001_Q1', promptOrder: 1, questionScorePct: 25, provider: 'anthropic', model: 'claude-test', estimatedCost: '0.00020500', costKnown: true, outcome: 'scored', scoredAt: timestamp }],
   total: 1,
 };
 const assessment = {
   accessAuditId: auditId, responseId, userId: subjectId, userDisplayName: 'Candidate A',
-  stationId: 'MMI_001', promptOrder: 1, questionScorePct: 25,
+  stationId: 'MMI_001', subQuestionId: 'MMI_001_Q1', promptOrder: 1, questionScorePct: 25,
   criteria: [
     { criterionId: 'MMI_001_Q1_C1', bulletText: 'Escalates safely', domain: 'safety', achieved: true, weightPct: 25 },
     { criterionId: 'MMI_001_Q1_C2', bulletText: 'Clarifies the concern', domain: 'communication', achieved: false, weightPct: 25 },

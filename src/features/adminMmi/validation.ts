@@ -147,6 +147,7 @@ export function validateStationDraft(
   )) issue(issues, 'questions', 'invalid_question_orders', 'Publishing requires question orders 1 through 5 exactly once.');
   if (value.questions.length > 5) issue(issues, 'questions', 'invalid_question_orders', 'A station has at most five questions.');
 
+  const stationCriterionIds = new Set<string>();
   for (const [questionIndex, question] of value.questions.entries()) {
     const path = `questions.${questionIndex}`;
     if (!SOURCE_ID_PATTERN.test(question.subQuestionId)) issue(issues, `${path}.subQuestionId`, 'invalid_id', 'Use a stable sub-question ID.');
@@ -163,6 +164,10 @@ export function validateStationDraft(
     for (const [criterionIndex, criterion] of question.criteria.entries()) {
       const criterionPath = `${path}.criteria.${criterionIndex}`;
       if (!SOURCE_ID_PATTERN.test(criterion.criterionId)) issue(issues, `${criterionPath}.criterionId`, 'invalid_id', 'Use a stable criterion ID.');
+      if (stationCriterionIds.has(criterion.criterionId)) {
+        issue(issues, `${criterionPath}.criterionId`, 'duplicate_criterion_id', 'Criterion IDs must be unique across the station.');
+      }
+      stationCriterionIds.add(criterion.criterionId);
       if (!Number.isInteger(criterion.order) || criterion.order < 1 || criterion.order > 20) issue(issues, `${criterionPath}.order`, 'invalid_number', 'Criterion order must be a positive integer.');
       validateText(issues, `${criterionPath}.bulletText`, criterion.bulletText, 2_000, requiredForPublish);
       if (criterion.domain !== null) validateText(issues, `${criterionPath}.domain`, criterion.domain, 100, false);
