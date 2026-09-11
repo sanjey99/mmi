@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { FloatingInput as Input } from '../../src/components/ui/Input';
 import { AdminMmiApiError, createAdminMmiApi } from '../../src/features/adminMmi/api';
 import type { AdminMmiContentStatus, AdminMmiStationDraft } from '../../src/features/adminMmi/types';
-import { addDraftCriterion, addDraftQuestion, createStationDraft, remapUnsavedStationDraft } from '../../src/features/adminMmi/stationDraftIds';
+import { addDraftCriterion, addDraftQuestion, createDraftIdReservations, createStationDraft, remapUnsavedStationDraft } from '../../src/features/adminMmi/stationDraftIds';
 import { validateStationDraft } from '../../src/features/adminMmi/validation';
 import { navigateBackOr } from '../../src/lib/navigation';
 import { supabase } from '../../src/lib/supabase';
@@ -28,6 +28,7 @@ export default function StationEditor() {
   const { stationId } = useLocalSearchParams<{ stationId?: string }>();
   const [draft, setDraft] = useState<AdminMmiStationDraft>(createStationDraft);
   const [savedDraft, setSavedDraft] = useState<AdminMmiStationDraft>(createStationDraft);
+  const idReservations = useRef(createDraftIdReservations(createStationDraft()));
   const [status, setStatus] = useState<AdminMmiContentStatus>('draft');
   const [loading, setLoading] = useState(Boolean(stationId));
   const [saving, setSaving] = useState(false);
@@ -37,7 +38,7 @@ export default function StationEditor() {
   useEffect(() => {
     if (!stationId) return;
     void api.getStation(stationId)
-      .then((result) => { setDraft(result.station); setSavedDraft(result.station); setStatus(result.status); })
+      .then((result) => { idReservations.current = createDraftIdReservations(result.station); setDraft(result.station); setSavedDraft(result.station); setStatus(result.status); })
       .catch(() => setNotice({ title: 'Station not loaded', message: 'Check your access or return to the repository.', tone: 'error' }))
       .finally(() => setLoading(false));
   }, [stationId]);
@@ -53,7 +54,7 @@ export default function StationEditor() {
   const update = <K extends keyof AdminMmiStationDraft>(key: K, value: AdminMmiStationDraft[K]) => {
     if (key === 'stationId') {
       if (!canChangeId) return;
-      setDraft((current) => isPublished ? current : remapUnsavedStationDraft(current, String(value)));
+      setDraft((current) => isPublished ? current : remapUnsavedStationDraft(current, String(value), idReservations.current));
       return;
     }
     edit((current) => ({ ...current, [key]: value }));
@@ -74,13 +75,13 @@ export default function StationEditor() {
       }),
     }),
   }));
-  const addQuestion = () => edit(addDraftQuestion);
+  const addQuestion = () => edit((current) => addDraftQuestion(current, idReservations.current));
   const removeQuestion = (order: number) => edit((current) => ({
     ...current,
     questions: current.questions.filter((question) => question.order !== order).map((question, index) => ({ ...question, order: index + 1 })),
   }));
   const moveQuestion = (order: number, direction: -1 | 1) => edit((current) => ({ ...current, questions: reordered(current.questions, order, direction) }));
-  const addCriterion = (subQuestionId: string) => edit((current) => addDraftCriterion(current, subQuestionId));
+  const addCriterion = (subQuestionId: string) => edit((current) => addDraftCriterion(current, subQuestionId, idReservations.current));
   const removeCriterion = (questionOrder: number, criterionOrder: number) => edit((current) => ({
     ...current,
     questions: current.questions.map((question) => question.order !== questionOrder ? question : ({

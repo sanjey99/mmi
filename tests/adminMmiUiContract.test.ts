@@ -30,6 +30,8 @@ describe('admin MMI workspace contract', () => {
     expect(editor).toMatch(/Unpublish before editing/);
     expect(editor).toMatch(/Save changes first/);
     expect(editor).toMatch(/addQuestion|addCriterion|moveQuestion|moveCriterion/);
+    expect(editor).toMatch(/createDraftIdReservations/);
+    expect(editor).toMatch(/idReservations\.current/);
     expect(editor).not.toMatch(/deleteStation|delete_admin_mmi_station|\/delete/i);
   });
 

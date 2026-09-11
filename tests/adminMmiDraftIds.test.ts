@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDraftCriterion, addDraftQuestion, createStationDraft, remapUnsavedStationDraft } from '../src/features/adminMmi/stationDraftIds';
+import { addDraftCriterion, addDraftQuestion, createDraftIdReservations, createStationDraft, remapUnsavedStationDraft } from '../src/features/adminMmi/stationDraftIds';
 import { createLatestRequestGate } from '../src/features/adminMmi/latestRequestGate';
 
 describe('admin MMI draft descendant identities', () => {
@@ -14,13 +14,27 @@ describe('admin MMI draft descendant identities', () => {
 
   it('never reuses an ID after a middle item is removed', () => {
     const draft = createStationDraft('station-a');
+    const reservations = createDraftIdReservations(draft);
     const withoutMiddle = { ...draft, questions: draft.questions.filter((question) => question.order !== 3) };
-    const withQuestion = addDraftQuestion(withoutMiddle);
+    const withQuestion = addDraftQuestion(withoutMiddle, reservations);
     expect(withQuestion.questions.map((question) => question.subQuestionId)).toContain('station-a-q6');
     const question = withQuestion.questions[0]!;
     const withoutMiddleCriterion = { ...withQuestion, questions: withQuestion.questions.map((item) => item.subQuestionId !== question.subQuestionId ? item : { ...item, criteria: item.criteria.filter((criterion) => criterion.order !== 2) }) };
-    const withCriterion = addDraftCriterion(withoutMiddleCriterion, question.subQuestionId);
+    const withCriterion = addDraftCriterion(withoutMiddleCriterion, question.subQuestionId, reservations);
     expect(withCriterion.questions[0]!.criteria.map((criterion) => criterion.criterionId)).toContain('station-a-q1-c5');
+  });
+
+  it.each([null, 1])('tombstones the highest removed question and criterion suffix for %s drafts', (expectedVersion) => {
+    const draft = { ...createStationDraft('station-high'), expectedVersion };
+    const reservations = createDraftIdReservations(draft);
+    const withoutHighestQuestion = { ...draft, questions: draft.questions.filter((question) => question.subQuestionId !== 'station-high-q5') };
+    const withQuestion = addDraftQuestion(withoutHighestQuestion, reservations);
+    expect(withQuestion.questions.map((question) => question.subQuestionId)).toContain('station-high-q6');
+
+    const firstQuestion = withQuestion.questions[0]!;
+    const withoutHighestCriterion = { ...withQuestion, questions: withQuestion.questions.map((question) => question.subQuestionId !== firstQuestion.subQuestionId ? question : { ...question, criteria: question.criteria.filter((criterion) => criterion.criterionId !== 'station-high-q1-c4') }) };
+    const withCriterion = addDraftCriterion(withoutHighestCriterion, firstQuestion.subQuestionId, reservations);
+    expect(withCriterion.questions[0]!.criteria.map((criterion) => criterion.criterionId)).toContain('station-high-q1-c5');
   });
 
   it('creates globally distinct descendants for a second new station', () => {
