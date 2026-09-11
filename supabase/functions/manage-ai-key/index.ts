@@ -33,17 +33,13 @@ const handler = createManageAiKeyHandler({
       .maybeSingle();
     return { configured: Boolean(data), error };
   },
-  async replaceKey(apiKey) {
-    const { error } = await serviceClient
-      .from('app_config')
-      .upsert({ key: 'ai_api_key', value: apiKey }, { onConflict: 'key' });
-    return { error };
-  },
-  async clearKey() {
-    const { error } = await serviceClient
-      .from('app_config')
-      .upsert({ key: 'ai_api_key', value: null }, { onConflict: 'key' });
-    return { error };
+  async mutateKey(adminUserId, action, apiKey) {
+    const { data, error } = await serviceClient.rpc('mutate_admin_mmi_key_from_edge', {
+      p_admin_user_id: adminUserId,
+      p_action: action,
+      p_api_key: apiKey,
+    });
+    return { configured: data?.configured, error };
   },
 }, Deno.env.get('APP_ALLOWED_ORIGINS') ?? '');
 

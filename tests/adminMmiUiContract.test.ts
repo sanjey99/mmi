@@ -27,6 +27,9 @@ describe('admin MMI workspace contract', () => {
     expect(editor).toMatch(/equal percentage/i);
     expect(editor).toMatch(/expectedVersion/);
     expect(editor).toMatch(/version_conflict/);
+    expect(editor).toMatch(/Unpublish before editing/);
+    expect(editor).toMatch(/Save changes first/);
+    expect(editor).toMatch(/addQuestion|addCriterion|moveQuestion|moveCriterion/);
     expect(editor).not.toMatch(/deleteStation|delete_admin_mmi_station|\/delete/i);
   });
 
@@ -65,5 +68,7 @@ describe('admin MMI workspace contract', () => {
 
     expect(panels).toMatch(/outside the 11-minute candidate practice pool/i);
     expect(usage).toMatch(/Cost unavailable/);
+    expect(usage).toMatch(/cachedInputTokens/);
+    expect(usage).toMatch(/failureRatePct/);
   });
 });

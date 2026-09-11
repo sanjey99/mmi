@@ -75,6 +75,8 @@ export type AdminMmiDashboard = Readonly<{
   }>;
   ai: Readonly<{ provider: AdminMmiProvider; model: string; isConfigured: boolean }>;
   usage: Readonly<{
+    periodStart: string;
+    periodEnd: string;
     callCount: number;
     knownCost: string;
     unknownCostCount: number;
@@ -228,6 +230,9 @@ export type AdminMmiStationFilters = Readonly<{
   query?: string;
   status?: AdminMmiContentStatus;
   university?: string;
+  category?: string;
+  topic?: string;
+  difficulty?: AdminMmiDifficulty;
   limit: number;
   offset: number;
 }>;

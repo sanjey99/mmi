@@ -159,7 +159,7 @@ function parseDashboard(value: unknown): AdminMmiDashboard {
   const counts = record(root.stationCounts); exact(counts, ['archived', 'draft', 'published']);
   const health = record(root.contentHealth); exact(health, ['criterionCount', 'invalidStationCount', 'questionCount', 'stationCount']);
   const ai = record(root.ai); exact(ai, ['isConfigured', 'model', 'provider']);
-  const usage = record(root.usage); exact(usage, ['callCount', 'failureCount', 'knownCost', 'unknownCostCount']);
+  const usage = record(root.usage); exact(usage, ['callCount', 'failureCount', 'knownCost', 'periodEnd', 'periodStart', 'unknownCostCount']);
   if (!Array.isArray(root.universityCounts) || root.universityCounts.length > 200 || typeof ai.isConfigured !== 'boolean') invalidResponse();
   const universityCounts = root.universityCounts.map((entry) => {
     const row = record(entry); exact(row, ['count', 'tag']);
@@ -170,7 +170,7 @@ function parseDashboard(value: unknown): AdminMmiDashboard {
     universityCounts: Object.freeze(universityCounts),
     contentHealth: Object.freeze({ stationCount: whole(health.stationCount), questionCount: whole(health.questionCount), criterionCount: whole(health.criterionCount), invalidStationCount: whole(health.invalidStationCount) }),
     ai: Object.freeze({ provider: provider(ai.provider), model: text(ai.model, 200), isConfigured: ai.isConfigured }),
-    usage: Object.freeze({ callCount: whole(usage.callCount), knownCost: money(usage.knownCost), unknownCostCount: whole(usage.unknownCostCount), failureCount: whole(usage.failureCount) }),
+    usage: Object.freeze({ periodStart: timestamp(usage.periodStart), periodEnd: timestamp(usage.periodEnd), callCount: whole(usage.callCount), knownCost: money(usage.knownCost), unknownCostCount: whole(usage.unknownCostCount), failureCount: whole(usage.failureCount) }),
   });
 }
 
@@ -397,10 +397,11 @@ export function createAdminMmiApi(client: AdminMmiRpcClient) {
     listStations: (filters: AdminMmiStationFilters) => {
       if (!validPage(filters)) return Promise.reject(new AdminMmiApiError('invalid_request'));
       if (filters.status !== undefined && !statuses.has(filters.status)) return Promise.reject(new AdminMmiApiError('invalid_request'));
-      let query: string | undefined; let university: string | undefined;
-      try { query = inputText(filters.query, 200, true); university = inputText(filters.university, 100, true)?.toLowerCase(); }
+      let query: string | undefined; let university: string | undefined; let category: string | undefined; let topic: string | undefined;
+      try { query = inputText(filters.query, 200, true); university = inputText(filters.university, 100, true)?.toLowerCase(); category = inputText(filters.category, 100, true); topic = inputText(filters.topic, 100, true); }
       catch (error) { return Promise.reject(error); }
-      return request('list_admin_mmi_stations', { p_query: query ?? null, p_status: filters.status ?? null, p_university: university ?? null, p_limit: filters.limit, p_offset: filters.offset }, parseStationList);
+      if (filters.difficulty !== undefined && !difficulties.has(filters.difficulty)) return Promise.reject(new AdminMmiApiError('invalid_request'));
+      return request('list_admin_mmi_stations_v2', { p_filters: { query: query ?? null, status: filters.status ?? null, university: university ?? null, category: category ?? null, topic: topic ?? null, difficulty: filters.difficulty ?? null, limit: filters.limit, offset: filters.offset } }, parseStationList);
     },
     getStation: (stationId: string) => SOURCE_ID_PATTERN.test(stationId)
       ? request('get_admin_mmi_station', { p_station_id: stationId }, parseStationDetail)

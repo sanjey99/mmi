@@ -152,4 +152,26 @@ describe('admin MMI station validation', () => {
         code: 'duplicate_criterion_id',
       }));
   });
+
+  it('handles cleared question and criterion text as empty strings without crashing', () => {
+    const base = stationDraft();
+    const cleared = {
+      ...base,
+      questions: base.questions.map((question, index) => index === 0
+        ? {
+            ...question,
+            questionText: null,
+            criteria: question.criteria.map((criterion, criterionIndex) => criterionIndex === 0
+              ? { ...criterion, bulletText: null }
+              : criterion),
+          }
+        : question),
+    } as unknown as AdminMmiStationDraft;
+
+    expect(() => validateStationDraft(cleared, 'publish')).not.toThrow();
+    expect(validateStationDraft(cleared, 'publish').issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'questions.0.questionText', code: 'required' }),
+      expect.objectContaining({ path: 'questions.0.criteria.0.bulletText', code: 'required' }),
+    ]));
+  });
 });

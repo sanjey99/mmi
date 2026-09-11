@@ -11,8 +11,7 @@ export interface ManageAiKeyRepository {
   authenticate: (authHeader: string) => Promise<RepositoryResult<{ userId?: string }>>;
   getAdminStatus: (userId: string) => Promise<RepositoryResult<{ isAdmin?: boolean }>>;
   getKeyConfigured: () => Promise<RepositoryResult<{ configured?: boolean }>>;
-  replaceKey: (apiKey: string) => Promise<{ error?: unknown }>;
-  clearKey: () => Promise<{ error?: unknown }>;
+  mutateKey: (adminUserId: string, action: 'ai_key_replaced' | 'ai_key_cleared', apiKey: string | null) => Promise<RepositoryResult<{ configured?: boolean }>>;
 }
 
 export function createManageAiKeyHandler(
@@ -60,7 +59,7 @@ export function createManageAiKeyHandler(
       const confirmed = body && typeof body === 'object'
         && (body as { confirm?: unknown }).confirm === true;
       if (!confirmed) return http.json({ error: 'Explicit confirmation is required' }, 400);
-      const result = await repository.clearKey();
+      const result = await repository.mutateKey(authentication.userId, 'ai_key_cleared', null);
       if (result.error) return http.json({ error: 'Unable to clear the AI key' }, 500);
       return http.json({ configured: false });
     }
@@ -71,9 +70,8 @@ export function createManageAiKeyHandler(
     }
 
     const apiKey = (body as { apiKey: string }).apiKey.trim();
-    const result = await repository.replaceKey(apiKey);
+    const result = await repository.mutateKey(authentication.userId, 'ai_key_replaced', apiKey);
     if (result.error) return http.json({ error: 'Unable to save the AI key' }, 500);
-
-    return http.json({ configured: true });
+    return http.json({ configured: Boolean(result.configured) });
   };
 }

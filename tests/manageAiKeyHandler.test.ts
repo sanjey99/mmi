@@ -11,8 +11,7 @@ function repository(overrides: Partial<ManageAiKeyRepository> = {}): ManageAiKey
     authenticate: vi.fn(async () => ({ userId: 'admin-1' })),
     getAdminStatus: vi.fn(async () => ({ isAdmin: true })),
     getKeyConfigured: vi.fn(async () => ({ configured: true })),
-    replaceKey: vi.fn(async () => ({})),
-    clearKey: vi.fn(async () => ({})),
+    mutateKey: vi.fn(async (_adminUserId, action) => ({ configured: action === 'ai_key_replaced' })),
     ...overrides,
   };
 }
@@ -94,7 +93,7 @@ describe('manage-ai-key handler', () => {
     );
 
     expect(response.status).toBe(403);
-    expect(repo.replaceKey).not.toHaveBeenCalled();
+    expect(repo.mutateKey).not.toHaveBeenCalled();
   });
 
   it('returns a secret-safe error when admin verification fails', async () => {
@@ -124,7 +123,7 @@ describe('manage-ai-key handler', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repo.replaceKey).toHaveBeenCalledWith('private-provider-key');
+    expect(repo.mutateKey).toHaveBeenCalledWith('admin-1', 'ai_key_replaced', 'private-provider-key');
     expect(JSON.stringify(await response.json())).not.toContain(submitted.trim());
   });
 
@@ -133,7 +132,7 @@ describe('manage-ai-key handler', () => {
     const response = await createManageAiKeyHandler(repo, allowedOrigin)(request('{}'));
 
     expect(response.status).toBe(400);
-    expect(repo.replaceKey).not.toHaveBeenCalled();
+    expect(repo.mutateKey).not.toHaveBeenCalled();
   });
 
   it('clears a key only after explicit confirmation and returns only its configured state', async () => {
@@ -142,11 +141,11 @@ describe('manage-ai-key handler', () => {
 
     const rejected = await handler(request(JSON.stringify({ action: 'clear' })));
     expect(rejected.status).toBe(400);
-    expect(repo.clearKey).not.toHaveBeenCalled();
+    expect(repo.mutateKey).not.toHaveBeenCalled();
 
     const accepted = await handler(request(JSON.stringify({ action: 'clear', confirm: true })));
     expect(accepted.status).toBe(200);
-    expect(repo.clearKey).toHaveBeenCalledOnce();
+    expect(repo.mutateKey).toHaveBeenCalledWith('admin-1', 'ai_key_cleared', null);
     expect(await accepted.json()).toEqual({ configured: false });
   });
 
@@ -160,7 +159,7 @@ describe('manage-ai-key handler', () => {
     expect(await statusResponse.json()).toEqual({ error: 'Unable to load AI key status' });
 
     const writeResponse = await createManageAiKeyHandler(
-      repository({ replaceKey: vi.fn(async () => ({ error: true })) }),
+      repository({ mutateKey: vi.fn(async () => ({ error: true })) }),
       allowedOrigin,
     )(request(JSON.stringify({ apiKey: submittedValue })));
     expect(writeResponse.status).toBe(500);

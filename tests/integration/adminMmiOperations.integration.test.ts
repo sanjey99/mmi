@@ -167,6 +167,11 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicate
     assert.equal(published.error, null, published.error?.message);
     assert.equal((published.data as { version: number }).version, 3);
     assert.equal(sql(`SELECT status || '|' || content_version FROM public.mmi_stations WHERE station_id='${stationId}';`), 'published|3');
+    const publishedEdit = await admin.rpc('save_admin_mmi_station', {
+      p_station: { ...completeStationPayload(stationId, 3), topic: 'Must unpublish first' },
+      p_expected_version: 3,
+    });
+    assert.equal(publishedEdit.error?.code, '22023');
     assert.ok((await admin.rpc('delete_admin_mmi_station', { p_station_id: stationId })).error);
   });
 
@@ -199,7 +204,11 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicate
     assert.equal(panel.error, null, panel.error?.message);
     const bypass = await admin.from('app_config').update({ value: 'unaudited-bypass' }).eq('key', 'ai_provider');
     assert.equal(bypass.error?.code, '42501');
-    const edgeKeyWrite = await service.from('app_config').upsert({ key: 'ai_api_key', value: 'local-secret-must-survive' }, { onConflict: 'key' });
+    const edgeKeyWrite = await service.rpc('mutate_admin_mmi_key_from_edge', {
+      p_admin_user_id: adminId,
+      p_action: 'ai_key_replaced',
+      p_api_key: 'local-secret-must-survive',
+    });
     assert.equal(edgeKeyWrite.error, null, edgeKeyWrite.error?.message);
     const auditsBefore = Number(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config';"));
     const saved = await admin.rpc('save_admin_ai_config', { p_provider: 'anthropic', p_model: 'local-model-2', p_base_url: null, p_input_rate: 2, p_cached_input_rate: 0.2, p_output_rate: 10 });
@@ -211,6 +220,20 @@ DELETE FROM public.mmi_stations WHERE station_id IN ('${stationId}','${duplicate
     assert.equal(sql("SELECT value FROM public.app_config WHERE key='ai_api_key';"), 'local-secret-must-survive');
     assert.equal(Number(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config';")), auditsBefore + 1);
     assert.equal(sql("SELECT count(*) FROM public.mmi_admin_change_audit WHERE target_type='ai_config' AND metadata::text ~* 'secret|key';"), '0');
+  });
+
+  it('audits an attributed confirmed service-only key clear without retaining a key value', async () => {
+    const before = Number(sql(`SELECT count(*) FROM public.mmi_admin_change_audit WHERE admin_user_id='${adminId}' AND action='ai_key_cleared';`));
+    const cleared = await service.rpc('mutate_admin_mmi_key_from_edge', {
+      p_admin_user_id: adminId,
+      p_action: 'ai_key_cleared',
+      p_api_key: null,
+    });
+    assert.equal(cleared.error, null, cleared.error?.message);
+    assert.deepEqual(cleared.data, { configured: false });
+    assert.equal(sql("SELECT value IS NULL FROM public.app_config WHERE key='ai_api_key';"), 't');
+    assert.equal(Number(sql(`SELECT count(*) FROM public.mmi_admin_change_audit WHERE admin_user_id='${adminId}' AND action='ai_key_cleared';`)), before + 1);
+    assert.equal(sql(`SELECT count(*) FROM public.mmi_admin_change_audit WHERE admin_user_id='${adminId}' AND action LIKE 'ai_key_%' AND metadata::text ~* 'local-secret|api[_ -]?key';`), '0');
   });
 
   it('returns allowlisted usage and structured assessment data and audits every detail view first', async () => {

@@ -24,7 +24,7 @@ const dashboard = {
   universityCounts: [{ tag: 'all', count: 115 }, { tag: 'oxford', count: 0 }],
   contentHealth: { stationCount: 158, questionCount: 790, criterionCount: 3160, invalidStationCount: 3 },
   ai: { provider: 'anthropic', model: 'claude-test', isConfigured: true },
-  usage: { callCount: 20, knownCost: '1.25000000', unknownCostCount: 2, failureCount: 1 },
+  usage: { periodStart: '2026-09-01T00:00:00.000Z', periodEnd: '2026-10-01T00:00:00.000Z', callCount: 20, knownCost: '1.25000000', unknownCostCount: 2, failureCount: 1 },
 };
 const stationList = {
   items: [{ stationId: 'MMI_001', category: 'ethics', topic: 'Safety', difficulty: 'intermediate', universityTags: ['all'], prepTimeSec: 60, status: 'published', contentVersion: 2, questionCount: 5, criterionCount: 5, isComplete: true, updatedAt: timestamp }],
@@ -76,7 +76,7 @@ describe('admin MMI API', () => {
     const api = createAdminMmiApi(client);
 
     await expect(api.getDashboard()).resolves.toEqual(dashboard);
-    await expect(api.listStations({ query: 'safe', status: 'published', university: 'oxford', limit: 20, offset: 0 })).resolves.toEqual(stationList);
+    await expect(api.listStations({ query: 'safe', status: 'published', university: 'oxford', category: 'ethics', topic: 'safety', difficulty: 'intermediate', limit: 20, offset: 0 })).resolves.toEqual(stationList);
     await expect(api.getStation('MMI_001')).resolves.toEqual(stationDetail);
     await expect(api.listPanels({ limit: 20, offset: 0 })).resolves.toEqual(panelList);
     await expect(api.getAiConfig()).resolves.toEqual(aiConfig);
@@ -85,13 +85,16 @@ describe('admin MMI API', () => {
     await expect(api.getAssessment(responseId, 'quality_audit')).resolves.toEqual(assessment);
 
     expect(client.rpc.mock.calls.map(([name]) => name)).toEqual([
-      'get_admin_mmi_dashboard', 'list_admin_mmi_stations', 'get_admin_mmi_station',
+      'get_admin_mmi_dashboard', 'list_admin_mmi_stations_v2', 'get_admin_mmi_station',
       'list_admin_mmi_panels', 'get_admin_ai_config', 'get_admin_mmi_usage',
       'list_admin_mmi_assessments', 'get_admin_mmi_assessment',
     ]);
     expect(client.rpc).toHaveBeenLastCalledWith('get_admin_mmi_assessment', {
       p_response_id: responseId,
       p_purpose: 'quality_audit',
+    });
+    expect(client.rpc).toHaveBeenNthCalledWith(2, 'list_admin_mmi_stations_v2', {
+      p_filters: expect.objectContaining({ category: 'ethics', topic: 'safety', difficulty: 'intermediate' }),
     });
   });
 

@@ -24,9 +24,13 @@ function issue(
   issues.push(Object.freeze({ path, code, message }));
 }
 
-function normalizeNullable(value: string | null): string | null {
-  if (value === null) return null;
-  const normalized = value.trim();
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeNullable(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = normalizeText(value);
   return normalized.length === 0 ? null : normalized;
 }
 
@@ -64,25 +68,25 @@ function normalizeStation(input: AdminMmiStationDraft): AdminMmiStationDraft {
   const normalizedTags = input.universityTags.map((tag) => tag.trim().toLowerCase());
   const uniqueTags = normalizedTags.filter((tag, index) => tag.length > 0 && normalizedTags.indexOf(tag) === index);
   return freezeStation({
-    stationId: input.stationId.trim(),
+    stationId: normalizeText(input.stationId),
     expectedVersion: input.expectedVersion,
-    category: input.category.trim(),
-    topic: input.topic.trim(),
+    category: normalizeText(input.category),
+    topic: normalizeText(input.topic),
     difficulty: input.difficulty,
     universityTags: uniqueTags,
     prepTimeSec: input.prepTimeSec,
     imageUrl: normalizeNullable(input.imageUrl),
-    scenarioText: input.scenarioText.trim(),
+    scenarioText: normalizeText(input.scenarioText),
     questions: input.questions.map((question) => ({
-      subQuestionId: question.subQuestionId.trim(),
+      subQuestionId: normalizeText(question.subQuestionId),
       order: question.order,
-      questionText: question.questionText.trim(),
+      questionText: normalizeText(question.questionText),
       timeLimitSec: question.timeLimitSec,
       modelAnswerCached: normalizeNullable(question.modelAnswerCached),
       criteria: question.criteria.map((criterion) => ({
-        criterionId: criterion.criterionId.trim(),
+        criterionId: normalizeText(criterion.criterionId),
         order: criterion.order,
-        bulletText: criterion.bulletText.trim(),
+        bulletText: normalizeText(criterion.bulletText),
         domain: normalizeNullable(criterion.domain),
         sourceWeight: criterion.sourceWeight,
       })),
