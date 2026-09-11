@@ -180,8 +180,8 @@ function providerTokenUsage(provider: string, payload: unknown): AiTokenUsage | 
   }
   const promptTokens = record.prompt_tokens;
   const details = record.prompt_tokens_details;
-  if (details !== undefined && (details === null || typeof details !== 'object' || Array.isArray(details))) return null;
-  const cachedInputTokens = details === undefined
+  if (details !== undefined && details !== null && (typeof details !== 'object' || Array.isArray(details))) return null;
+  const cachedInputTokens = details === undefined || details === null
     ? 0
     : (details as Record<string, unknown>).cached_tokens ?? 0;
   const outputTokens = record.completion_tokens;
