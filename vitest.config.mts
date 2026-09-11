@@ -31,6 +31,7 @@ export default defineConfig({
       'tests/candidateMmiImportPolicy.test.ts',
       'tests/candidateMmiApi.test.ts',
       'tests/candidateMmiScoring.test.ts',
+      'tests/candidateMmiRateBounds.test.ts',
       'tests/candidateMmiScoringSummary.test.ts',
       'tests/candidateMmiSpeech.test.ts',
       'tests/candidateMmiUiContract.test.ts',
@@ -65,6 +66,7 @@ export default defineConfig({
         'src/features/candidateMmi/scoringApi.ts',
         'src/features/candidateMmi/scoringSummary.ts',
         'supabase/functions/score-candidate-mmi-response/handler.ts',
+        'supabase/functions/score-candidate-mmi-response/rates.ts',
         'src/features/cofounderFeedback/api.ts',
       ],
       exclude: [

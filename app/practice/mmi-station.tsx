@@ -150,14 +150,25 @@ function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
     <View style={styles.feedbackCard}>
       <Text style={styles.label}>Response {item.promptOrder}</Text>
       {assessment ? (
-        <>
-          <Text style={styles.score}>Overall score · {assessment.overallPct}%</Text>
-          {assessment.strengths.map((strength) => (
-            <Text key={strength} style={styles.feedbackText}>• {strength}</Text>
-          ))}
-          <Text style={styles.feedbackHeading}>Improvement tip</Text>
-          <Text style={styles.feedbackText}>{assessment.improvementTip}</Text>
-        </>
+        assessment.schemaVersion === 3 ? (
+          <>
+            <Text style={styles.score}>Question score · {assessment.questionScorePct}%</Text>
+            {assessment.criteria.map((criterion) => (
+              <Text key={criterion.criterionId} style={styles.feedbackText}>
+                {criterion.achieved ? 'Met' : 'Not met'} · {criterion.bulletText}
+              </Text>
+            ))}
+          </>
+        ) : (
+          <>
+            <Text style={styles.score}>Overall score · {assessment.overallPct}%</Text>
+            {assessment.strengths.map((strength) => (
+              <Text key={strength} style={styles.feedbackText}>• {strength}</Text>
+            ))}
+            <Text style={styles.feedbackHeading}>Improvement tip</Text>
+            <Text style={styles.feedbackText}>{assessment.improvementTip}</Text>
+          </>
+        )
       ) : (
         <Text style={styles.feedbackText}>
           {item.status === 'no_response'

@@ -83,6 +83,7 @@ export type CandidateMmiDimension = (typeof MMI_DIMENSIONS)[number];
 export type CandidateMmiPublicDimensionResult =
   MmiAssessment['dimensions'][CandidateMmiDimension];
 export type CandidateMmiPublicAssessment = Readonly<{
+  schemaVersion?: never;
   dimensions: Readonly<
     Record<CandidateMmiDimension, CandidateMmiPublicDimensionResult>
   >;
@@ -92,10 +93,26 @@ export type CandidateMmiPublicAssessment = Readonly<{
   improvementTip: string;
   rubricVersion: number;
 }>;
+export type CandidateMmiRubricCriterion = Readonly<{
+  criterionId: string;
+  achieved: boolean;
+  weightPct: number;
+  bulletText: string;
+  domain: string | null;
+}>;
+export type CandidateMmiRubricAssessment = Readonly<{
+  schemaVersion: 3;
+  questionScorePct: number;
+  criteria: readonly CandidateMmiRubricCriterion[];
+}>;
+export type CandidateMmiFeedbackAssessment =
+  | CandidateMmiPublicAssessment
+  | CandidateMmiRubricAssessment;
 export type CandidateMmiFeedback = Readonly<{
   promptOrder: CandidateMmiPromptOrder;
   status: CandidateMmiScoringStatus;
-  assessment: CandidateMmiPublicAssessment | null;
+  legacy: boolean;
+  assessment: CandidateMmiFeedbackAssessment | null;
 }>;
 type CandidateMmiRpcResult = Readonly<{
   data: unknown;
@@ -156,7 +173,9 @@ const finalizationKeys = [
   'scoringStatus',
   'sessionId',
 ] as const;
-const feedbackKeys = ['assessment', 'promptOrder', 'status'] as const;
+const feedbackKeys = ['assessment', 'legacy', 'promptOrder', 'status'] as const;
+const rubricAssessmentKeys = ['criteria', 'questionScorePct', 'schemaVersion'] as const;
+const rubricCriterionKeys = ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct'] as const;
 const assessmentKeys = [
   'dimensions',
   'improvementTip',
@@ -461,6 +480,33 @@ function parseAssessment(value: unknown): CandidateMmiPublicAssessment {
     rubricVersion: result.rubricVersion,
   });
 }
+function parseRubricAssessment(value: unknown): CandidateMmiRubricAssessment {
+  const result = record(value);
+  if (
+    result === null || !hasExactKeys(result, rubricAssessmentKeys) ||
+    result.schemaVersion !== 3 || typeof result.questionScorePct !== 'number' ||
+    !Number.isFinite(result.questionScorePct) || result.questionScorePct < 0 ||
+    result.questionScorePct > 100 || !Array.isArray(result.criteria) ||
+    result.criteria.length < 1 || result.criteria.length > 20
+  ) return invalidResponse();
+  const criteria = result.criteria.map((value) => {
+    const criterion = record(value);
+    if (
+      criterion === null || !hasExactKeys(criterion, rubricCriterionKeys) ||
+      !isPublicText(criterion.criterionId) || typeof criterion.achieved !== 'boolean' ||
+      typeof criterion.weightPct !== 'number' || !Number.isFinite(criterion.weightPct) ||
+      criterion.weightPct < 0 || criterion.weightPct > 100 ||
+      !isPublicText(criterion.bulletText) ||
+      (criterion.domain !== null && !isPublicText(criterion.domain))
+    ) return invalidResponse();
+    return Object.freeze({
+      criterionId: criterion.criterionId, achieved: criterion.achieved,
+      weightPct: criterion.weightPct, bulletText: criterion.bulletText,
+      domain: criterion.domain,
+    });
+  });
+  return Object.freeze({ schemaVersion: 3, questionScorePct: result.questionScorePct, criteria: Object.freeze(criteria) });
+}
 function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
   if (!Array.isArray(value) || value.length !== 5) return invalidResponse();
   return Object.freeze(
@@ -472,14 +518,19 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
         !hasExactKeys(row, feedbackKeys) ||
         row.promptOrder !== promptOrder ||
         !isScoringStatus(row.status) ||
-        (row.status === 'scored') !== (row.assessment !== null)
+        typeof row.legacy !== 'boolean' ||
+        (row.status === 'scored') !== (row.assessment !== null) ||
+        (row.status !== 'scored' && row.legacy)
       )
         return invalidResponse();
       return Object.freeze({
         promptOrder,
         status: row.status,
+        legacy: row.legacy,
         assessment:
-          row.status === 'scored' ? parseAssessment(row.assessment) : null,
+          row.status === 'scored'
+            ? row.legacy ? parseAssessment(row.assessment) : parseRubricAssessment(row.assessment)
+            : null,
       });
     }),
   );

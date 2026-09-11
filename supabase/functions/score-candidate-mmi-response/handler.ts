@@ -13,6 +13,7 @@ import {
   type RubricCriterionSnapshot,
 } from '../_shared/rubricAssessment.ts';
 import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
+import { isValidEstimatedUsdCost } from './rates.ts';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_TRANSCRIPT_CODE_POINTS = 12_000;
@@ -111,6 +112,9 @@ function monotonicNow(): number { return typeof performance !== 'undefined' ? pe
 function usageFor(config: AiConfig, result: AiProviderResult | null, latencyMs: number, outcome: CandidateMmiUsage['outcome']): CandidateMmiUsage {
   const usage = result?.usage ?? null;
   const estimatedCost = usage === null ? null : (usage.inputTokens * config.inputRatePerMillion + usage.cachedInputTokens * config.cachedInputRatePerMillion + usage.outputTokens * config.outputRatePerMillion) / 1_000_000;
+  if (estimatedCost !== null && !isValidEstimatedUsdCost(estimatedCost)) {
+    throw new Error('candidate_mmi_usage_cost_out_of_range');
+  }
   return Object.freeze({ provider: config.provider, model: config.model, inputTokens: usage?.inputTokens ?? null, cachedInputTokens: usage?.cachedInputTokens ?? null, outputTokens: usage?.outputTokens ?? null, inputRatePerMillion: config.inputRatePerMillion, cachedInputRatePerMillion: config.cachedInputRatePerMillion, outputRatePerMillion: config.outputRatePerMillion, currency: 'USD', estimatedCost, latencyMs: Math.max(0, Math.round(latencyMs)), outcome });
 }
 function completionSucceeded(value: unknown): boolean { const result = asRecord(value); return result !== null && hasExactKeys(result, ['status']) && result.status === 'scored'; }

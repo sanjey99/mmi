@@ -17,6 +17,7 @@ import {
   type CandidateMmiProviderFailureDiagnostic,
   type CandidateMmiScoringRepository,
 } from './handler.ts';
+import { parseUsdRate } from './rates.ts';
 
 type EdgeDeno = Readonly<{
   env: Readonly<{ get: (name: string) => string | undefined }>;
@@ -33,12 +34,6 @@ if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
 }
 
 const serviceClient = createClient(supabaseUrl, supabaseServiceRoleKey);
-
-function parseUsdRate(value: string | undefined): number | null {
-  if (value === undefined || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
 
 const repository: CandidateMmiScoringRepository = {
   async authenticate(authorization) {

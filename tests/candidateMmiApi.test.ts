@@ -256,6 +256,7 @@ describe('candidate MMI API transcript boundary', () => {
     const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
       promptOrder,
       status: promptOrder === 1 ? 'scored' : 'no_response',
+      legacy: promptOrder === 1,
       assessment: promptOrder === 1 ? assessment : null,
     }));
     await expect(
@@ -318,6 +319,7 @@ describe('candidate MMI API transcript boundary', () => {
     const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
       promptOrder,
       status: promptOrder === 1 ? 'scored' : 'no_response',
+      legacy: promptOrder === 1,
       assessment: promptOrder === 1 ? decimalAssessment : null,
     }));
     await expect(
@@ -325,6 +327,19 @@ describe('candidate MMI API transcript boundary', () => {
         rpcClient([{ data: feedback, error: null }]),
       ).feedback(sessionId),
     ).resolves.toEqual(feedback);
+  });
+
+  it('accepts only a hydrated schema-v3 assessment when legacy is false', async () => {
+    const rubric = { schemaVersion: 3, questionScorePct: 50, criteria: [
+      { criterionId: 'criterion-1', achieved: true, weightPct: 50, bulletText: 'Act safely.', domain: 'ethics' },
+      { criterionId: 'criterion-2', achieved: false, weightPct: 50, bulletText: 'Explain clearly.', domain: null },
+    ] };
+    const feedback = [1, 2, 3, 4, 5].map((promptOrder) => ({
+      promptOrder, status: promptOrder === 1 ? 'scored' : 'no_response',
+      legacy: false, assessment: promptOrder === 1 ? rubric : null,
+    }));
+    await expect(createCandidateMmiApi(rpcClient([{ data: feedback, error: null }])).feedback(sessionId)).resolves.toEqual(feedback);
+    await expect(createCandidateMmiApi(rpcClient([{ data: [{ ...feedback[0], legacy: true }, ...feedback.slice(1)], error: null }])).feedback(sessionId)).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 
   it('rejects assessment values the public contract forbids', async () => {
