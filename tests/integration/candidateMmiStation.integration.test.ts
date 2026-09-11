@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -31,7 +32,7 @@ const normalizedPayloadPaths = [
 const normalizedManifestPath = `${importDirectory}/normalized-station-manifest.json`;
 const sourceNamespace = 'med_interview_question_bank';
 const sourceManifestSha256 = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
-const normalizedManifestSha256 = 'd5410fe8b21130737b80fb02be8de024889c33065303cbafd104f332e7f31edb';
+const normalizedManifestSha256 = 'add7cf932a60e4573e3aca54c0cdecafd3c46c4421d245e2b3e71d8cbe8fa101';
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
@@ -58,14 +59,20 @@ type CandidatePayload = {
   artifact_version: number;
   source_namespace: string;
   source_manifest_sha256: string;
+  panel_questions: Array<{
+    question_id: string;
+  }>;
   stations: Array<{
     station_id: string;
     scenario_text: string;
     sub_questions: Array<{
       sub_q_id: string;
       order_num: number;
-      source_flat_id: string;
       question_text: string;
+      time_limit_sec: number;
+      marking_criteria: Array<{
+        criterion_id: string;
+      }>;
     }>;
   }>;
 };
@@ -73,6 +80,9 @@ type CandidatePayload = {
 type FinalizationProof = {
   candidateStationCount: number;
   candidateSubQuestionCount: number;
+  candidateCriterionCount: number;
+  panelQuestionCount: number;
+  stationVersionCount: number;
   validStationCount: number;
   invalidStationCount: number;
   excludedPanelQuestionCount: number;
@@ -119,6 +129,33 @@ function readNormalizedPayloads(): CandidatePayload[] {
     assert.ok(existsSync(path), `expected ignored local normalized payload: ${path}`);
     return JSON.parse(readFileSync(path, 'utf8')) as CandidatePayload;
   });
+}
+
+async function countRows(client: SupabaseClient, table: string): Promise<number> {
+  const { count, error } = await client
+    .from(table)
+    .select('*', { count: 'exact', head: true });
+  assert.equal(error, null, error?.message);
+  return count ?? 0;
+}
+
+function groupCounts(rows: readonly { sub_q_id: string }[]): number[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.sub_q_id, (counts.get(row.sub_q_id) ?? 0) + 1);
+  return [...counts.values()];
+}
+
+function setStationPublicationState(stationId: string, status: 'published' | 'archived'): void {
+  assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `UPDATE public.mmi_stations SET status = '${status}', archived_at = ${status === 'archived' ? 'clock_timestamp()' : 'NULL'} WHERE station_id = '${stationId}';`,
+  ]);
 }
 
 function assertResponseProjection(
@@ -197,6 +234,7 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
   let finalizationProof: FinalizationProof;
   let promptHashesByStation: Record<string, readonly string[]>;
   let scenarioHashesByStation: Record<string, string>;
+  let canonicalizedSourceDurationCount: number;
 
   async function deleteSession(sessionId: string): Promise<void> {
     const { error } = await service
@@ -238,6 +276,35 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
 
     const manifest = readNormalizedManifest();
     const payloads = readNormalizedPayloads();
+    canonicalizedSourceDurationCount = payloads
+      .flatMap(payload => payload.stations)
+      .flatMap(station => station.sub_questions)
+      .filter(question => question.time_limit_sec !== 120)
+      .length;
+    const malformedPayload = structuredClone(payloads[0]!);
+    malformedPayload.stations[0]!.sub_questions[0]!.marking_criteria[0]!.criterion_id = 'MMI_999_Q1_C1';
+    const countsBeforeMalformedImport = await Promise.all([
+      countRows(service, 'mmi_stations'),
+      countRows(service, 'mmi_sub_questions'),
+      countRows(service, 'mmi_marking_criteria'),
+      countRows(service, 'mmi_panel_questions'),
+    ]);
+    const firstArtifact = manifest.private_artifacts['normalized-stations-part-1.json'];
+    assert.ok(firstArtifact);
+    const { error: malformedImportError } = await service.rpc('import_normalized_mmi_station_batch', {
+      p_batch_id: 'normalized-stations-part-1',
+      p_normalized_manifest_sha256: normalizedManifestSha256,
+      p_artifact_sha256: firstArtifact.sha256,
+      p_payload: malformedPayload,
+    });
+    assert.ok(malformedImportError, 'expected orphaned criterion import rejection');
+    assert.deepEqual(await Promise.all([
+      countRows(service, 'mmi_stations'),
+      countRows(service, 'mmi_sub_questions'),
+      countRows(service, 'mmi_marking_criteria'),
+      countRows(service, 'mmi_panel_questions'),
+    ]), countsBeforeMalformedImport);
+
     for (const [index, payload] of payloads.entries()) {
       const artifactName = `normalized-stations-part-${index + 1}.json`;
       const artifact = manifest.private_artifacts[artifactName];
@@ -263,6 +330,25 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     assert.equal(error, null, error?.message);
     finalizationProof = data as FinalizationProof;
 
+    const preservedStationId = payloads[0]!.stations[0]!.station_id;
+    setStationPublicationState(preservedStationId, 'archived');
+    const { error: reimportError } = await service.rpc('import_normalized_mmi_station_batch', {
+      p_batch_id: 'normalized-stations-part-1',
+      p_normalized_manifest_sha256: normalizedManifestSha256,
+      p_artifact_sha256: firstArtifact.sha256,
+      p_payload: payloads[0],
+    });
+    assert.equal(reimportError, null, reimportError?.message);
+    const { data: preservedStation, error: preservedStationError } = await service
+      .from('mmi_stations')
+      .select('status,archived_at')
+      .eq('station_id', preservedStationId)
+      .single();
+    assert.equal(preservedStationError, null, preservedStationError?.message);
+    assert.equal(preservedStation?.status, 'archived');
+    assert.ok(preservedStation?.archived_at);
+    setStationPublicationState(preservedStationId, 'published');
+
     promptHashesByStation = Object.fromEntries(payloads.flatMap(payload => payload.stations.map(station => [
       station.station_id,
       station.sub_questions.map(question => sha256(question.question_text)),
@@ -286,16 +372,64 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     }
   });
 
-  it('imports exactly 155 stations and 775 ordered prompts', () => {
+  it('imports exact station, prompt, criterion, panel, and version counts', async () => {
     assert.deepEqual(finalizationProof, {
       candidateStationCount: 155,
       candidateSubQuestionCount: 775,
+      candidateCriterionCount: 3100,
+      panelQuestionCount: 10,
+      stationVersionCount: 155,
       validStationCount: 155,
       invalidStationCount: 0,
       excludedPanelQuestionCount: 10,
       panelSubQuestionCount: 0,
       preservedActiveFlatQuestionCount: 785,
     });
+    assert.equal(await countRows(service, 'mmi_stations'), 155);
+    assert.equal(await countRows(service, 'mmi_sub_questions'), 775);
+    assert.equal(await countRows(service, 'mmi_marking_criteria'), 3100);
+    assert.equal(await countRows(service, 'mmi_panel_questions'), 10);
+    assert.equal(await countRows(service, 'mmi_station_versions'), 155);
+    assert.equal(canonicalizedSourceDurationCount, 3);
+
+    const criterionOwners: Array<{ sub_q_id: string }> = [];
+    for (let start = 0; start < 3100; start += 1000) {
+      const { data, error } = await service
+        .from('mmi_marking_criteria')
+        .select('sub_q_id')
+        .order('sub_q_id')
+        .range(start, Math.min(start + 999, 3099));
+      assert.equal(error, null, error?.message);
+      criterionOwners.push(...(data ?? []));
+    }
+    const criterionCounts = groupCounts(criterionOwners);
+    assert.equal(criterionCounts.length, 775);
+    assert.equal(criterionCounts.every(count => count === 4), true);
+
+    const { data: version, error: versionError } = await service
+      .from('mmi_station_versions')
+      .select('version,content_snapshot')
+      .limit(1)
+      .single();
+    assert.equal(versionError, null, versionError?.message);
+    assert.equal(version?.version, 1);
+    const snapshot = version?.content_snapshot as Record<string, unknown>;
+    assert.deepEqual(Object.keys(snapshot).sort(), [
+      'category',
+      'contentVersion',
+      'difficulty',
+      'imageUrl',
+      'prepTimeSec',
+      'questions',
+      'scenarioText',
+      'stationId',
+      'topic',
+      'universityTags',
+    ].sort());
+    const snapshotQuestions = snapshot.questions as Array<{ criteria: unknown[] }>;
+    assert.equal(snapshotQuestions.length, 5);
+    assert.equal(snapshotQuestions.every(question => question.criteria.length === 4), true);
+    assert.equal('panelNotes' in snapshot, false);
     assert.equal(Object.keys(promptHashesByStation).length, 155);
     assert.equal(Object.values(promptHashesByStation).every(prompts => prompts.length === 5), true);
   });
@@ -590,6 +724,9 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
     for (const table of [
       'mmi_stations',
       'mmi_sub_questions',
+      'mmi_marking_criteria',
+      'mmi_panel_questions',
+      'mmi_station_versions',
       'candidate_mmi_station_sessions',
       'candidate_mmi_station_prompt_snapshots',
       'candidate_mmi_station_response_drafts',
@@ -599,6 +736,13 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
       const { data, error } = await owner.client.from(table).select('*').limit(1);
       assert.equal(data, null, `expected no direct rows from ${table}`);
       assert.equal(error?.code, '42501', `expected direct access denial for ${table}`);
+    }
+
+    const anonymous = createClient(url!, anonKey!, { auth: { persistSession: false } });
+    for (const table of ['mmi_marking_criteria', 'mmi_panel_questions', 'mmi_station_versions']) {
+      const { data, error } = await anonymous.from(table).select('*').limit(1);
+      assert.equal(data, null, `expected no anonymous rows from ${table}`);
+      assert.equal(error?.code, '42501', `expected anonymous access denial for ${table}`);
     }
   });
 });

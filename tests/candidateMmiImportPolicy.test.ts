@@ -15,6 +15,10 @@ const stationMigrationPath = path.resolve(
   process.cwd(),
   'supabase/migrations/20260826000000_normalized_mmi_station_orchestration.sql',
 );
+const rubricContentMigrationPath = path.resolve(
+  process.cwd(),
+  'supabase/migrations/20260910000000_mmi_rubric_content_import.sql',
+);
 const expectedSourceHash = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 const expectedCanonicalPayloadFingerprints = Object.freeze({
   'normalized-stations-part-1.json': 'b44d9ac27997340e7f6bef1f3c9bfa9cdd909186b70c29fba67f4a5438b66725',
@@ -368,6 +372,66 @@ else:
         'Synthetic response prompt five.',
       ],
     });
+  });
+
+  it('adds private versioned rubric content and a strict transactional v2 importer', async () => {
+    const migrationExists = await exists(rubricContentMigrationPath);
+
+    expect(migrationExists).toBe(true);
+    if (!migrationExists) return;
+
+    const sql = await readFile(rubricContentMigrationPath, 'utf8');
+    for (const table of ['mmi_marking_criteria', 'mmi_panel_questions', 'mmi_station_versions']) {
+      expect(sql).toMatch(new RegExp(`create\\s+table\\s+public\\.${table}\\b`, 'i'));
+      expect(sql).toMatch(new RegExp(`alter\\s+table\\s+public\\.${table}\\s+enable\\s+row\\s+level\\s+security`, 'i'));
+      expect(sql).toMatch(new RegExp(`revoke\\s+all(?:\\s+privileges)?\\s+on\\s+table\\s+public\\.${table}\\s+from\\s+public\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*service_role`, 'i'));
+    }
+    expect(sql).toMatch(/foreach\s+v_role\s+in\s+array\s+array\[\s*'anon'\s*,\s*'authenticated'\s*\]/i);
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) {
+      expect(sql).toMatch(new RegExp(`has_table_privilege\\(v_role,\\s*v_table,\\s*'${privilege}'\\)`, 'i'));
+    }
+    for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) {
+      expect(sql).toMatch(new RegExp(`has_any_column_privilege\\(v_role,\\s*v_table,\\s*'${privilege}'\\)`, 'i'));
+    }
+
+    expect(sql).toMatch(/criterion_id\s+text\s+primary\s+key/i);
+    expect(sql).toMatch(/sub_q_id\s+text\s+not\s+null\s+references\s+public\.mmi_sub_questions\s*\(\s*sub_q_id\s*\)\s+on\s+delete\s+cascade/i);
+    expect(sql).toMatch(/unique\s*\(\s*sub_q_id\s*,\s*order_num\s*\)/i);
+    expect(sql).toMatch(/bullet_text\s+text\s+not\s+null[\s\S]*?between\s+1\s+and\s+2000/i);
+    expect(sql).toMatch(/source_weight\s+numeric\s*\(\s*8\s*,\s*3\s*\)\s+not\s+null[\s\S]*?source_weight\s*>\s*0/i);
+    expect(sql).toMatch(/primary\s+key\s*\(\s*station_id\s*,\s*version\s*\)/i);
+    expect(sql).toMatch(/add\s+column\s+content_version\s+integer\s+not\s+null\s+default\s+1/i);
+    expect(sql).toMatch(/add\s+column\s+archived_at\s+timestamptz/i);
+    expect(sql).toMatch(/check\s*\(\s*status\s+in\s*\(\s*'draft'\s*,\s*'published'\s*,\s*'archived'\s*\)\s*\)/i);
+
+    expect(sql).toMatch(/create\s+or\s+replace\s+function\s+public\.import_normalized_mmi_station_batch/i);
+    expect(sql).toMatch(/create\s+or\s+replace\s+function\s+public\.finalize_normalized_mmi_station_import/i);
+    expect(sql).toMatch(/p_payload\s*-\s*array\s*\[\s*'artifact_version'\s*,\s*'source_namespace'\s*,\s*'source_manifest_sha256'\s*,\s*'stations'\s*,\s*'panel_questions'\s*\]\s*<>\s*'\{\}'::jsonb/i);
+    expect(sql).toMatch(/v_station\s*-\s*array\s*\[\s*'station_id'[\s\S]*?'sub_questions'\s*\]\s*<>\s*'\{\}'::jsonb/i);
+    expect(sql).toMatch(/v_question\s*-\s*array\s*\[\s*'sub_q_id'[\s\S]*?'marking_criteria'\s*\]\s*<>\s*'\{\}'::jsonb/i);
+    expect(sql).toMatch(/v_criterion\s*-\s*array\s*\[\s*'criterion_id'\s*,\s*'order_num'\s*,\s*'bullet_text'\s*,\s*'source_weight'\s*,\s*'domain'\s*\]\s*<>\s*'\{\}'::jsonb/i);
+    expect(sql).toMatch(/v_panel\s*-\s*array\s*\[\s*'question_id'[\s\S]*?'panel_notes'\s*\]\s*<>\s*'\{\}'::jsonb/i);
+    expect(sql).toMatch(/jsonb_array_length\s*\(\s*v_station\s*->\s*'sub_questions'\s*\)\s*<>\s*5/i);
+    expect(sql).toMatch(/jsonb_array_length\s*\(\s*v_question\s*->\s*'marking_criteria'\s*\)\s*<>\s*4/i);
+    expect(sql).toMatch(/length\s*\(\s*btrim\s*\(\s*v_criterion\s*->>\s*'bullet_text'\s*\)\s*\)\s+not\s+between\s+1\s+and\s+2000/i);
+    expect(sql).toMatch(/v_criterion_id\s+is\s+distinct\s+from\s+v_sub_q_id\s*\|\|\s*'_C'/i);
+
+    const stationInsert = sql.search(/insert\s+into\s+public\.mmi_stations/i);
+    const questionInsert = sql.search(/insert\s+into\s+public\.mmi_sub_questions/i);
+    const criterionInsert = sql.search(/insert\s+into\s+public\.mmi_marking_criteria/i);
+    const panelInsert = sql.search(/insert\s+into\s+public\.mmi_panel_questions/i);
+    expect(stationInsert).toBeGreaterThanOrEqual(0);
+    expect(questionInsert).toBeGreaterThan(stationInsert);
+    expect(criterionInsert).toBeGreaterThan(questionInsert);
+    expect(panelInsert).toBeGreaterThan(criterionInsert);
+
+    const postcondition = sql.search(/v_station_count\s*<>\s*155[\s\S]*?v_sub_question_count\s*<>\s*775[\s\S]*?v_criterion_count\s*<>\s*3100[\s\S]*?v_panel_count\s*<>\s*10/i);
+    const snapshotInsert = sql.search(/insert\s+into\s+public\.mmi_station_versions/i);
+    expect(postcondition).toBeGreaterThanOrEqual(0);
+    expect(snapshotInsert).toBeGreaterThan(postcondition);
+    expect(sql).toMatch(/having\s+count\s*\(\s*c\.criterion_id\s*\)\s*<>\s*4/i);
+    expect(sql).toMatch(/jsonb_agg\s*\([\s\S]*?order\s+by\s+(?:q\.)?order_num/i);
+    expect(sql).toMatch(/jsonb_agg\s*\([\s\S]*?order\s+by\s+(?:c\.)?order_num/i);
   });
 
   it('defines an additive, private, service-imported candidate station migration with current-phase-only RPCs', async () => {
