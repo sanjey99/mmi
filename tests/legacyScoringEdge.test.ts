@@ -49,6 +49,11 @@ describe('server-owned legacy scoring edge contract', () => {
     expect(edgeSource).not.toMatch(/console\.error\([^)]*error/);
   });
 
+  it('parses provider content while deliberately retaining no token usage in legacy scoring', () => {
+    expect(edgeSource).toContain('parseLegacyScoreResponse(providerResult.content)');
+    expect(edgeSource).not.toMatch(/providerResult\.usage/);
+  });
+
   it('removes direct answer, score, session-finalisation, and streak writes from the client store', () => {
     expect(storeSource).not.toMatch(/from\('answers'\)[\s\S]{0,180}\.insert\(/);
     expect(storeSource).not.toMatch(/from\('scores'\)[\s\S]{0,180}\.insert\(/);

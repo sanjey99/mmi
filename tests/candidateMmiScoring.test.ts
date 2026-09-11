@@ -70,6 +70,9 @@ const providerConfig: AiConfig = Object.freeze({
   model: 'synthetic-model',
   apiKey: ['synthetic', 'test', 'value'].join('-'),
   baseUrl: null,
+  inputRatePerMillion: 0,
+  cachedInputRatePerMillion: 0,
+  outputRatePerMillion: 0,
 });
 
 const claimed = Object.freeze({

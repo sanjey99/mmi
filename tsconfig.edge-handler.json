@@ -10,6 +10,8 @@
     "target": "ES2022"
   },
   "include": [
+    "supabase/functions/_shared/rubricAssessment.ts",
+    "supabase/functions/score-answer/index.ts",
     "supabase/functions/manage-ai-key/handler.ts",
     "supabase/functions/score-candidate-mmi-response/handler.ts",
     "tests/manageAiKeyHandler.test.ts",

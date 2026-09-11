@@ -156,7 +156,10 @@ describe('callConfiguredProvider', () => {
     await expect(callConfiguredProvider(
       { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: 'https://ignored.example.test' },
       { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
-    )).resolves.toBe('provider response');
+    )).resolves.toEqual({
+      content: 'provider response',
+      usage: null,
+    });
 
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://api.openai.com/v1/chat/completions',
@@ -229,12 +232,61 @@ describe('callConfiguredProvider', () => {
     await expect(callConfiguredProvider(
       { provider: 'anthropic', apiKey: 'test-key', model: 'claude-test', baseUrl: 'https://ignored.example.test' },
       { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
-    )).resolves.toBe('provider response');
+    )).resolves.toEqual({
+      content: 'provider response',
+      usage: null,
+    });
 
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://api.anthropic.com/v1/messages',
       expect.objectContaining({ redirect: 'error', signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('normalizes Anthropic usage and treats malformed usage as absent without rejecting content', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      content: [{ text: 'provider response' }],
+      usage: { input_tokens: 12, cache_read_input_tokens: 4, output_tokens: 8 },
+    }))));
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await expect(callConfiguredProvider(
+      { provider: 'anthropic', apiKey: 'test-key', model: 'claude-test', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toEqual({
+      content: 'provider response',
+      usage: { inputTokens: 12, cachedInputTokens: 4, outputTokens: 8 },
+    });
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      content: [{ text: 'provider response' }],
+      usage: { input_tokens: 1.5, cache_read_input_tokens: 0, output_tokens: 8 },
+    }))));
+    await expect(callConfiguredProvider(
+      { provider: 'anthropic', apiKey: 'test-key', model: 'claude-test', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toEqual({ content: 'provider response', usage: null });
+  });
+
+  it('normalizes OpenAI cached input usage and rejects inconsistent provider metering', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: 'provider response' } }],
+      usage: { prompt_tokens: 13, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens: 7 },
+    }))));
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+    await expect(callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toEqual({ content: 'provider response', usage: { inputTokens: 8, cachedInputTokens: 5, outputTokens: 7 } });
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: 'provider response' } }],
+      usage: { prompt_tokens: 4, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens: 7 },
+    }))));
+    await expect(callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    )).resolves.toEqual({ content: 'provider response', usage: null });
   });
 
   it('uses a redirect-rejecting 60-second request and keeps credentials and prompts out of thrown errors', async () => {
@@ -290,7 +342,10 @@ describe('callConfiguredProvider', () => {
       resolveDns: publicRecords,
       env: { get: (name: string) => name === 'AI_PROVIDER_ALLOWED_HOSTS' ? 'provider.example.test' : undefined },
     });
-    await expect(callConfiguredProvider(customConfig, providerRequest)).resolves.toBe('provider response');
+    await expect(callConfiguredProvider(customConfig, providerRequest)).resolves.toEqual({
+      content: 'provider response',
+      usage: null,
+    });
   });
 
   it('does not fetch when a final DNS revalidation observes a rebinding to a non-global address', async () => {

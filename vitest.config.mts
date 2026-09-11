@@ -7,6 +7,7 @@ export default defineConfig({
       'tests/aiProviderSecurity.test.ts',
       'tests/aiKeyWriteOnlyPolicy.test.ts',
       'tests/manageAiKeyHandler.test.ts',
+      'tests/mmiRubricAssessment.test.ts',
       'tests/mutatingIntegrationSafety.test.ts',
       'tests/edgeHttp.test.ts',
       'tests/uiContracts.test.ts',

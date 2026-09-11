@@ -14,7 +14,23 @@ export interface AiConfig {
   apiKey: string;
   model: string;
   baseUrl: string | null;
+  inputRatePerMillion: number;
+  cachedInputRatePerMillion: number;
+  outputRatePerMillion: number;
 }
+
+export type AiTokenUsage = Readonly<{
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}>;
+
+export type AiProviderResult = Readonly<{
+  content: string;
+  usage: AiTokenUsage | null;
+}>;
+
+type AiProviderConnectionConfig = Readonly<Pick<AiConfig, 'provider' | 'apiKey' | 'model' | 'baseUrl'>>;
 
 export interface AiProviderRequest {
   systemPrompt: string;
@@ -146,6 +162,32 @@ function providerResponseContent(provider: string, payload: unknown): string | u
   return typeof content === 'string' ? content : undefined;
 }
 
+function validTokenCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function providerTokenUsage(provider: string, payload: unknown): AiTokenUsage | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const usage = (payload as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return null;
+  const record = usage as Record<string, unknown>;
+  if (provider === 'anthropic') {
+    const inputTokens = record.input_tokens;
+    const cachedInputTokens = record.cache_read_input_tokens ?? 0;
+    const outputTokens = record.output_tokens;
+    if (!validTokenCount(inputTokens) || !validTokenCount(cachedInputTokens) || !validTokenCount(outputTokens)) return null;
+    return Object.freeze({ inputTokens, cachedInputTokens, outputTokens });
+  }
+  const promptTokens = record.prompt_tokens;
+  const details = record.prompt_tokens_details;
+  const cachedInputTokens = details !== null && typeof details === 'object' && !Array.isArray(details)
+    ? (details as Record<string, unknown>).cached_tokens ?? 0
+    : 0;
+  const outputTokens = record.completion_tokens;
+  if (!validTokenCount(promptTokens) || !validTokenCount(cachedInputTokens) || !validTokenCount(outputTokens) || cachedInputTokens > promptTokens) return null;
+  return Object.freeze({ inputTokens: Math.max(promptTokens - cachedInputTokens, 0), cachedInputTokens, outputTokens });
+}
+
 /** Converts the app's equivalent `oneOf` unions to OpenAI's supported `anyOf` subset. */
 function openAiStructuredOutputSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(openAiStructuredOutputSchema);
@@ -210,9 +252,9 @@ export function parseLegacyScoreResponse(raw: unknown): LegacyScoreResponse {
 }
 
 export async function callConfiguredProvider(
-  config: AiConfig,
+  config: AiProviderConnectionConfig,
   request: AiProviderRequest,
-): Promise<unknown> {
+): Promise<AiProviderResult> {
   let provider: 'anthropic' | 'openai';
   let customOpenAiCompatible = false;
   switch (config.provider) {
@@ -299,9 +341,10 @@ export async function callConfiguredProvider(
   }
 
   try {
-    const content = providerResponseContent(provider, await response.json());
+    const payload = await response.json();
+    const content = providerResponseContent(provider, payload);
     if (content === undefined) throw new TypeError('Provider response is missing content');
-    return content;
+    return Object.freeze({ content, usage: providerTokenUsage(provider, payload) });
   } catch {
     throw new ProviderRequestError('response_shape', { providerRequestId });
   }

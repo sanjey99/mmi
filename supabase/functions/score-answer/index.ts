@@ -5,6 +5,8 @@
  * The verified JWT supplies user identity. The database supplies the prompt.
  */
 
+// Edge runtime dependency; TypeScript's web build does not resolve URL imports.
+// @ts-ignore Deno resolves this URL at deployment time.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   callConfiguredProvider,
@@ -25,6 +27,12 @@ import {
   prepareEdgeHttpRequest,
   readBoundedJson,
 } from '../_shared/http.ts';
+
+type EdgeDeno = Readonly<{
+  env: Readonly<{ get: (name: string) => string | undefined }>;
+  serve: (handler: (request: Request) => Response | Promise<Response>) => void;
+}>;
+const Deno: EdgeDeno = (globalThis as typeof globalThis & { Deno: EdgeDeno }).Deno;
 
 const SCORING_SYSTEM_PROMPT = `You are an expert UK medical school interviewer and assessor.
 Evaluate the student's answer to the supplied interview question.
@@ -93,6 +101,9 @@ Deno.serve(async (request) => {
     model: configuration.ai_model ?? 'claude-3-5-haiku-20241022',
     apiKey: configuration.ai_api_key,
     baseUrl: configuration.ai_base_url ?? null,
+    inputRatePerMillion: 0,
+    cachedInputRatePerMillion: 0,
+    outputRatePerMillion: 0,
   };
 
   const answerHash = await hashLegacyAnswer(input.answerText);
@@ -133,20 +144,20 @@ Deno.serve(async (request) => {
   }
   if (claim.status === 'succeeded') {
     try {
-      return http.json(parseLegacyScoreResponse(JSON.stringify(claim.result)));
+      return http.json(parseLegacyScoreResponse(JSON.stringify(claim.result)) as unknown as Record<string, unknown>);
     } catch {
       return http.json({ code: 'persistence_failed' }, 500);
     }
   }
 
-  let providerResult;
+  let legacyScore;
   try {
-    const raw = await callConfiguredProvider(providerConfig, {
+    const providerResult = await callConfiguredProvider(providerConfig, {
       systemPrompt: SCORING_SYSTEM_PROMPT,
       userContent: formatScoringUserContent(claim.question_text, input.answerText),
       maxTokens: 512,
     });
-    providerResult = parseLegacyScoreResponse(raw);
+    legacyScore = parseLegacyScoreResponse(providerResult.content);
   } catch (error) {
     const errorCode = error instanceof Error && error.message === 'AI_PROVIDER_RESPONSE_INVALID'
       ? 'invalid_provider_response'
@@ -173,13 +184,13 @@ Deno.serve(async (request) => {
     p_lease_token: claim.lease_token,
     p_answer_text: input.answerText,
     p_answer_hash: answerHash,
-    p_structure: providerResult.structure,
-    p_ethics: providerResult.ethics,
-    p_communication: providerResult.communication,
-    p_reflection: providerResult.reflection,
-    p_nhs_awareness: providerResult.nhs_awareness,
-    p_ai_feedback: providerResult.ai_feedback,
-    p_improvement_tip: providerResult.improvement_tip,
+    p_structure: legacyScore.structure,
+    p_ethics: legacyScore.ethics,
+    p_communication: legacyScore.communication,
+    p_reflection: legacyScore.reflection,
+    p_nhs_awareness: legacyScore.nhs_awareness,
+    p_ai_feedback: legacyScore.ai_feedback,
+    p_improvement_tip: legacyScore.improvement_tip,
   });
   if (completionError) {
     await serviceClient.rpc('fail_legacy_scoring', {
@@ -193,7 +204,7 @@ Deno.serve(async (request) => {
   }
 
   try {
-    return http.json(parseLegacyScoreResponse(JSON.stringify(savedResult)));
+    return http.json(parseLegacyScoreResponse(JSON.stringify(savedResult)) as unknown as Record<string, unknown>);
   } catch {
     return http.json({ code: 'persistence_failed' }, 500);
   }
