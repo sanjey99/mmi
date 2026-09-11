@@ -5,9 +5,10 @@ import {
   type CandidateMmiServerProjection,
 } from './api';
 import type { CandidateMmiPromptOrder } from './types';
+import type { CandidateMmiPracticeScope } from './types';
 
 type CandidateMmiApi = Readonly<{
-  start: () => Promise<CandidateMmiServerProjection>;
+  start: (scope?: CandidateMmiPracticeScope) => Promise<CandidateMmiServerProjection>;
   refresh: (sessionId: string) => Promise<CandidateMmiServerProjection>;
   checkpoint: (
     sessionId: string,
@@ -235,8 +236,8 @@ export function createCandidateMmiRunner(api: CandidateMmiApi) {
   }
 
   return Object.freeze({
-    start: async (): Promise<CandidateMmiServerProjection> =>
-      acceptProjection(await api.start()),
+    start: async (scope?: CandidateMmiPracticeScope): Promise<CandidateMmiServerProjection> =>
+      acceptProjection(await api.start(scope)),
     restore: async (sessionId: string): Promise<CandidateMmiServerProjection> =>
       acceptProjection(await api.refresh(sessionId)),
     refresh,

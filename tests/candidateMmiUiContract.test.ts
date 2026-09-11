@@ -42,6 +42,28 @@ describe('single MMI station route contract', () => {
     expect(practiceSource).not.toMatch(/Free practice|Timed practice|getRandomQuestion|startSession|\/practice\/session/);
   });
 
+  it('separates target-university and repository-wide complete-station practice choices', () => {
+    const practiceSource = readFileSync(practiceScreenPath, 'utf8');
+
+    expect(practiceSource).toMatch(/practiceOptions/);
+    expect(practiceSource).toMatch(/complete 11-minute stations/);
+    expect(practiceSource).toMatch(/All-university practice/);
+    expect(practiceSource).toMatch(/open\('target'\)/);
+    expect(practiceSource).toMatch(/open\('all'\)/);
+    expect(practiceSource).toMatch(/university target/i);
+  });
+
+  it('opens an owned saved MMI result without starting provider scoring again', () => {
+    const routeSource = readCandidateStationRoute();
+    const progressSource = readFileSync(resolve(process.cwd(), 'app/(tabs)/progress.tsx'), 'utf8');
+
+    expect(routeSource).toMatch(/result\(sessionId\)/);
+    expect(routeSource).toMatch(/resultOnly/);
+    expect(progressSource).toMatch(/\.history\(\)/);
+    expect(progressSource).toMatch(/domainAttainment/);
+    expect(progressSource).not.toMatch(/mock_sessions|dimensionAverages|RadarChart|recentSessions/);
+  });
+
   it('opens the station without a product flag and retires the legacy response route', () => {
     const routeSource = readCandidateStationRoute();
     const legacySessionSource = readFileSync(legacySessionPath, 'utf8');
@@ -55,7 +77,7 @@ describe('single MMI station route contract', () => {
 
     expect(routeSource).toMatch(/useLocalSearchParams/);
     expect(routeSource).toMatch(/runner\(\)\.restore\(sessionId\)/);
-    expect(routeSource).toMatch(/runner\(\)\.start\(\)/);
+    expect(routeSource).toMatch(/runner\(\)\.start\(scope\)/);
     expect(routeSource).toMatch(/router\.replace\([\s\S]*sessionId/);
   });
 

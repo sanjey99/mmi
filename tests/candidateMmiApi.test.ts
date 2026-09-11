@@ -149,6 +149,91 @@ const finalizationResult = Object.freeze({
 });
 
 describe('candidate MMI API transcript boundary', () => {
+  it('requests exact university practice options and rejects widened or invalid counts', async () => {
+    const options = Object.freeze({
+      targetUniversity: 'Oxford',
+      targetTag: 'oxford',
+      targetCount: 115,
+      allCount: 155,
+    });
+    const client = rpcClient([{ data: options, error: null }]);
+    await expect(createCandidateMmiApi(client).practiceOptions()).resolves.toEqual(options);
+    expect(client.rpc).toHaveBeenCalledWith('get_candidate_mmi_practice_options');
+
+    for (const malformed of [
+      { ...options, transcript: 'private' },
+      { ...options, targetCount: -1 },
+      { ...options, allCount: 1.5 },
+      { ...options, targetUniversity: 'x'.repeat(101) },
+      { ...options, targetUniversity: null, targetTag: 'oxford' },
+    ]) {
+      await expect(
+        createCandidateMmiApi(rpcClient([{ data: malformed, error: null }])).practiceOptions(),
+      ).rejects.toMatchObject({ kind: 'invalid_response' });
+    }
+  });
+
+  it('uses a scoped start without changing the existing session lifecycle calls', async () => {
+    const client = rpcClient([{ data: scenarioProjection, error: null }]);
+    await expect(createCandidateMmiApi(client).start('target')).resolves.toEqual(scenarioProjection);
+    expect(client.rpc).toHaveBeenCalledWith(
+      'start_candidate_mmi_station_session',
+      { p_scope: 'target' },
+    );
+    await expect(createCandidateMmiApi(client).start('other' as never)).rejects.toMatchObject({
+      kind: 'invalid_request',
+    });
+  });
+
+  it('accepts only owned structured results and history without answer content', async () => {
+    const result = Object.freeze({
+      sessionId,
+      stationId,
+      status: 'completed' as const,
+      overallPct: 20,
+      feedback: feedbackRows(rubricAssessment, false),
+    });
+    const history = Object.freeze([{
+      sessionId,
+      stationId,
+      scope: 'target' as const,
+      targetUniversity: 'Oxford',
+      startedAt: '2026-08-26T00:00:00.000Z',
+      completedAt: '2026-08-26T00:11:00.000Z',
+      status: 'completed' as const,
+      overallPct: 20,
+      domainAttainment: [{ domain: 'safety', achieved: 1, total: 1, pct: 100 }],
+    }]);
+    const client = rpcClient([{ data: result, error: null }]);
+    const api = createCandidateMmiApi(client);
+    await expect(api.result(sessionId)).resolves.toEqual(result);
+    client.rpc.mockResolvedValueOnce({ data: history, error: null });
+    await expect(api.history()).resolves.toEqual(history);
+    expect(client.rpc).toHaveBeenNthCalledWith(
+      1,
+      'get_candidate_mmi_station_result',
+      { p_session_id: sessionId },
+    );
+    expect(client.rpc).toHaveBeenNthCalledWith(
+      2,
+      'list_candidate_mmi_history',
+      { p_limit: 20 },
+    );
+
+    for (const malformed of [
+      { ...result, feedback: [...result.feedback, result.feedback[0]] },
+      { ...result, overallPct: 101 },
+      { ...result, answer: 'private' },
+      [{ ...history[0], domainAttainment: [{ ...history[0].domainAttainment[0], transcript: 'private' }] }],
+      [{ ...history[0], domainAttainment: [{ ...history[0].domainAttainment[0], pct: 100.1 }] }],
+    ]) {
+      const response = Array.isArray(malformed)
+        ? createCandidateMmiApi(rpcClient([{ data: malformed, error: null }])).history()
+        : createCandidateMmiApi(rpcClient([{ data: malformed, error: null }])).result(sessionId);
+      await expect(response).rejects.toMatchObject({ kind: 'invalid_response' });
+    }
+  });
+
   it('accepts only the exact schema-v3 public rubric projection', () => {
     expect(parseCandidateAssessment(rubricAssessment)).toEqual(rubricAssessment);
 

@@ -17,6 +17,7 @@ import {
   createCandidateMmiApi,
   type CandidateMmiFeedback,
   type CandidateMmiServerProjection,
+  type CandidateMmiStationResult,
 } from '../../src/features/candidateMmi/api';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
@@ -197,8 +198,10 @@ function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
 }
 
 export default function CandidateMmiStationScreen() {
-  const { sessionId: routeSessionId } = useLocalSearchParams<{ sessionId?: string }>();
+  const { sessionId: routeSessionId, scope: routeScope, resultOnly: routeResultOnly } = useLocalSearchParams<{ sessionId?: string; scope?: string; resultOnly?: string }>();
   const sessionId = typeof routeSessionId === 'string' ? routeSessionId : '';
+  const scope = routeScope === 'target' ? 'target' : 'all';
+  const resultOnly = routeResultOnly === 'true';
   const apiRef = useRef<CandidateApi | null>(null);
   const runnerRef = useRef<CandidateRunner | null>(null);
   const scoringRef = useRef<CandidateScoringApi | null>(null);
@@ -217,6 +220,7 @@ export default function CandidateMmiStationScreen() {
   const volatileFinalizationKeysRef = useRef(new Map<string, string>());
   const completedScoringSessionRef = useRef<string | null>(null);
   const [projection, setProjection] = useState<CandidateMmiServerProjection | null>(null);
+  const [retainedResult, setRetainedResult] = useState<CandidateMmiStationResult | null>(null);
   const [transcript, setTranscript] = useState<CandidateMmiTranscriptState | null>(null);
   const [feedback, setFeedback] = useState<readonly CandidateMmiFeedback[] | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
@@ -365,6 +369,18 @@ export default function CandidateMmiStationScreen() {
   }, [dispatchTranscript, runner]);
 
   useEffect(() => {
+    if (!resultOnly || !sessionId) return;
+    let active = true;
+    void api().result(sessionId).then((next) => {
+      if (active) setRetainedResult(next);
+    }).catch(() => {
+      if (active) setErrorMessage('The saved MMI result is unavailable.');
+    });
+    return () => { active = false; };
+  }, [api, resultOnly, sessionId]);
+
+  useEffect(() => {
+    if (resultOnly) return;
     if (!sessionId || openedSessionRef.current === sessionId) return;
     let active = true;
     openedSessionRef.current = sessionId;
@@ -378,7 +394,7 @@ export default function CandidateMmiStationScreen() {
         setErrorMessage('The MMI station is unavailable. Return to practice and try again.');
       });
     return () => { active = false; };
-  }, [acceptProjection, runner, sessionId]);
+  }, [acceptProjection, resultOnly, runner, sessionId]);
 
   useEffect(() => {
     if (projection?.phaseEndsAt === null || projection === null) return;
@@ -505,7 +521,7 @@ export default function CandidateMmiStationScreen() {
     advanceExpiredPhase();
   }, [advanceExpiredPhase, projection, remaining]);
 
-  const completedSessionId = projection?.phase === 'completed' ? projection.sessionId : null;
+  const completedSessionId = !resultOnly && projection?.phase === 'completed' ? projection.sessionId : null;
 
   const scoreCompletedStation = useCallback(async (completedId: string) => {
     if (completedScoringSessionRef.current === completedId) return;
@@ -603,7 +619,7 @@ export default function CandidateMmiStationScreen() {
     setStarting(true);
     setErrorMessage(null);
     try {
-      const nextProjection = await runner().start();
+      const nextProjection = await runner().start(scope);
       openedSessionRef.current = nextProjection.sessionId;
       acceptProjection(nextProjection, true);
       router.replace({
@@ -629,7 +645,21 @@ export default function CandidateMmiStationScreen() {
     }
   };
 
-  if (projection === null && !sessionId) {
+  if (resultOnly && retainedResult !== null) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.eyebrow}>SAVED MMI RESULT</Text>
+          <Text style={styles.title}>Station result</Text>
+          <Text style={styles.status}>{retainedResult.overallPct === null ? 'Rubric scoring is not complete.' : `Overall station score · ${retainedResult.overallPct}%`}</Text>
+          {retainedResult.feedback.map((item) => <FeedbackCard key={item.promptOrder} item={item} />)}
+          <Button label="Return to progress" onPress={() => router.replace('/(tabs)/progress')} labelStyle={styles.actionLabel} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (projection === null && !sessionId && !resultOnly) {
     const supported = speechPort().getCapability().supported;
     return (
       <SafeAreaView style={styles.safe}>

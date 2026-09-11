@@ -1,4 +1,4 @@
-import type { CandidateMmiPromptOrder } from './types';
+import type { CandidateMmiPracticeScope, CandidateMmiPromptOrder } from './types';
 
 export type CandidateMmiApiErrorKind =
   | 'access_denied'
@@ -104,6 +104,36 @@ export type CandidateMmiFeedback = Readonly<{
   legacy: boolean;
   assessment: CandidateMmiFeedbackAssessment | null;
 }>;
+export type CandidateMmiPracticeOptions = Readonly<{
+  targetUniversity: string | null;
+  targetTag: string | null;
+  targetCount: number;
+  allCount: number;
+}>;
+export type CandidateMmiStationResult = Readonly<{
+  sessionId: string;
+  stationId: string;
+  status: 'completed' | 'awaiting_scoring' | 'abandoned';
+  overallPct: number | null;
+  feedback: readonly CandidateMmiFeedback[];
+}>;
+export type CandidateMmiDomainAttainment = Readonly<{
+  domain: string;
+  achieved: number;
+  total: number;
+  pct: number;
+}>;
+export type CandidateMmiHistoryItem = Readonly<{
+  sessionId: string;
+  stationId: string;
+  scope: CandidateMmiPracticeScope;
+  targetUniversity: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: 'completed' | 'awaiting_scoring' | 'abandoned';
+  overallPct: number | null;
+  domainAttainment: readonly CandidateMmiDomainAttainment[];
+}>;
 type CandidateMmiRpcResult = Readonly<{
   data: unknown;
   error: Readonly<{ code?: string; message?: string }> | null;
@@ -167,6 +197,10 @@ const feedbackKeys = ['assessment', 'legacy', 'promptOrder', 'status'] as const;
 const rubricAssessmentKeys = ['criteria', 'questionScorePct', 'schemaVersion'] as const;
 const rubricCriterionKeys = ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct'] as const;
 const legacyAssessmentKeys = ['overallPct', 'rubricVersion'] as const;
+const practiceOptionKeys = ['allCount', 'targetCount', 'targetTag', 'targetUniversity'] as const;
+const resultKeys = ['feedback', 'overallPct', 'sessionId', 'stationId', 'status'] as const;
+const historyKeys = ['completedAt', 'domainAttainment', 'overallPct', 'scope', 'sessionId', 'startedAt', 'stationId', 'status', 'targetUniversity'] as const;
+const attainmentKeys = ['achieved', 'domain', 'pct', 'total'] as const;
 const scoringStatuses = [
   'pending',
   'in_progress',
@@ -221,6 +255,15 @@ function isScoringStatus(value: unknown): value is CandidateMmiScoringStatus {
     typeof value === 'string' &&
     (scoringStatuses as readonly string[]).includes(value)
   );
+}
+function isPracticeScope(value: unknown): value is CandidateMmiPracticeScope {
+  return value === 'target' || value === 'all';
+}
+function isBoundedWhole(value: unknown, maximum = 1_000_000): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= maximum;
+}
+function isScore(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
 }
 function isValidBaseProjection(value: Record<string, unknown>): boolean {
   return (
@@ -480,6 +523,90 @@ function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
     }),
   );
 }
+function parsePracticeOptions(value: unknown): CandidateMmiPracticeOptions {
+  const options = record(value);
+  if (
+    options === null || !hasExactKeys(options, practiceOptionKeys) ||
+    !isBoundedWhole(options.targetCount) || !isBoundedWhole(options.allCount) ||
+    options.targetCount > options.allCount ||
+    (options.targetUniversity !== null && !isPublicText(options.targetUniversity, 100)) ||
+    (options.targetTag !== null && !isPublicText(options.targetTag, 100)) ||
+    ((options.targetUniversity === null) !== (options.targetTag === null))
+  ) return invalidResponse();
+  return Object.freeze({
+    targetUniversity: options.targetUniversity,
+    targetTag: options.targetTag,
+    targetCount: options.targetCount,
+    allCount: options.allCount,
+  });
+}
+function parseStationResult(value: unknown): CandidateMmiStationResult {
+  const result = record(value);
+  if (
+    result === null || !hasExactKeys(result, resultKeys) ||
+    typeof result.sessionId !== 'string' || !UUID_PATTERN.test(result.sessionId) ||
+    typeof result.stationId !== 'string' || !STATION_ID_PATTERN.test(result.stationId) ||
+    (result.status !== 'completed' && result.status !== 'awaiting_scoring' && result.status !== 'abandoned') ||
+    (result.overallPct !== null && !isScore(result.overallPct)) ||
+    !Array.isArray(result.feedback)
+  ) return invalidResponse();
+  const feedback = parseFeedback(result.feedback);
+  if (result.status === 'completed' && result.overallPct === null) return invalidResponse();
+  if (result.status !== 'completed' && result.overallPct !== null) return invalidResponse();
+  return Object.freeze({
+    sessionId: result.sessionId,
+    stationId: result.stationId,
+    status: result.status,
+    overallPct: result.overallPct,
+    feedback,
+  });
+}
+function parseHistory(value: unknown): readonly CandidateMmiHistoryItem[] {
+  if (!Array.isArray(value) || value.length > 100) return invalidResponse();
+  return Object.freeze(value.map((value) => {
+    const item = record(value);
+    if (
+      item === null || !hasExactKeys(item, historyKeys) ||
+      typeof item.sessionId !== 'string' || !UUID_PATTERN.test(item.sessionId) ||
+      typeof item.stationId !== 'string' || !STATION_ID_PATTERN.test(item.stationId) ||
+      !isPracticeScope(item.scope) ||
+      (item.targetUniversity !== null && !isPublicText(item.targetUniversity, 100)) ||
+      parseIsoTimestamp(item.startedAt) === null ||
+      (item.completedAt !== null && parseIsoTimestamp(item.completedAt) === null) ||
+      (item.status !== 'completed' && item.status !== 'awaiting_scoring' && item.status !== 'abandoned') ||
+      (item.overallPct !== null && !isScore(item.overallPct)) ||
+      !Array.isArray(item.domainAttainment) || item.domainAttainment.length > 50
+    ) return invalidResponse();
+    if ((item.status === 'completed') !== (item.overallPct !== null)) return invalidResponse();
+    const domainAttainment = item.domainAttainment.map((value) => {
+      const attainment = record(value);
+      if (
+        attainment === null || !hasExactKeys(attainment, attainmentKeys) ||
+        !isPublicText(attainment.domain, 100) || !isBoundedWhole(attainment.achieved, 100) ||
+        !isBoundedWhole(attainment.total, 100) || attainment.total < 1 ||
+        attainment.achieved > attainment.total || !isScore(attainment.pct) ||
+        Math.abs(attainment.pct - (attainment.achieved / attainment.total) * 100) > 0.01
+      ) return invalidResponse();
+      return Object.freeze({
+        domain: attainment.domain,
+        achieved: attainment.achieved,
+        total: attainment.total,
+        pct: attainment.pct,
+      });
+    });
+    return Object.freeze({
+      sessionId: item.sessionId,
+      stationId: item.stationId,
+      scope: item.scope,
+      targetUniversity: item.targetUniversity,
+      startedAt: item.startedAt as string,
+      completedAt: item.completedAt as string | null,
+      status: item.status as CandidateMmiHistoryItem['status'],
+      overallPct: item.overallPct,
+      domainAttainment: Object.freeze(domainAttainment),
+    });
+  }));
+}
 function mapRpcError(
   code: string | undefined,
   message: string | undefined,
@@ -517,12 +644,16 @@ export function createCandidateMmiApi(rpc: CandidateMmiRpcClient) {
     return parser(result.data);
   }
   return Object.freeze({
-    start: (): Promise<CandidateMmiServerProjection> =>
-      request(
-        'start_candidate_mmi_station_session',
-        undefined,
-        parseProjection,
-      ),
+    practiceOptions: (): Promise<CandidateMmiPracticeOptions> =>
+      request('get_candidate_mmi_practice_options', undefined, parsePracticeOptions),
+    start: (scope?: CandidateMmiPracticeScope): Promise<CandidateMmiServerProjection> =>
+      scope !== undefined && !isPracticeScope(scope)
+        ? Promise.reject(new CandidateMmiApiError('invalid_request'))
+        : request(
+            'start_candidate_mmi_station_session',
+            scope === undefined ? undefined : { p_scope: scope },
+            parseProjection,
+          ),
     refresh: (sessionId: string): Promise<CandidateMmiServerProjection> =>
       UUID_PATTERN.test(sessionId)
         ? request(
@@ -581,6 +712,14 @@ export function createCandidateMmiApi(rpc: CandidateMmiRpcClient) {
             parseFeedback,
           )
         : Promise.reject(new CandidateMmiApiError('invalid_request')),
+    result: (sessionId: string): Promise<CandidateMmiStationResult> =>
+      UUID_PATTERN.test(sessionId)
+        ? request('get_candidate_mmi_station_result', { p_session_id: sessionId }, parseStationResult)
+        : Promise.reject(new CandidateMmiApiError('invalid_request')),
+    history: (limit = 20): Promise<readonly CandidateMmiHistoryItem[]> =>
+      !Number.isInteger(limit) || limit < 1 || limit > 100
+        ? Promise.reject(new CandidateMmiApiError('invalid_request'))
+        : request('list_candidate_mmi_history', { p_limit: limit }, parseHistory),
     abandon: (sessionId: string): Promise<void> =>
       UUID_PATTERN.test(sessionId)
         ? request(

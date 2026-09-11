@@ -1,5 +1,7 @@
 export type CandidateMmiPromptOrder = 1 | 2 | 3 | 4 | 5;
 
+export type CandidateMmiPracticeScope = 'target' | 'all';
+
 export type CandidateMmiPhaseProjection = Readonly<{
   kind: 'scenario' | 'response' | 'completed';
   promptOrder: CandidateMmiPromptOrder | null;

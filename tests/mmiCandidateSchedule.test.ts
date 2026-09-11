@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 type CandidateMmiScheduleModule = Readonly<{
   CANDIDATE_MMI_PREP_SECONDS: number;
@@ -116,4 +117,18 @@ test('fails closed by clamping a negative elapsed timestamp and never returns ne
       remainingAtExpiry: 0,
     },
   );
+});
+
+test('university practice eligibility keeps the fixed 60 + 5×120 station contract in SQL', () => {
+  const migration = readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/20260910002000_mmi_university_practice_history.sql'),
+    'utf8',
+  );
+  assert.match(migration, /canonical_mmi_university_tag/i);
+  assert.match(migration, /king''s college london/i);
+  assert.match(migration, /is_complete_published_mmi_station/i);
+  assert.match(migration, /prep_time_sec = 60/i);
+  assert.match(migration, /count\(\*\) = 5/i);
+  assert.match(migration, /time_limit_sec = 120/i);
+  assert.match(migration, /mmi_marking_criteria/i);
 });
