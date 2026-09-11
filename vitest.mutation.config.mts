@@ -9,6 +9,7 @@ export default defineConfig({
       'tests/integration/candidateMmiStation.integration.test.ts',
       'tests/integration/mmiRubricScoringRetention.integration.test.ts',
       'tests/integration/mmiUniversityPractice.integration.test.ts',
+      'tests/integration/adminMmiOperations.integration.test.ts',
     ],
   },
 });
