@@ -203,7 +203,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp
 AS $function$
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
+  IF TG_OP = 'UPDATE'
+    AND pg_trigger_depth() > 1 THEN
     IF OLD.created_by IS NOT NULL
       AND NEW.created_by IS NULL
       AND NEW.station_id IS NOT DISTINCT FROM OLD.station_id

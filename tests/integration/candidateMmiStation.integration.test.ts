@@ -305,6 +305,20 @@ function createStationVersionWithAuthor(stationId: string, version: number, auth
   return stationVersionFingerprint(stationId, version);
 }
 
+function assertDirectStationVersionAuthorNullingRejected(stationId: string, version: number): void {
+  assert.match(stationId, /^MMI_[0-9]{3}$/);
+  assert.ok(Number.isSafeInteger(version) && version > 0);
+  assert.ok(process.env.SUPABASE_TEST_DB_URL);
+  execFileSync('psql', [
+    '--no-psqlrc',
+    '--quiet',
+    '--set', 'ON_ERROR_STOP=1',
+    '--dbname', process.env.SUPABASE_TEST_DB_URL,
+    '--command',
+    `DO $immutability$ BEGIN BEGIN UPDATE public.mmi_station_versions SET created_by = NULL WHERE station_id = '${stationId}' AND version = ${version} AND created_by IS NOT NULL; RAISE EXCEPTION 'direct station author nulling was accepted'; EXCEPTION WHEN SQLSTATE '55000' THEN NULL; END; END; $immutability$;`,
+  ]);
+}
+
 function assertResponseProjection(
   value: unknown,
   expectedOrder: number,
@@ -649,6 +663,8 @@ run('single MMI station orchestration (disposable local Supabase only)', () => {
 
     const before = createStationVersionWithAuthor(stationVersion.station_id, 2, authorData.user.id);
     assert.equal(before.createdBy, authorData.user.id);
+    assertDirectStationVersionAuthorNullingRejected(stationVersion.station_id, 2);
+    assert.deepEqual(stationVersionFingerprint(stationVersion.station_id, 2), before);
 
     const { error: deleteAuthorError } = await service.auth.admin.deleteUser(authorData.user.id);
     assert.equal(deleteAuthorError, null, deleteAuthorError?.message);

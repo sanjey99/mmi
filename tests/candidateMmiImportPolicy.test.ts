@@ -417,6 +417,7 @@ else:
     expect(sql).toMatch(/check\s*\(\s*status\s+in\s*\(\s*'draft'\s*,\s*'published'\s*,\s*'archived'\s*\)\s*\)/i);
     expect(sql).toMatch(/create\s+trigger\s+mmi_station_versions_immutable[\s\S]*?before\s+update\s+or\s+delete[\s\S]*?on\s+public\.mmi_station_versions/i);
     expect(sql).toMatch(/tg_op\s*=\s*'UPDATE'[\s\S]*?old\.created_by\s+is\s+not\s+null[\s\S]*?new\.created_by\s+is\s+null/i);
+    expect(sql).toMatch(/tg_op\s*=\s*'UPDATE'[\s\S]*?pg_trigger_depth\s*\(\s*\)\s*>\s*1[\s\S]*?return\s+new/i);
     for (const immutableColumn of ['station_id', 'version', 'content_snapshot', 'created_at']) {
       expect(sql).toMatch(new RegExp(
         `new\\.${immutableColumn}\\s+is\\s+not\\s+distinct\\s+from\\s+old\\.${immutableColumn}`,
