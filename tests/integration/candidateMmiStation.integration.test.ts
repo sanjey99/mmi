@@ -34,8 +34,8 @@ const sourceNamespace = 'med_interview_question_bank';
 const sourceManifestSha256 = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 const normalizedManifestSha256 = 'add7cf932a60e4573e3aca54c0cdecafd3c46c4421d245e2b3e71d8cbe8fa101';
 const expectedServerPayloadFingerprints = [
-  '950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e',
-  '31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c',
+  'b94d0f3b9784062b9167551c80a7735d16ebbdc5b62ee57af9dedf650c477fe9',
+  '9d97563e31ec023e5e9255169830bf69a67159d8aafab179b1601c8b94700ee6',
 ] as const;
 const url = process.env.SUPABASE_TEST_URL;
 const anonKey = process.env.SUPABASE_TEST_ANON_KEY;

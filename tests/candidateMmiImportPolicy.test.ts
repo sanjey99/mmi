@@ -19,6 +19,10 @@ const rubricContentMigrationPath = path.resolve(
   process.cwd(),
   'supabase/migrations/20260910000000_mmi_rubric_content_import.sql',
 );
+const rubricFingerprintReconciliationMigrationPath = path.resolve(
+  process.cwd(),
+  'supabase/migrations/20260919000000_mmi_rubric_import_fingerprint_reconciliation.sql',
+);
 const expectedSourceHash = '903fb1b3eedc92647c5cb9aa48465ebc49deaa618da2a53e3a736667f71d1a71';
 const expectedCanonicalPayloadFingerprints = Object.freeze({
   'normalized-stations-part-1.json': 'b44d9ac27997340e7f6bef1f3c9bfa9cdd909186b70c29fba67f4a5438b66725',
@@ -90,6 +94,21 @@ function assertNoPrivatePayloadFields(value: unknown): void {
 }
 
 describe('normalized candidate MMI station import policy', () => {
+  it('reconciles the reviewed v2 payload fingerprints in both import RPC definitions', async () => {
+    const sql = await readFile(rubricFingerprintReconciliationMigrationPath, 'utf8');
+
+    expect(sql).toContain('b94d0f3b9784062b9167551c80a7735d16ebbdc5b62ee57af9dedf650c477fe9');
+    expect(sql).toContain('9d97563e31ec023e5e9255169830bf69a67159d8aafab179b1601c8b94700ee6');
+    expect(sql).toContain('91b9f15e67d132540398a6fc5d4e16753f3defaa89091db8ba7bd26784c4a211');
+    expect(sql).toContain('8cfb3048ba77c838d542650d6443a0e2529053a9843b32759c02216e9e8d099a');
+    expect(sql).toMatch(/sha256\s*\(\s*convert_to\s*\(\s*proc\.prosrc/i);
+    expect(sql.match(/950e52261c043a819dab92183b423a15e43be1ac20e02c4e47927a7b10a0424e/g)).toHaveLength(2);
+    expect(sql.match(/31ba173facd961ef14a9258a41f101c3cebe087b581c481133db88ff9602832c/g)).toHaveLength(2);
+    expect(sql).toMatch(/import_normalized_mmi_station_batch\(text,text,text,jsonb\)/i);
+    expect(sql).toMatch(/finalize_normalized_mmi_station_import\(text,text,text\)/i);
+    expect(sql).toMatch(/unexpected predecessor definition/i);
+  });
+
   it('rejects every v2 private payload schema field from tracked metadata', () => {
     for (const privateKey of v2PrivatePayloadKeys) {
       expect(() => assertNoPrivatePayloadFields({ [privateKey]: 'synthetic private value' })).toThrow();
