@@ -16,6 +16,7 @@ import {
   providerFailureDiagnostic,
   type AiConfig,
 } from '../_shared/aiProvider.ts';
+import { applyAiModelProfile } from '../_shared/aiModelProfile.ts';
 import {
   hashLegacyAnswer,
   parseLegacyScoringRequest,
@@ -27,12 +28,31 @@ import {
   prepareEdgeHttpRequest,
   readBoundedJson,
 } from '../_shared/http.ts';
+import { parseUsdRate } from '../score-candidate-mmi-response/rates.ts';
 
 type EdgeDeno = Readonly<{
   env: Readonly<{ get: (name: string) => string | undefined }>;
   serve: (handler: (request: Request) => Response | Promise<Response>) => void;
 }>;
 const Deno: EdgeDeno = (globalThis as typeof globalThis & { Deno: EdgeDeno }).Deno;
+const gpt55Model = Deno.env.get('AI_GPT55_MODEL');
+const gpt55InputRate = parseUsdRate(Deno.env.get('AI_GPT55_INPUT_RATE_PER_MILLION'));
+const gpt55CachedInputRate = parseUsdRate(Deno.env.get('AI_GPT55_CACHED_INPUT_RATE_PER_MILLION'));
+const gpt55OutputRate = parseUsdRate(Deno.env.get('AI_GPT55_OUTPUT_RATE_PER_MILLION'));
+const gpt55Profile =
+  typeof gpt55Model === 'string'
+  && gpt55Model.length <= 200
+  && /^gpt-5\.5(?:-[A-Za-z0-9._-]+)?$/.test(gpt55Model)
+  && gpt55InputRate !== null
+  && gpt55CachedInputRate !== null
+  && gpt55OutputRate !== null
+    ? Object.freeze({
+      model: gpt55Model,
+      inputRatePerMillion: gpt55InputRate,
+      cachedInputRatePerMillion: gpt55CachedInputRate,
+      outputRatePerMillion: gpt55OutputRate,
+    })
+    : null;
 
 const SCORING_SYSTEM_PROMPT = `You are an expert UK medical school interviewer and assessor.
 Evaluate the student's answer to the supplied interview question.
@@ -81,6 +101,16 @@ Deno.serve(async (request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
+  if (input.modelProfile === 'gpt-5.5') {
+    const { data: profile, error: profileError } = await serviceClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profileError) return http.json({ code: 'persistence_failed' }, 500);
+    if (profile?.is_admin !== true) return http.json({ code: 'model_profile_forbidden' }, 403);
+  }
+
   // Configuration failures happen before a durable provider-attempt claim, so
   // a missing key cannot consume a user's rate-limit allowance.
   const { data: configRows, error: configError } = await serviceClient
@@ -96,7 +126,7 @@ Deno.serve(async (request) => {
   if (!configuration.ai_api_key) {
     return http.json({ code: 'provider_not_configured' }, 503);
   }
-  const providerConfig: AiConfig = {
+  const defaultProviderConfig: AiConfig = {
     provider: configuration.ai_provider ?? 'anthropic',
     model: configuration.ai_model ?? 'claude-3-5-haiku-20241022',
     apiKey: configuration.ai_api_key,
@@ -105,6 +135,10 @@ Deno.serve(async (request) => {
     cachedInputRatePerMillion: 0,
     outputRatePerMillion: 0,
   };
+  const providerConfig = applyAiModelProfile(defaultProviderConfig, input.modelProfile, gpt55Profile);
+  if (providerConfig === null) {
+    return http.json({ code: 'provider_not_configured' }, 503);
+  }
 
   const answerHash = await hashLegacyAnswer(input.answerText);
   const leaseToken = crypto.randomUUID();

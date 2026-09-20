@@ -1,9 +1,11 @@
 import type { CandidateMmiPromptOrder } from './types';
+import { deployedAiModelProfile, type AiModelProfile } from '../../lib/aiModelProfile';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_MESSAGES = Object.freeze({
   invalid_request: 'AI scoring request is invalid.', not_ready: 'AI scoring starts after the station is complete.',
   in_progress: 'This response is already being scored.', provider_not_configured: 'AI scoring is not configured yet.',
+  model_profile_forbidden: 'This AI model preview is available only to administrators.',
   provider_failed: 'AI scoring is temporarily unavailable. Try again.', invalid_provider_response: 'The AI scorer returned an invalid result. Try again.',
   unauthorized: 'Sign in again before requesting feedback.', unavailable: 'AI scoring is unavailable. Try again.',
 });
@@ -28,12 +30,15 @@ async function resolveInvokeError(error: unknown): Promise<CandidateMmiScoringEr
   } catch { /* untrusted body remains unavailable */ }
   return new CandidateMmiScoringError('unavailable');
 }
-export function createCandidateMmiScoringApi(invoke: CandidateMmiInvoke) {
+export function createCandidateMmiScoringApi(
+  invoke: CandidateMmiInvoke,
+  modelProfile: AiModelProfile = deployedAiModelProfile,
+) {
   return Object.freeze({
     async scoreCandidateResponse(sessionId: string, promptOrder: CandidateMmiPromptOrder): Promise<CandidateMmiScoringResult> {
       if (!UUID_PATTERN.test(sessionId) || !Number.isInteger(promptOrder) || promptOrder < 1 || promptOrder > 5) throw new CandidateMmiScoringError('invalid_request');
       let result: Readonly<{ data: unknown; error: unknown }>;
-      try { result = await invoke('score-candidate-mmi-response', { body: { sessionId, promptOrder } }); } catch { throw new CandidateMmiScoringError('unavailable'); }
+      try { result = await invoke('score-candidate-mmi-response', { body: { sessionId, promptOrder, modelProfile } }); } catch { throw new CandidateMmiScoringError('unavailable'); }
       if (result.error) throw await resolveInvokeError(result.error);
       return parseSuccess(result.data);
     },

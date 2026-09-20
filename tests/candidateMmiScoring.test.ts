@@ -26,6 +26,17 @@ const providerConfig: AiConfig = Object.freeze({
   provider: 'anthropic', model: 'synthetic-model', apiKey: ['synthetic', 'test', 'value'].join('-'), baseUrl: null,
   inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15,
 });
+const openAiProviderConfig: AiConfig = Object.freeze({
+  ...providerConfig,
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+});
+const gpt55Profile = Object.freeze({
+  model: 'gpt-5.5',
+  inputRatePerMillion: 5,
+  cachedInputRatePerMillion: 0.5,
+  outputRatePerMillion: 30,
+});
 const providerAssessment = Object.freeze({ decisions: [
   { criterionId: 'CRIT_1', achieved: true, evidenceReference: { start: 0, end: 1 } },
   { criterionId: 'CRIT_2', achieved: true, evidenceReference: { start: 0, end: 1 } },
@@ -36,6 +47,7 @@ const providerAssessment = Object.freeze({ decisions: [
 function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): CandidateMmiScoringRepository {
   return {
     authenticate: vi.fn(async () => ({ userId })), claim: vi.fn(async () => ({ data: claimed })),
+    authorizeModelProfile: vi.fn(async () => ({ allowed: true })),
     loadProviderConfig: vi.fn(async () => ({ config: providerConfig })),
     complete: vi.fn(async () => ({ data: { status: 'scored' } })), fail: vi.fn(async () => ({})), ...overrides,
   };
@@ -43,6 +55,7 @@ function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): Can
 function dependencies(overrides: Partial<CandidateMmiScoringDependencies> = {}): CandidateMmiScoringDependencies {
   return {
     repository: repository(), allowedOrigins: allowedOrigin, createLeaseToken: () => leaseToken,
+    gpt55Profile,
     callProvider: vi.fn(async () => ({ content: JSON.stringify(providerAssessment), usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10 } })),
     logProviderFailure: vi.fn(), ...overrides,
   };
@@ -73,6 +86,48 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(persisted).not.toContain(transcript);
     expect(persisted).not.toContain('evidenceReference');
     expect(persisted).not.toContain('dimensions');
+  });
+
+  it('rejects a non-admin GPT-5.5 profile before claiming or calling a paid provider', async () => {
+    const repo = repository({ authorizeModelProfile: vi.fn(async () => ({ allowed: false })) });
+    const callProvider = vi.fn();
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({ repository: repo, callProvider }),
+    )(scoringRequest(JSON.stringify({ sessionId, promptOrder: 2, modelProfile: 'gpt-5.5' })));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ code: 'model_profile_forbidden' });
+    expect(repo.claim).not.toHaveBeenCalled();
+    expect(repo.loadProviderConfig).not.toHaveBeenCalled();
+    expect(callProvider).not.toHaveBeenCalled();
+  });
+
+  it('uses the server-owned GPT-5.5 model and rates for an authorized preview request', async () => {
+    const repo = repository({ loadProviderConfig: vi.fn(async () => ({ config: openAiProviderConfig })) });
+    const callProvider = vi.fn(dependencies().callProvider);
+    const response = await createCandidateMmiScoringHandler(
+      dependencies({ repository: repo, callProvider }),
+    )(scoringRequest(JSON.stringify({ sessionId, promptOrder: 2, modelProfile: 'gpt-5.5' })));
+
+    expect(response.status).toBe(200);
+    expect(repo.authorizeModelProfile).toHaveBeenCalledWith({ userId, modelProfile: 'gpt-5.5' });
+    expect(callProvider.mock.calls[0]?.[0]).toEqual({
+      ...openAiProviderConfig,
+      model: 'gpt-5.5',
+      baseUrl: null,
+      inputRatePerMillion: 5,
+      cachedInputRatePerMillion: 0.5,
+      outputRatePerMillion: 30,
+    });
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_usage: expect.objectContaining({
+        provider: 'openai',
+        model: 'gpt-5.5',
+        inputRatePerMillion: 5,
+        cachedInputRatePerMillion: 0.5,
+        outputRatePerMillion: 30,
+      }),
+    }));
   });
 
   it('returns no-response without loading configuration or calling a provider', async () => {
@@ -167,5 +222,16 @@ describe('candidate MMI browser scoring boundary', () => {
   it('accepts status-only success and rejects a provider assessment payload', async () => {
     await expect(createCandidateMmiScoringApi(vi.fn(async () => ({ data: { status: 'scored' }, error: null }))).scoreCandidateResponse(sessionId, 2)).resolves.toEqual({ status: 'scored' });
     await expect(createCandidateMmiScoringApi(async () => ({ data: { status: 'scored', assessment: providerAssessment }, error: null })).scoreCandidateResponse(sessionId, 2)).rejects.toMatchObject({ code: 'unavailable' } as CandidateMmiScoringError);
+  });
+
+  it('sends the deployment model profile without accepting a caller-selected model name', async () => {
+    const invoke = vi.fn(async () => ({ data: { status: 'scored' }, error: null }));
+    const api = createCandidateMmiScoringApi(invoke, 'gpt-5.5');
+
+    await api.scoreCandidateResponse(sessionId, 2);
+
+    expect(invoke).toHaveBeenCalledWith('score-candidate-mmi-response', {
+      body: { sessionId, promptOrder: 2, modelProfile: 'gpt-5.5' },
+    });
   });
 });

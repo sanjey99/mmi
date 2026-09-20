@@ -32,9 +32,12 @@ Create an ignored `.env` in the project root:
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
+EXPO_PUBLIC_AI_MODEL_PROFILE=default
 ```
 
 The `EXPO_PUBLIC_SUPABASE_ANON_KEY` name is retained for compatibility; its value is the current Supabase publishable key. Never place a secret or service-role key in an `EXPO_PUBLIC_*` variable.
+
+`EXPO_PUBLIC_AI_MODEL_PROFILE` accepts `default` or `gpt-5.5`. The GPT-5.5 profile is enforced server-side as admin-only; the browser value never selects a provider key or pricing directly. Model-comparison deployments can share the production Supabase URL and publishable key so accounts and practice history remain shared.
 
 ```bash
 npm start

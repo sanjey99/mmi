@@ -6,6 +6,12 @@ import {
   sanitizeDiagnosticRequestId,
 } from '../_shared/aiProvider.ts';
 import {
+  applyAiModelProfile,
+  parseAiModelProfile,
+  type AiModelProfile,
+  type Gpt55Profile,
+} from '../_shared/aiModelProfile.ts';
+import {
   createRubricResponseSchema,
   parseRubricProviderAssessment,
   toPublicRubricAssessment,
@@ -39,6 +45,7 @@ export type CandidateMmiUsage = Readonly<{
 
 export interface CandidateMmiScoringRepository {
   authenticate: (authorization: string) => Promise<RepositoryResult<{ userId?: string }>>;
+  authorizeModelProfile: (args: Readonly<{ userId: string; modelProfile: AiModelProfile }>) => Promise<RepositoryResult<{ allowed?: boolean }>>;
   claim: (args: Readonly<{ p_user_id: string; p_session_id: string; p_prompt_order: number; p_lease_token: string }>) => Promise<RepositoryResult<{ data?: unknown }>>;
   loadProviderConfig: () => Promise<RepositoryResult<{ config?: AiConfig }>>;
   complete: (args: Readonly<{ p_response_id: string; p_session_id: string; p_lease_token: string; p_public_assessment: PublicRubricAssessment; p_usage: CandidateMmiUsage }>) => Promise<RepositoryResult<{ data?: unknown }>>;
@@ -51,11 +58,12 @@ export interface CandidateMmiScoringDependencies {
   repository: CandidateMmiScoringRepository;
   allowedOrigins: string;
   createLeaseToken: () => string;
+  gpt55Profile: Gpt55Profile | null;
   callProvider: (config: AiConfig, request: AiProviderRequest) => Promise<AiProviderResult>;
   logProviderFailure: (diagnostic: CandidateMmiProviderFailureDiagnostic) => void;
 }
 
-type ScoringRequest = Readonly<{ sessionId: string; promptOrder: number }>;
+type ScoringRequest = Readonly<{ sessionId: string; promptOrder: number; modelProfile: AiModelProfile }>;
 type ClaimedResponse = Readonly<{ status: 'claimed'; responseId: string; sessionId: string; promptOrder: number; scenarioText: string; promptText: string; transcript: string; criteria: readonly RubricCriterionSnapshot[]; scoringContractVersion: string }>;
 type TerminalClaim =
   | Readonly<{ status: 'not_ready' }>
@@ -79,8 +87,12 @@ function boundedText(value: unknown, max = MAX_PUBLIC_TEXT_CODE_POINTS): value i
 }
 function parseRequest(value: unknown): ScoringRequest | null {
   const input = asRecord(value);
-  if (!input || !hasExactKeys(input, ['sessionId', 'promptOrder']) || typeof input.sessionId !== 'string' || !UUID_PATTERN.test(input.sessionId) || !Number.isInteger(input.promptOrder) || (input.promptOrder as number) < 1 || (input.promptOrder as number) > 5) return null;
-  return { sessionId: input.sessionId, promptOrder: input.promptOrder as number };
+  if (!input) return null;
+  const hasLegacyKeys = hasExactKeys(input, ['sessionId', 'promptOrder']);
+  const hasProfileKeys = hasExactKeys(input, ['sessionId', 'promptOrder', 'modelProfile']);
+  const modelProfile = hasLegacyKeys ? 'default' : parseAiModelProfile(input.modelProfile);
+  if ((!hasLegacyKeys && !hasProfileKeys) || modelProfile === null || typeof input.sessionId !== 'string' || !UUID_PATTERN.test(input.sessionId) || !Number.isInteger(input.promptOrder) || (input.promptOrder as number) < 1 || (input.promptOrder as number) > 5) return null;
+  return { sessionId: input.sessionId, promptOrder: input.promptOrder as number, modelProfile };
 }
 function parseCriteria(value: unknown): readonly RubricCriterionSnapshot[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) return null;
@@ -136,7 +148,7 @@ async function failClaimSafely(repository: CandidateMmiScoringRepository, claim:
 }
 
 export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScoringDependencies): (request: Request) => Promise<Response> {
-  const { repository, allowedOrigins, createLeaseToken, callProvider, logProviderFailure } = dependencies;
+  const { repository, allowedOrigins, createLeaseToken, gpt55Profile, callProvider, logProviderFailure } = dependencies;
   return async (request) => {
     const http = prepareEdgeHttpRequest(request, allowedOrigins);
     if (http.response) return http.response;
@@ -148,6 +160,10 @@ export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScori
     let input: ScoringRequest | null;
     try { input = parseRequest(await readBoundedJson(request, 4_096)); } catch (error) { return http.json({ code: 'invalid_request' }, error instanceof EdgeRequestError ? error.status : 400); }
     if (!input) return http.json({ code: 'invalid_request' }, 400);
+    let modelAuthorization: RepositoryResult<{ allowed?: boolean }>;
+    try { modelAuthorization = await repository.authorizeModelProfile({ userId: authentication.userId, modelProfile: input.modelProfile }); } catch { return http.json({ code: 'unavailable' }, 500); }
+    if (modelAuthorization.error) return http.json({ code: 'unavailable' }, 500);
+    if (modelAuthorization.allowed !== true) return http.json({ code: 'model_profile_forbidden' }, 403);
     let leaseToken: string;
     try { leaseToken = createLeaseToken(); } catch { return http.json({ code: 'unavailable' }, 500); }
     if (!UUID_PATTERN.test(leaseToken)) return http.json({ code: 'unavailable' }, 500);
@@ -169,7 +185,8 @@ export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScori
     try { configuration = await repository.loadProviderConfig(); } catch { await failClaimSafely(repository, claim, leaseToken, 'persistence_failed', null); return http.json({ code: 'unavailable' }, 500); }
     if (configuration.error) { await failClaimSafely(repository, claim, leaseToken, 'persistence_failed', null); return http.json({ code: 'unavailable' }, 500); }
     if (!configuration.config) { await failClaimSafely(repository, claim, leaseToken, 'provider_not_configured', null); return http.json({ code: 'provider_not_configured' }, 503); }
-    const config = configuration.config;
+    const config = applyAiModelProfile(configuration.config, input.modelProfile, gpt55Profile);
+    if (config === null) { await failClaimSafely(repository, claim, leaseToken, 'provider_not_configured', null); return http.json({ code: 'provider_not_configured' }, 503); }
     const startedAt = monotonicNow();
     let providerResult: AiProviderResult;
     try {

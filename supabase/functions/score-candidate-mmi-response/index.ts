@@ -34,6 +34,24 @@ if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
 }
 
 const serviceClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+const gpt55Model = Deno.env.get('AI_GPT55_MODEL');
+const gpt55InputRate = parseUsdRate(Deno.env.get('AI_GPT55_INPUT_RATE_PER_MILLION'));
+const gpt55CachedInputRate = parseUsdRate(Deno.env.get('AI_GPT55_CACHED_INPUT_RATE_PER_MILLION'));
+const gpt55OutputRate = parseUsdRate(Deno.env.get('AI_GPT55_OUTPUT_RATE_PER_MILLION'));
+const gpt55Profile =
+  typeof gpt55Model === 'string'
+  && gpt55Model.length <= 200
+  && /^gpt-5\.5(?:-[A-Za-z0-9._-]+)?$/.test(gpt55Model)
+  && gpt55InputRate !== null
+  && gpt55CachedInputRate !== null
+  && gpt55OutputRate !== null
+    ? Object.freeze({
+      model: gpt55Model,
+      inputRatePerMillion: gpt55InputRate,
+      cachedInputRatePerMillion: gpt55CachedInputRate,
+      outputRatePerMillion: gpt55OutputRate,
+    })
+    : null;
 
 const repository: CandidateMmiScoringRepository = {
   async authenticate(authorization) {
@@ -45,6 +63,16 @@ const repository: CandidateMmiScoringRepository = {
       error,
     } = await authenticatedClient.auth.getUser();
     return error || !user ? { error: true } : { userId: user.id };
+  },
+
+  async authorizeModelProfile({ userId, modelProfile }) {
+    if (modelProfile === 'default') return { allowed: true };
+    const { data, error } = await serviceClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', userId)
+      .maybeSingle();
+    return error ? { error: true } : { allowed: data?.is_admin === true };
   },
 
   claim: (args) =>
@@ -101,6 +129,7 @@ Deno.serve(
     repository,
     allowedOrigins: Deno.env.get('APP_ALLOWED_ORIGINS') ?? '',
     createLeaseToken: () => crypto.randomUUID(),
+    gpt55Profile,
     callProvider: callConfiguredProvider,
     logProviderFailure,
   }),

@@ -14,7 +14,12 @@ const validRequest = {
 
 describe('legacy scoring Edge core', () => {
   it('accepts only the exact identifier-and-answer request shape', () => {
-    expect(parseLegacyScoringRequest(validRequest)).toEqual(validRequest);
+    expect(parseLegacyScoringRequest(validRequest)).toEqual({ ...validRequest, modelProfile: 'default' });
+    expect(parseLegacyScoringRequest({ ...validRequest, modelProfile: 'gpt-5.5' })).toEqual({
+      ...validRequest,
+      modelProfile: 'gpt-5.5',
+    });
+    expect(() => parseLegacyScoringRequest({ ...validRequest, modelProfile: 'gpt-4o-mini' })).toThrow('invalid_request');
     expect(() => parseLegacyScoringRequest({ ...validRequest, userId: 'forged' })).toThrow('invalid_request');
     expect(() => parseLegacyScoringRequest({ ...validRequest, questionText: 'forged' })).toThrow('invalid_request');
     expect(() => parseLegacyScoringRequest({ ...validRequest, answerText: ' too short ' })).toThrow('invalid_request');

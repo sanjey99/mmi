@@ -32,6 +32,27 @@ describe('legacy scoring client boundary', () => {
         sessionId: '6f86f4d9-af0f-4c79-a15f-3577a4218c74',
         questionId: 'f51362d7-a51a-4d67-b97b-4f56181d871b',
         answerText: 'A sufficiently complete synthetic response.',
+        modelProfile: 'default',
+      },
+    });
+  });
+
+  it('sends the deployment model profile without accepting a caller-selected model name', async () => {
+    const invoke = vi.fn(async () => ({ data: score, error: null }));
+    const api = createLegacyScoringApi(invoke, 'gpt-5.5');
+
+    await api.scoreAnswer({
+      sessionId: '6f86f4d9-af0f-4c79-a15f-3577a4218c74',
+      questionId: 'f51362d7-a51a-4d67-b97b-4f56181d871b',
+      answerText: 'A sufficiently complete synthetic response.',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('score-answer', {
+      body: {
+        sessionId: '6f86f4d9-af0f-4c79-a15f-3577a4218c74',
+        questionId: 'f51362d7-a51a-4d67-b97b-4f56181d871b',
+        answerText: 'A sufficiently complete synthetic response.',
+        modelProfile: 'gpt-5.5',
       },
     });
   });

@@ -1,7 +1,14 @@
+type AiModelProfile = 'default' | 'gpt-5.5';
+
+function parseAiModelProfile(value: unknown): AiModelProfile | null {
+  return value === 'default' || value === 'gpt-5.5' ? value : null;
+}
+
 export interface LegacyScoringRequest {
   sessionId: string;
   questionId: string;
   answerText: string;
+  modelProfile: AiModelProfile;
 }
 
 export type LegacyClaim =
@@ -27,11 +34,18 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 
 export function parseLegacyScoringRequest(value: unknown): LegacyScoringRequest {
   const record = objectRecord(value);
-  const expected = ['sessionId', 'questionId', 'answerText'];
-  if (!record || Object.keys(record).length !== expected.length || expected.some(key => !(key in record))) {
+  const legacyKeys = ['sessionId', 'questionId', 'answerText'];
+  const profiledKeys = [...legacyKeys, 'modelProfile'];
+  const keys = record ? Object.keys(record) : [];
+  const hasExactKeys = (expected: readonly string[]) =>
+    keys.length === expected.length && expected.every(key => key in (record ?? {}));
+  if (!record || (!hasExactKeys(legacyKeys) && !hasExactKeys(profiledKeys))) {
     throw new Error('invalid_request');
   }
   const { sessionId, questionId, answerText } = record;
+  const modelProfile = hasExactKeys(legacyKeys)
+    ? 'default'
+    : parseAiModelProfile(record.modelProfile);
   if (
     typeof sessionId !== 'string'
     || typeof questionId !== 'string'
@@ -42,10 +56,11 @@ export function parseLegacyScoringRequest(value: unknown): LegacyScoringRequest 
     || answerText.length < 20
     || answerText.length > 3_000
     || answerText.includes('\0')
+    || modelProfile === null
   ) {
     throw new Error('invalid_request');
   }
-  return { sessionId, questionId, answerText };
+  return { sessionId, questionId, answerText, modelProfile };
 }
 
 export async function hashLegacyAnswer(answerText: string): Promise<string> {

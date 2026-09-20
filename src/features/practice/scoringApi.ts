@@ -1,4 +1,5 @@
 import type { ScoreResult } from '../../types';
+import { deployedAiModelProfile, type AiModelProfile } from '../../lib/aiModelProfile';
 
 export interface LegacyScoringRequest {
   sessionId: string;
@@ -22,6 +23,7 @@ const SAFE_MESSAGES = Object.freeze({
   unauthorized: 'Sign in again before submitting this response.',
   submission_unavailable: 'This practice station is no longer available.',
   provider_not_configured: 'Scoring is not configured yet.',
+  model_profile_forbidden: 'This AI model preview is available only to administrators.',
   rate_limited: 'You have reached the scoring limit.',
   in_progress: 'This response is already being scored.',
   answer_conflict: 'This station already has a different submitted response.',
@@ -83,11 +85,14 @@ async function resolveError(error: unknown): Promise<LegacyScoringError> {
   return scoringError('request_failed');
 }
 
-export function createLegacyScoringApi(invoke: InvokeFunction) {
+export function createLegacyScoringApi(
+  invoke: InvokeFunction,
+  modelProfile: AiModelProfile = deployedAiModelProfile,
+) {
   return {
     async scoreAnswer(request: LegacyScoringRequest): Promise<ScoreResult> {
       const validated = validateRequest(request);
-      const result = await invoke('score-answer', { body: { ...validated } });
+      const result = await invoke('score-answer', { body: { ...validated, modelProfile } });
       if (result.error) throw await resolveError(result.error);
       if (!isScoreResult(result.data)) throw scoringError('invalid_response');
       return result.data;
