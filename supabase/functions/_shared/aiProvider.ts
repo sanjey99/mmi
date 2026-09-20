@@ -297,6 +297,7 @@ export async function callConfiguredProvider(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     };
+  const usesGpt55ChatParameters = /^gpt-5\.5(?:-|$)/.test(config.model);
   const body = provider === 'anthropic'
     ? {
       model: config.model,
@@ -306,8 +307,9 @@ export async function callConfiguredProvider(
     }
     : {
       model: config.model,
-      max_tokens: request.maxTokens,
-      temperature: 0.3,
+      ...(usesGpt55ChatParameters
+        ? { max_completion_tokens: request.maxTokens }
+        : { max_tokens: request.maxTokens, temperature: 0.3 }),
       messages: [
         { role: 'system', content: request.systemPrompt },
         { role: 'user', content: request.userContent },

@@ -167,6 +167,30 @@ describe('callConfiguredProvider', () => {
     );
   });
 
+  it('uses GPT-5.5-compatible Chat Completions token and temperature parameters', async () => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ message: { content: 'provider response' } }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.5', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
+    );
+
+    const request = fetchSpy.mock.calls[0]?.[1];
+    if (request === undefined) throw new Error('Expected an OpenAI request');
+    expect(JSON.parse(String(request.body))).toEqual({
+      model: 'gpt-5.5',
+      max_completion_tokens: 32,
+      messages: [
+        { role: 'system', content: 'trusted' },
+        { role: 'user', content: 'untrusted' },
+      ],
+    });
+  });
+
   it('sends a supplied JSON schema to OpenAI as a strict structured-output contract', async () => {
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: '{"score":4}' } }],
