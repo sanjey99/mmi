@@ -38,10 +38,10 @@ const gpt55Profile = Object.freeze({
   outputRatePerMillion: 30,
 });
 const providerAssessment = Object.freeze({ decisions: [
-  { criterionId: 'CRIT_1', achieved: true, evidenceQuote: 'identify immediate risk' },
-  { criterionId: 'CRIT_2', achieved: true, evidenceQuote: 'protect confidentiality' },
-  { criterionId: 'CRIT_3', achieved: true, evidenceQuote: 'escalate to my supervisor' },
-  { criterionId: 'CRIT_4', achieved: false, evidenceQuote: null },
+  { criterionId: 'CRIT_1', achieved: true, evidenceId: 'E1' },
+  { criterionId: 'CRIT_2', achieved: true, evidenceId: 'E1' },
+  { criterionId: 'CRIT_3', achieved: true, evidenceId: 'E1' },
+  { criterionId: 'CRIT_4', achieved: false, evidenceId: null },
 ] });
 
 function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): CandidateMmiScoringRepository {
@@ -72,13 +72,14 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'scored' });
     const request = callProvider.mock.calls[0]?.[1] as AiProviderRequest;
-    expect(JSON.parse(request.userContent)).toEqual({ scenarioText: claimed.scenarioText, questionText: claimed.promptText, criteria: claimed.criteria, candidateAnswer: transcript });
+    expect(JSON.parse(request.userContent)).toEqual({ scenarioText: claimed.scenarioText, questionText: claimed.promptText, criteria: claimed.criteria, candidateAnswer: transcript, evidenceExcerpts: [{ evidenceId: 'E1', text: transcript }] });
     expect(request.systemPrompt).toContain('Judge only whether each supplied marking criterion is explicitly supported by the candidate answer.');
-    expect(request.systemPrompt).toContain('For achieved=true, evidenceQuote must be a short, contiguous, verbatim quote copied exactly from candidateAnswer');
-    expect(request.systemPrompt).toContain('For achieved=false, evidenceQuote must be null.');
+    expect(request.systemPrompt).toContain('For achieved=true, evidenceId must identify one supplied excerpt whose text explicitly supports that criterion.');
+    expect(request.systemPrompt).toContain('For achieved=false, evidenceId must be null.');
+    expect(request.systemPrompt).toContain('never return copied quotes or character offsets');
     expect(request.maxTokens).toBe(4_096);
     expect(request.responseSchema).toMatchObject({
-      properties: { decisions: { items: { required: ['criterionId', 'achieved', 'evidenceQuote'] } } },
+      properties: { decisions: { items: { required: ['criterionId', 'achieved', 'evidenceId'], properties: { evidenceId: { anyOf: [{ type: 'string', enum: ['E1'] }, { type: 'null' }] } } } } },
     });
     expect(repo.complete).toHaveBeenCalledExactlyOnceWith({
       p_response_id: responseId, p_session_id: sessionId, p_lease_token: leaseToken,
@@ -92,6 +93,8 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(persisted).not.toContain(transcript);
     expect(persisted).not.toContain('evidenceReference');
     expect(persisted).not.toContain('evidenceQuote');
+    expect(persisted).not.toContain('evidenceId');
+    expect(persisted).not.toContain('evidenceExcerpts');
     expect(persisted).not.toContain('dimensions');
   });
 
@@ -99,7 +102,7 @@ describe('candidate MMI rubric scoring handler', () => {
     const largeCriteria = Array.from({ length: 20 }, (_, index) => ({ criterionId: `CRIT_${index + 1}`, bulletText: `Criterion ${index + 1}`, domain: null }));
     const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, criteria: largeCriteria } })) });
     const callProvider = vi.fn(async (_config: AiConfig, _request: AiProviderRequest) => ({
-      content: JSON.stringify({ decisions: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, evidenceQuote: null })) }),
+      content: JSON.stringify({ decisions: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, evidenceId: null })) }),
       usage: null,
     }));
     const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
@@ -110,9 +113,9 @@ describe('candidate MMI rubric scoring handler', () => {
     }));
   });
 
-  it('fails the whole assessment when provider evidence is fabricated, without persisting private evidence', async () => {
+  it('fails the whole assessment when provider evidence identifiers are fabricated, without persisting private evidence', async () => {
     const repo = repository();
-    const invalidAssessment = { decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'a fabricated quote' }, ...providerAssessment.decisions.slice(1)] };
+    const invalidAssessment = { decisions: [{ ...providerAssessment.decisions[0], evidenceId: 'E999' }, ...providerAssessment.decisions.slice(1)] };
     const logProviderFailure = vi.fn();
     const response = await createCandidateMmiScoringHandler(dependencies({
       repository: repo,
@@ -123,19 +126,21 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
     expect(repo.complete).not.toHaveBeenCalled();
     expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ p_error_code: 'invalid_provider_response', p_usage: expect.objectContaining({ outcome: 'invalid_response', outputTokens: 150 }) }));
-    expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('a fabricated quote');
+    expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('E999');
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain(transcript);
-    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('a fabricated quote');
-    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({ requestId: null, provider: 'anthropic', code: 'invalid_provider_response', validationReason: 'quote_not_found' });
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('E999');
+    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({ requestId: null, provider: 'anthropic', code: 'invalid_provider_response', validationReason: 'evidence_unknown' });
   });
 
   it.each([
     ['envelope', '{"decisions":[', transcript],
     ['count', JSON.stringify({ decisions: providerAssessment.decisions.slice(0, 3) }), transcript],
     ['order', JSON.stringify({ decisions: [providerAssessment.decisions[1], providerAssessment.decisions[0], ...providerAssessment.decisions.slice(2)] }), transcript],
-    ['quote_null', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: null }, ...providerAssessment.decisions.slice(1)] }), transcript],
-    ['quote_too_long', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'a'.repeat(301) }, ...providerAssessment.decisions.slice(1)] }), 'a'.repeat(301)],
-    ['internal', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: '\ude00' }, ...providerAssessment.decisions.slice(1)] }), '😀'],
+    ['evidence_null', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: null }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['evidence_null', JSON.stringify({ decisions: [...providerAssessment.decisions.slice(0, 3), { ...providerAssessment.decisions[3], evidenceId: 'E1' }] }), transcript],
+    ['evidence_unknown', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: 1 }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['evidence_unknown', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: 'E1 ' }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'altered quote' }, ...providerAssessment.decisions.slice(1)] }), transcript],
   ])('logs only the bounded %s label while preserving the public error contract', async (validationReason, content, candidateTranscript) => {
     const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, transcript: candidateTranscript } })) });
     const logProviderFailure = vi.fn();
@@ -150,7 +155,27 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({ requestId: null, provider: 'anthropic', code: 'invalid_provider_response', validationReason });
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('CRIT_');
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('evidenceQuote');
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('evidenceId');
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('identify immediate risk');
+  });
+
+  it('sends exact overlapping Unicode excerpts without offsets and accepts only their server identifiers', async () => {
+    const candidateTranscript = `${'😀'.repeat(140)}I would listen carefully, identify risk, and escalate safely.${' café'.repeat(80)}`;
+    const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, transcript: candidateTranscript } })) });
+    const callProvider = vi.fn(async (_config: AiConfig, _request: AiProviderRequest) => ({
+      content: JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: 'E2' }, ...providerAssessment.decisions.slice(1)] }), usage: null,
+    }));
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
+    expect(response.status).toBe(200);
+    const request = callProvider.mock.calls[0]?.[1];
+    const content = JSON.parse(request.userContent);
+    expect(content.candidateAnswer).toBe(candidateTranscript);
+    expect(content.evidenceExcerpts[1]).toEqual({ evidenceId: 'E2', text: Array.from(candidateTranscript).slice(150, 450).join('') });
+    expect(content.evidenceExcerpts.every((excerpt: Record<string, unknown>) => Object.keys(excerpt).sort().join(',') === 'evidenceId,text')).toBe(true);
+    expect(request.responseSchema).toMatchObject({ properties: { decisions: { items: { properties: { evidenceId: { anyOf: [{ enum: content.evidenceExcerpts.map((excerpt: { evidenceId: string }) => excerpt.evidenceId) }, { type: 'null' }] } } } } } });
+    expect(repo.complete).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ p_public_assessment: expect.objectContaining({ schemaVersion: 3, questionScorePct: 75 }) }));
+    expect(JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('evidence');
+    expect(JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('café');
   });
 
   it('rejects a non-admin GPT-5.5 profile before claiming or calling a paid provider', async () => {

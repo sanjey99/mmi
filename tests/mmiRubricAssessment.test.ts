@@ -3,9 +3,13 @@ const rubricModulePath = new URL('../supabase/functions/_shared/rubricAssessment
 const {
   createRubricResponseSchema,
   createRubricQuoteResponseSchema,
+  createRubricEvidenceExcerpts,
+  createRubricExcerptResponseSchema,
+  MAX_RUBRIC_EVIDENCE_EXCERPT_CODE_POINTS,
   MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS,
   parseRubricProviderAssessment,
   parseRubricQuoteProviderAssessment,
+  parseRubricExcerptProviderAssessment,
   RubricAssessmentValidationError,
   toPublicRubricAssessment,
 } = await import(rubricModulePath);
@@ -27,6 +31,12 @@ const quoteDecisions = [
   { criterionId: 'C2', achieved: false, evidenceQuote: null },
   { criterionId: 'C3', achieved: false, evidenceQuote: null },
   { criterionId: 'C4', achieved: false, evidenceQuote: null },
+] as const;
+const excerptDecisions = [
+  { criterionId: 'C1', achieved: true, evidenceId: 'E1' },
+  { criterionId: 'C2', achieved: false, evidenceId: null },
+  { criterionId: 'C3', achieved: false, evidenceId: null },
+  { criterionId: 'C4', achieved: false, evidenceId: null },
 ] as const;
 
 if (process.env.VITEST) {
@@ -108,6 +118,106 @@ if (process.env.VITEST) {
       { criterionId: 'C1', achieved: true, evidenceReference: { start: 2, end: 8 } },
       ...decisions.slice(1),
     ]);
+  });
+
+  it.each([
+    [1, 1], [149, 1], [150, 1], [299, 1], [300, 1], [301, 2],
+    [449, 2], [450, 2], [451, 3], [12_000, 79],
+  ])('covers all %i candidate code points with %i bounded deterministic excerpts', (length, count) => {
+    const transcript = '😀'.repeat(length);
+    const points = Array.from(transcript);
+    const excerpts = createRubricEvidenceExcerpts(transcript);
+    expect(excerpts).toHaveLength(count);
+    expect(excerpts).toEqual(createRubricEvidenceExcerpts(transcript));
+    const covered = new Set<number>();
+    for (const [index, excerpt] of excerpts.entries()) {
+      expect(excerpt.evidenceId).toBe(`E${index + 1}`);
+      expect(Array.from(excerpt.text).length).toBeLessThanOrEqual(MAX_RUBRIC_EVIDENCE_EXCERPT_CODE_POINTS);
+      expect(excerpt.text).toBe(points.slice(excerpt.evidenceReference.start, excerpt.evidenceReference.end).join(''));
+      expect(Object.isFrozen(excerpt)).toBe(true);
+      expect(Object.isFrozen(excerpt.evidenceReference)).toBe(true);
+      for (let point = excerpt.evidenceReference.start; point < excerpt.evidenceReference.end; point += 1) covered.add(point);
+    }
+    expect(Object.isFrozen(excerpts)).toBe(true);
+    expect(covered.size).toBe(length);
+    expect(excerpts.at(-1)?.evidenceReference.end).toBe(length);
+  });
+
+  it('keeps Unicode boundary evidence intact in an overlapping server range', () => {
+    const phrase = '😀 I would protect safety and escalate.';
+    const transcript = `${'a'.repeat(280)}${phrase}${' café'.repeat(90)}`;
+    const excerpts = createRubricEvidenceExcerpts(transcript);
+    expect(excerpts[0].text).not.toContain(phrase);
+    expect(excerpts[1].text).toContain(phrase);
+    const parsed = parseRubricExcerptProviderAssessment(JSON.stringify({ decisions: [{ ...excerptDecisions[0], evidenceId: 'E2' }, ...excerptDecisions.slice(1)] }), criteria, transcript);
+    expect(parsed).toEqual([
+      { criterionId: 'C1', achieved: true, evidenceReference: { start: 150, end: 450 } },
+      ...decisions.slice(1),
+    ]);
+    const publicAssessment = toPublicRubricAssessment(parsed, criteria, transcript);
+    expect(publicAssessment).toMatchObject({ schemaVersion: 3, questionScorePct: 25 });
+    expect(JSON.stringify(publicAssessment)).not.toContain('evidence');
+    expect(JSON.stringify(publicAssessment)).not.toContain('café');
+    expect(JSON.stringify(publicAssessment)).not.toContain(phrase);
+  });
+
+  it('skips whitespace-only windows while retaining meaningful tail evidence', () => {
+    const transcript = `${' '.repeat(500)}Safe escalation`;
+    const excerpts = createRubricEvidenceExcerpts(transcript);
+    expect(excerpts).toEqual([{ evidenceId: 'E1', text: `${' '.repeat(200)}Safe escalation`, evidenceReference: { start: 300, end: 515 } }]);
+    expect(parseRubricExcerptProviderAssessment(JSON.stringify({ decisions: excerptDecisions }), criteria, transcript)[0].evidenceReference).toEqual({ start: 300, end: 515 });
+    expect(() => createRubricEvidenceExcerpts(' \n\t ')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+    expect(() => createRubricEvidenceExcerpts('a'.repeat(12_001))).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+  });
+
+  it('limits the provider schema to exactly the generated evidence identifiers', () => {
+    const transcript = 'a'.repeat(451);
+    expect(createRubricExcerptResponseSchema(criteria, transcript)).toEqual({
+      type: 'object', additionalProperties: false, required: ['decisions'],
+      properties: { decisions: {
+        type: 'array', minItems: 4, maxItems: 4,
+        items: {
+          type: 'object', additionalProperties: false, required: ['criterionId', 'achieved', 'evidenceId'],
+          properties: {
+            criterionId: { type: 'string', enum: ['C1', 'C2', 'C3', 'C4'] },
+            achieved: { type: 'boolean' },
+            evidenceId: { anyOf: [{ type: 'string', enum: ['E1', 'E2', 'E3'] }, { type: 'null' }] },
+          },
+        },
+      } },
+    });
+    expect(JSON.stringify(createRubricExcerptResponseSchema(criteria, transcript))).not.toContain('evidenceQuote');
+    expect(JSON.stringify(createRubricExcerptResponseSchema(criteria, transcript))).not.toContain('evidenceReference');
+  });
+
+  it.each([
+    ['missing', excerptDecisions.slice(0, 3)],
+    ['extra', [...excerptDecisions, excerptDecisions[3]]],
+    ['duplicate', [excerptDecisions[0], excerptDecisions[0], ...excerptDecisions.slice(2)]],
+    ['reordered', [excerptDecisions[1], excerptDecisions[0], ...excerptDecisions.slice(2)]],
+    ['unknown criterion', [{ ...excerptDecisions[0], criterionId: 'OTHER' }, ...excerptDecisions.slice(1)]],
+    ['non-boolean', [{ ...excerptDecisions[0], achieved: 'true' }, ...excerptDecisions.slice(1)]],
+    ['positive null', [{ ...excerptDecisions[0], evidenceId: null }, ...excerptDecisions.slice(1)]],
+    ['negative identifier', [excerptDecisions[0], { ...excerptDecisions[1], evidenceId: 'E1' }, ...excerptDecisions.slice(2)]],
+    ['unknown identifier', [{ ...excerptDecisions[0], evidenceId: 'E999' }, ...excerptDecisions.slice(1)]],
+    ['other answer identifier', [{ ...excerptDecisions[0], evidenceId: 'E2' }, ...excerptDecisions.slice(1)]],
+    ['prototype identifier', [{ ...excerptDecisions[0], evidenceId: '__proto__' }, ...excerptDecisions.slice(1)]],
+    ['case change', [{ ...excerptDecisions[0], evidenceId: 'e1' }, ...excerptDecisions.slice(1)]],
+    ['space change', [{ ...excerptDecisions[0], evidenceId: 'E1 ' }, ...excerptDecisions.slice(1)]],
+    ['numeric identifier', [{ ...excerptDecisions[0], evidenceId: 1 }, ...excerptDecisions.slice(1)]],
+    ['provider offset', [{ ...excerptDecisions[0], evidenceId: { start: 0, end: 1 } }, ...excerptDecisions.slice(1)]],
+    ['copied quote', quoteDecisions],
+    ['additional quote', [{ ...excerptDecisions[0], evidenceQuote: 'Safe' }, ...excerptDecisions.slice(1)]],
+  ])('rejects %s in provider excerpt decisions without awarding fallback credit', (_name, invalid) => {
+    expect(() => parseRubricExcerptProviderAssessment(JSON.stringify({ decisions: invalid }), criteria, 'Safe escalation')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+  });
+
+  it('accepts all-negative decisions and rejects malformed excerpt envelopes', () => {
+    const negatives = excerptDecisions.map((decision) => ({ ...decision, achieved: false, evidenceId: null }));
+    expect(parseRubricExcerptProviderAssessment(JSON.stringify({ decisions: negatives }), criteria, 'Safe escalation')).toEqual(decisions.map((decision) => ({ ...decision, achieved: false, evidenceReference: null })));
+    for (const raw of ['{"decisions":[', 'null', '[]', JSON.stringify({ decisions: excerptDecisions, score: 100 })]) {
+      expect(() => parseRubricExcerptProviderAssessment(raw, criteria, 'Safe escalation')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+    }
   });
 
   it.each([
