@@ -16,6 +16,7 @@
     "supabase/functions/manage-ai-key/handler.ts",
     "supabase/functions/score-candidate-mmi-response/handler.ts",
     "tests/manageAiKeyHandler.test.ts",
-    "tests/candidateMmiScoring.test.ts"
+    "tests/candidateMmiScoring.test.ts",
+    "tests/candidateMmiWeightPersistence.test.ts"
   ]
 }

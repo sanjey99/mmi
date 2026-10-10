@@ -32,6 +32,7 @@ export default defineConfig({
       'tests/candidateMmiImportPolicy.test.ts',
       'tests/candidateMmiApi.test.ts',
       'tests/candidateMmiScoring.test.ts',
+      'tests/candidateMmiWeightPersistence.test.ts',
       'tests/candidateMmiRateBounds.test.ts',
       'tests/candidateMmiScoringSummary.test.ts',
       'tests/candidateMmiScoringQueue.test.ts',

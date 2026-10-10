@@ -126,6 +126,31 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('a fabricated quote');
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain(transcript);
     expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('a fabricated quote');
+    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({ requestId: null, provider: 'anthropic', code: 'invalid_provider_response', validationReason: 'quote_not_found' });
+  });
+
+  it.each([
+    ['envelope', '{"decisions":[', transcript],
+    ['count', JSON.stringify({ decisions: providerAssessment.decisions.slice(0, 3) }), transcript],
+    ['order', JSON.stringify({ decisions: [providerAssessment.decisions[1], providerAssessment.decisions[0], ...providerAssessment.decisions.slice(2)] }), transcript],
+    ['quote_null', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: null }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['quote_too_long', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'a'.repeat(301) }, ...providerAssessment.decisions.slice(1)] }), 'a'.repeat(301)],
+    ['internal', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: '\ude00' }, ...providerAssessment.decisions.slice(1)] }), '😀'],
+  ])('logs only the bounded %s label while preserving the public error contract', async (validationReason, content, candidateTranscript) => {
+    const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, transcript: candidateTranscript } })) });
+    const logProviderFailure = vi.fn();
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({ content, usage: null })),
+      logProviderFailure,
+    }))(scoringRequest());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(logProviderFailure).toHaveBeenCalledExactlyOnceWith({ requestId: null, provider: 'anthropic', code: 'invalid_provider_response', validationReason });
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('CRIT_');
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('evidenceQuote');
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('identify immediate risk');
   });
 
   it('rejects a non-admin GPT-5.5 profile before claiming or calling a paid provider', async () => {

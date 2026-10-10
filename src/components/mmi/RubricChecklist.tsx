@@ -23,7 +23,7 @@ export function RubricChecklist({ criteria }: RubricChecklistProps) {
           <View style={styles.copy}>
             <Text style={styles.bullet}>{criterion.bulletText}</Text>
             <Text style={styles.meta}>
-              {criterion.domain ? `${criterion.domain} · ` : ''}{criterion.weightPct}%
+              {criterion.domain ? `${criterion.domain} · ` : ''}{Math.round(criterion.weightPct * 100) / 100}%
             </Text>
           </View>
         </View>

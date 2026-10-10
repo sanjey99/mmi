@@ -24,6 +24,26 @@ type JsonSchema = Readonly<Record<string, unknown>>;
 
 export const MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS = 300;
 
+const RUBRIC_VALIDATION_REASONS = Object.freeze([
+  'envelope', 'count', 'order', 'quote_null', 'quote_too_long', 'quote_not_found', 'internal',
+] as const);
+export type RubricAssessmentValidationReason = typeof RUBRIC_VALIDATION_REASONS[number];
+
+/** Carries only a fixed operational label; candidate and provider content is never retained. */
+export class RubricAssessmentValidationError extends Error {
+  readonly reason: RubricAssessmentValidationReason;
+
+  constructor(reason: RubricAssessmentValidationReason) {
+    super('AI_PROVIDER_RESPONSE_INVALID');
+    this.name = 'RubricAssessmentValidationError';
+    this.reason = RUBRIC_VALIDATION_REASONS.includes(reason) ? reason : 'internal';
+  }
+}
+
+const invalidQuoteAssessment = (reason: RubricAssessmentValidationReason): never => {
+  throw new RubricAssessmentValidationError(reason);
+};
+
 const invalidAssessment = (): never => {
   throw new Error('AI_PROVIDER_RESPONSE_INVALID');
 };
@@ -114,41 +134,42 @@ export function parseRubricQuoteProviderAssessment(
   transcript: string,
 ): readonly ProviderCriterionDecision[] {
   const ids = criterionIds(criteria);
-  if (typeof raw !== 'string' || typeof transcript !== 'string') invalidAssessment();
+  if (typeof raw !== 'string' || typeof transcript !== 'string') invalidQuoteAssessment('envelope');
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw as string);
   } catch {
-    invalidAssessment();
+    invalidQuoteAssessment('envelope');
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalidAssessment();
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalidQuoteAssessment('envelope');
   const envelope = parsed as Record<string, unknown>;
   const rawDecisions = envelope.decisions;
-  if (Object.keys(envelope).length !== 1 || !Array.isArray(rawDecisions) || rawDecisions.length !== ids.length) {
-    invalidAssessment();
+  if (Object.keys(envelope).length !== 1 || !Array.isArray(rawDecisions)) {
+    invalidQuoteAssessment('envelope');
   }
+  if ((rawDecisions as unknown[]).length !== ids.length) invalidQuoteAssessment('count');
   const transcriptPoints = Array.from(transcript);
   const decisions = (rawDecisions as unknown[]).map((value, index): ProviderCriterionDecision => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) invalidAssessment();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalidQuoteAssessment('envelope');
     const decision = value as Record<string, unknown>;
     if (Object.keys(decision).length !== 3 || !('criterionId' in decision) || !('achieved' in decision) || !('evidenceQuote' in decision)) {
-      invalidAssessment();
+      invalidQuoteAssessment('envelope');
     }
-    if (decision.criterionId !== ids[index] || typeof decision.achieved !== 'boolean') invalidAssessment();
+    if (decision.criterionId !== ids[index]) invalidQuoteAssessment('order');
+    if (typeof decision.achieved !== 'boolean') invalidQuoteAssessment('envelope');
     if (!decision.achieved) {
-      if (decision.evidenceQuote !== null) invalidAssessment();
+      if (decision.evidenceQuote !== null) invalidQuoteAssessment('quote_null');
       return { criterionId: ids[index], achieved: false, evidenceReference: null };
     }
     const quote = decision.evidenceQuote;
-    if (typeof quote !== 'string' || !quote.trim() || codePointLength(quote) > MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS) {
-      invalidAssessment();
-    }
+    if (typeof quote !== 'string' || !quote.trim()) invalidQuoteAssessment('quote_null');
+    if (codePointLength(quote as string) > MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS) invalidQuoteAssessment('quote_too_long');
     const matchedAt = transcript.indexOf(quote as string);
-    if (matchedAt < 0) invalidAssessment();
+    if (matchedAt < 0) invalidQuoteAssessment('quote_not_found');
     const start = codePointLength(transcript.slice(0, matchedAt));
     const end = start + codePointLength(quote as string);
     // A partial UTF-16 surrogate must never become an evidence code-point range.
-    if (transcriptPoints.slice(start, end).join('') !== quote) invalidAssessment();
+    if (transcriptPoints.slice(start, end).join('') !== quote) invalidQuoteAssessment('internal');
     return { criterionId: ids[index], achieved: true, evidenceReference: { start, end } };
   });
   return parseRubricProviderAssessment(JSON.stringify({ decisions }), criteria, transcript);
@@ -212,6 +233,7 @@ export function parseRubricProviderAssessment(
 }
 
 const roundPct = (value: number): number => Math.round(value * 100) / 100;
+const roundWeightPct = (value: number): number => Math.round(value * 100_000_000) / 100_000_000;
 
 /** Projects a validated rubric result without retaining provider evidence or candidate transcript. */
 export function toPublicRubricAssessment(
@@ -220,7 +242,7 @@ export function toPublicRubricAssessment(
   transcript: string,
 ): PublicRubricAssessment {
   const parsed = parseRubricProviderAssessment(JSON.stringify({ decisions }), criteria, transcript);
-  const weightPct = roundPct(100 / criteria.length);
+  const weightPct = roundWeightPct(100 / criteria.length);
   const questionScorePct = roundPct(parsed.filter((decision) => decision.achieved).length / criteria.length * 100);
   return Object.freeze({
     schemaVersion: 3,

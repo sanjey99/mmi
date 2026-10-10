@@ -15,8 +15,10 @@ import {
   createRubricQuoteResponseSchema,
   MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS,
   parseRubricQuoteProviderAssessment,
+  RubricAssessmentValidationError,
   toPublicRubricAssessment,
   type PublicRubricAssessment,
+  type RubricAssessmentValidationReason,
   type RubricCriterionSnapshot,
 } from '../_shared/rubricAssessment.ts';
 import { EdgeRequestError, prepareEdgeHttpRequest, readBoundedJson } from '../_shared/http.ts';
@@ -54,7 +56,7 @@ export interface CandidateMmiScoringRepository {
 }
 
 type ProviderName = 'anthropic' | 'openai' | 'openai_compatible' | 'unknown';
-export type CandidateMmiProviderFailureDiagnostic = Readonly<{ requestId: string | null; provider: ProviderName; status?: number; code: 'provider_failed' | 'invalid_provider_response' }>;
+export type CandidateMmiProviderFailureDiagnostic = Readonly<{ requestId: string | null; provider: ProviderName; status?: number; code: 'provider_failed' | 'invalid_provider_response'; validationReason?: RubricAssessmentValidationReason }>;
 export interface CandidateMmiScoringDependencies {
   repository: CandidateMmiScoringRepository;
   allowedOrigins: string;
@@ -212,9 +214,10 @@ export function createCandidateMmiScoringHandler(dependencies: CandidateMmiScori
       return http.json({ code: 'unavailable' }, 500);
     }
     let assessment: PublicRubricAssessment;
-    try { assessment = toPublicRubricAssessment(parseRubricQuoteProviderAssessment(providerResult.content, claim.criteria, claim.transcript), claim.criteria, claim.transcript); } catch {
+    try { assessment = toPublicRubricAssessment(parseRubricQuoteProviderAssessment(providerResult.content, claim.criteria, claim.transcript), claim.criteria, claim.transcript); } catch (error) {
       const usage = usageFor(config, providerResult, latencyMs, 'invalid_response');
-      try { logProviderFailure({ requestId: sanitizeDiagnosticRequestId(request.headers.get('x-request-id')) ?? null, provider: providerName(config.provider), code: 'invalid_provider_response' }); } catch { /* diagnostics cannot affect scoring */ }
+      const validationReason = error instanceof RubricAssessmentValidationError ? error.reason : 'internal';
+      try { logProviderFailure({ requestId: sanitizeDiagnosticRequestId(request.headers.get('x-request-id')) ?? null, provider: providerName(config.provider), code: 'invalid_provider_response', validationReason }); } catch { /* diagnostics cannot affect scoring */ }
       await failClaimSafely(repository, claim, leaseToken, 'invalid_provider_response', usage);
       return http.json({ code: 'invalid_provider_response' }, 502);
     }

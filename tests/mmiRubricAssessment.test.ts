@@ -6,6 +6,7 @@ const {
   MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS,
   parseRubricProviderAssessment,
   parseRubricQuoteProviderAssessment,
+  RubricAssessmentValidationError,
   toPublicRubricAssessment,
 } = await import(rubricModulePath);
 
@@ -40,11 +41,24 @@ if (process.env.VITEST) {
     expect(JSON.stringify(result)).not.toContain('evidenceReference');
   });
 
-  it('uses equal 20% weights for five criteria and two-decimal rounding for thirds', () => {
+  it('matches eight-decimal database weights while keeping two-decimal question scores', () => {
     const five = Array.from({ length: 5 }, (_, index) => ({ criterionId: `C${index + 1}`, bulletText: `Criterion ${index + 1}`, domain: null }));
     const fiveDecisions = five.map((criterion, index) => ({ criterionId: criterion.criterionId, achieved: index < 3, evidenceReference: index < 3 ? { start: index, end: index + 1 } : null }));
     expect(toPublicRubricAssessment(fiveDecisions, five, 'abcde')).toMatchObject({ questionScorePct: 60, criteria: Array.from({ length: 5 }, () => ({ weightPct: 20 })) });
-    expect(toPublicRubricAssessment(decisions.slice(0, 3), criteria.slice(0, 3), 'Safe escalation is required.')).toMatchObject({ questionScorePct: 33.33, criteria: Array.from({ length: 3 }, () => ({ weightPct: 33.33 })) });
+    expect(toPublicRubricAssessment(decisions.slice(0, 3), criteria.slice(0, 3), 'Safe escalation is required.')).toMatchObject({ questionScorePct: 33.33, criteria: Array.from({ length: 3 }, () => ({ weightPct: 33.33333333 })) });
+  });
+
+  it.each([
+    [1, 100], [2, 50], [3, 33.33333333], [4, 25], [5, 20],
+    [6, 16.66666667], [7, 14.28571429], [8, 12.5], [9, 11.11111111], [10, 10],
+    [11, 9.09090909], [12, 8.33333333], [13, 7.69230769], [14, 7.14285714], [15, 6.66666667],
+    [16, 6.25], [17, 5.88235294], [18, 5.55555556], [19, 5.26315789], [20, 5],
+  ])('uses the exact database weight for %i criteria', (count, expectedWeight) => {
+    const criterionSnapshot = Array.from({ length: count }, (_, index) => ({ criterionId: `C${index + 1}`, bulletText: 'Criterion', domain: null }));
+    const assessmentDecisions = criterionSnapshot.map(({ criterionId }, index) => ({ criterionId, achieved: index === 0, evidenceReference: index === 0 ? { start: 0, end: 1 } : null }));
+    const result = toPublicRubricAssessment(assessmentDecisions, criterionSnapshot, 'a');
+    expect(result.criteria.every((criterion: { weightPct: number }) => criterion.weightPct === expectedWeight)).toBe(true);
+    expect(result.questionScorePct).toBe(Math.round(10_000 / count) / 100);
   });
 
   it('creates an exact, bounded schema for supplied criteria', () => {
@@ -120,6 +134,35 @@ if (process.env.VITEST) {
     expect(() => parseRubricQuoteProviderAssessment(JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: oversizedQuote }, ...quoteDecisions.slice(1)] }), criteria, oversizedQuote)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
     expect(() => parseRubricQuoteProviderAssessment(JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: '\ude00' }, ...quoteDecisions.slice(1)] }), criteria, '😀')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
     expect(() => parseRubricQuoteProviderAssessment('{"decisions":[', criteria, 'Safe escalation')).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+  });
+
+  it.each([
+    ['envelope', '{"decisions":[', 'Safe escalation'],
+    ['count', JSON.stringify({ decisions: quoteDecisions.slice(0, 3) }), 'Safe escalation'],
+    ['order', JSON.stringify({ decisions: [quoteDecisions[1], quoteDecisions[0], ...quoteDecisions.slice(2)] }), 'Safe escalation'],
+    ['quote_null', JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: null }, ...quoteDecisions.slice(1)] }), 'Safe escalation'],
+    ['quote_null', JSON.stringify({ decisions: [quoteDecisions[0], { ...quoteDecisions[1], evidenceQuote: 'Safe' }, ...quoteDecisions.slice(2)] }), 'Safe escalation'],
+    ['quote_too_long', JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: 'a'.repeat(301) }, ...quoteDecisions.slice(1)] }), 'a'.repeat(301)],
+    ['quote_not_found', JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: 'Private invented evidence' }, ...quoteDecisions.slice(1)] }), 'Safe escalation'],
+    ['internal', JSON.stringify({ decisions: [{ ...quoteDecisions[0], evidenceQuote: '\ude00' }, ...quoteDecisions.slice(1)] }), '😀'],
+  ])('reports only the fixed %s validation label', (reason, raw, transcript) => {
+    let captured: unknown;
+    try {
+      parseRubricQuoteProviderAssessment(raw, criteria, transcript);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(RubricAssessmentValidationError);
+    expect(captured).toMatchObject({ message: 'AI_PROVIDER_RESPONSE_INVALID', reason });
+    expect(Object.keys(captured as object).sort()).toEqual(['name', 'reason']);
+    expect(JSON.stringify(captured)).not.toContain('Private invented evidence');
+    expect(JSON.stringify(captured)).not.toContain('C1');
+  });
+
+  it('normalizes unrecognized diagnostic labels without retaining arbitrary text', () => {
+    const error = new RubricAssessmentValidationError('Private unexpected text' as never);
+    expect(error.reason).toBe('internal');
+    expect(JSON.stringify(error)).not.toContain('Private unexpected text');
   });
 
   it.each([
