@@ -135,7 +135,14 @@ describe('single MMI station route contract', () => {
     expect(routeSource).toMatch(/candidate-mmi-finalization:/);
     expect(routeSource).toMatch(/crypto/);
     expect(routeSource).toMatch(/randomUUID/);
-    expect(routeSource).toMatch(/completeCurrentResponse\(\{ transcript: submittedTranscript, finalizationKey \}\)/);
+    expect(routeSource).toMatch(/completeCurrentResponse\(\{ transcript: originalTranscript, finalizationKey \}\)/);
+    expect(routeSource).toMatch(/pendingResponseCompletionRef/);
+    expect(routeSource).toMatch(/previousCompletion\?\.phaseKey === key/);
+    expect(routeSource).toMatch(/originalAction = pending\?\.action \?\? action/);
+    expect(routeSource).toMatch(/originalTranscript = pending\?\.transcript \?\? submittedTranscript/);
+    expect(routeSource).toMatch(/pending\?\.finalizationKey \?\? finalizationKeyForResponse/);
+    expect(routeSource).toMatch(/deadlineReached = secondsRemaining\(anchorRef\.current\) === 0/);
+    expect(routeSource).toMatch(/originalAction === 'timer' \|\| deadlineReached/);
     expect(routeSource).not.toMatch(/api\(\)\.finalize\([^)]*transcript/);
   });
 

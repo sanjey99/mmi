@@ -5,6 +5,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SAFE_MESSAGES = Object.freeze({
   invalid_request: 'AI scoring request is invalid.', not_ready: 'AI scoring starts after the station is complete.',
   in_progress: 'This response is already being scored.', provider_not_configured: 'AI scoring is not configured yet.',
+  rate_limited: 'AI scoring has reached its temporary limit. Please wait before retrying.',
   model_profile_forbidden: 'This AI model preview is available only to administrators.',
   provider_failed: 'AI scoring is temporarily unavailable. Try again.', invalid_provider_response: 'The AI scorer returned an invalid result. Try again.',
   unauthorized: 'Sign in again before requesting feedback.', unavailable: 'AI scoring is unavailable. Try again.',
@@ -12,7 +13,11 @@ const SAFE_MESSAGES = Object.freeze({
 export type CandidateMmiScoringErrorCode = keyof typeof SAFE_MESSAGES;
 export class CandidateMmiScoringError extends Error {
   readonly code: CandidateMmiScoringErrorCode;
-  constructor(code: CandidateMmiScoringErrorCode) { super(SAFE_MESSAGES[code]); this.name = 'CandidateMmiScoringError'; this.code = code; }
+  readonly retryAfterSeconds: number | null;
+  constructor(code: CandidateMmiScoringErrorCode, retryAfterSeconds: number | null = null) {
+    super(SAFE_MESSAGES[code]); this.name = 'CandidateMmiScoringError'; this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds !== null && Number.isInteger(retryAfterSeconds) && retryAfterSeconds >= 1 && retryAfterSeconds <= 3_600 ? retryAfterSeconds : null;
+  }
 }
 export type CandidateMmiScoringResult = Readonly<{ status: 'scored' | 'no_response' }>;
 export type CandidateMmiInvoke = (name: string, options: Readonly<{ body: Record<string, unknown> }>) => PromiseLike<Readonly<{ data: unknown; error: unknown }>>;
@@ -26,7 +31,10 @@ async function resolveInvokeError(error: unknown): Promise<CandidateMmiScoringEr
   const context = (error as { context?: unknown } | null)?.context;
   if (context instanceof Response) try {
     const payload = await context.clone().json() as { code?: unknown };
-    if (typeof payload.code === 'string' && Object.prototype.hasOwnProperty.call(SAFE_MESSAGES, payload.code) && payload.code !== 'invalid_request') return new CandidateMmiScoringError(payload.code as CandidateMmiScoringErrorCode);
+    if (typeof payload.code === 'string' && Object.prototype.hasOwnProperty.call(SAFE_MESSAGES, payload.code) && payload.code !== 'invalid_request') {
+      const retryAfter = context.headers.get('Retry-After');
+      return new CandidateMmiScoringError(payload.code as CandidateMmiScoringErrorCode, retryAfter && /^\d{1,4}$/.test(retryAfter) ? Number(retryAfter) : null);
+    }
   } catch { /* untrusted body remains unavailable */ }
   return new CandidateMmiScoringError('unavailable');
 }

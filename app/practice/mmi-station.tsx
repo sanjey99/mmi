@@ -22,6 +22,7 @@ import {
 } from '../../src/features/candidateMmi/api';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
+import { scoreCandidateMmiResponses } from '../../src/features/candidateMmi/scoringQueue';
 import {
   candidateMmiScoringFailureMessage,
   summarizeCandidateMmiAssessment,
@@ -46,6 +47,12 @@ import { colors, corridorTypography } from '../../src/theme';
 type CandidateApi = ReturnType<typeof createCandidateMmiApi>;
 type CandidateRunner = ReturnType<typeof createCandidateMmiRunner>;
 type CandidateScoringApi = ReturnType<typeof createCandidateMmiScoringApi>;
+type PendingResponseCompletion = Readonly<{
+  phaseKey: string;
+  action: 'submit' | 'skip' | 'timer';
+  transcript: string;
+  finalizationKey: string;
+}>;
 type ClockAnchor = Readonly<{
   phaseKey: string;
   serverNowMs: number;
@@ -158,7 +165,7 @@ function retryablePromptOrders(feedback: readonly CandidateMmiFeedback[] | null)
       .map((item) => item.promptOrder);
 }
 
-function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
+function FeedbackCard({ item, scoringInProgress = false, retryAvailable = false }: Readonly<{ item: CandidateMmiFeedback; scoringInProgress?: boolean; retryAvailable?: boolean }>) {
   const assessment = item.assessment;
   const rubricSummary = assessment?.schemaVersion === 3
     ? summarizeCandidateMmiAssessment(assessment)
@@ -184,15 +191,22 @@ function FeedbackCard({ item }: Readonly<{ item: CandidateMmiFeedback }>) {
           <Text style={styles.feedbackText}>Recorded with legacy rubric version {assessment.rubricVersion}; checklist detail is unavailable.</Text>
         </>
       ) : (
+        <>
+        <Text style={styles.score}>Question {item.promptOrder}</Text>
         <Text style={styles.feedbackText}>
           {item.status === 'no_response'
             ? 'No response was saved. A compatible rubric result is unavailable for this question.'
             : item.status === 'pending' || item.status === 'in_progress'
               ? 'Feedback is being prepared…'
+              : item.status === 'failed'
+                ? scoringInProgress ? 'Evaluation is still in progress. Any remaining failures can be retried when it finishes.' : retryAvailable
+                  ? 'AI scoring could not complete for this answer. Retry AI scoring to try again.'
+                  : 'AI scoring could not complete for this answer.'
               : item.status === 'feedback_unavailable'
                 ? 'Feedback is unavailable because the temporary transcript expired before scoring completed. Start a new station to try this question again.'
               : 'Feedback is unavailable for this response.'}
         </Text>
+        </>
       )}
     </View>
   );
@@ -212,6 +226,7 @@ export default function CandidateMmiStationScreen() {
   const anchorRef = useRef<ClockAnchor | null>(null);
   const openedSessionRef = useRef<string | null>(null);
   const expiringPhaseRef = useRef<string | null>(null);
+  const pendingResponseCompletionRef = useRef<PendingResponseCompletion | null>(null);
   const frozenResponseRef = useRef<string | null>(null);
   const autoStartSpeechRef = useRef<string | null>(null);
   const speechPreparedRef = useRef(false);
@@ -327,6 +342,13 @@ export default function CandidateMmiStationScreen() {
       onStatus: setSpeechStatus,
     });
   }, [dispatchTranscript, speechPort]);
+
+  useEffect(() => {
+    const pending = pendingResponseCompletionRef.current;
+    if (pending && (projection === null || pending.phaseKey !== phaseKey(projection))) {
+      pendingResponseCompletionRef.current = null;
+    }
+  }, [projection]);
 
   const flushCheckpoint = useCallback((): Promise<void> => {
     const currentProjection = projectionRef.current;
@@ -459,10 +481,14 @@ export default function CandidateMmiStationScreen() {
     if (currentProjection?.phase !== 'response') return;
     const key = phaseKey(currentProjection);
     if (expiringPhaseRef.current === key) return;
+    const previousCompletion = pendingResponseCompletionRef.current;
+    const pending = previousCompletion?.phaseKey === key ? previousCompletion : null;
+    const originalAction = pending?.action ?? action;
+    const originalTranscript = pending?.transcript ?? submittedTranscript;
     expiringPhaseRef.current = key;
     setAdvanceFailed(false);
     setErrorMessage(null);
-    setResponseAction(action);
+    setResponseAction(originalAction);
     const identity = responseIdentity(currentProjection)!;
     frozenResponseRef.current = identity;
     dispatchTranscript({ type: 'freeze', responseIdentity: identity });
@@ -470,7 +496,7 @@ export default function CandidateMmiStationScreen() {
     void speechPort().stop({ responseIdentity: identity });
     let finalizationKey: string;
     try {
-      finalizationKey = finalizationKeyForResponse(
+      finalizationKey = pending?.finalizationKey ?? finalizationKeyForResponse(
         currentProjection.sessionId,
         currentProjection.promptOrder,
         volatileFinalizationKeysRef.current,
@@ -482,12 +508,18 @@ export default function CandidateMmiStationScreen() {
       setErrorMessage('This browser cannot create a secure response identity.');
       return;
     }
-    const completion = action === 'timer'
+    const pendingCompletion = pending ?? Object.freeze({ phaseKey: key, action: originalAction, transcript: originalTranscript, finalizationKey });
+    pendingResponseCompletionRef.current = pendingCompletion;
+    const deadlineReached = secondsRemaining(anchorRef.current) === 0;
+    const completion = originalAction === 'timer' || deadlineReached
       ? (checkpointInFlightRef.current ?? Promise.resolve())
           .then(() => runner().expireCurrentPhase(finalizationKey))
-      : runner().completeCurrentResponse({ transcript: submittedTranscript, finalizationKey });
+      : runner().completeCurrentResponse({ transcript: originalTranscript, finalizationKey });
     void completion
-      .then((nextProjection) => acceptProjection(nextProjection, true))
+      .then((nextProjection) => {
+        if (pendingResponseCompletionRef.current === pendingCompletion) pendingResponseCompletionRef.current = null;
+        acceptProjection(nextProjection, true);
+      })
       .catch(() => {
         if (expiringPhaseRef.current === key) expiringPhaseRef.current = null;
         setAdvanceFailed(true);
@@ -542,10 +574,10 @@ export default function CandidateMmiStationScreen() {
       }
       const promptOrders = retryablePromptOrders(existingFeedback);
       if (promptOrders.length === 0) return;
-      const outcomes = await Promise.allSettled(
-        promptOrders.map((promptOrder) =>
-          scoringApi().scoreCandidateResponse(completedId, promptOrder),
-        ),
+      const outcomes = await scoreCandidateMmiResponses(
+        promptOrders,
+        (promptOrder) => scoringApi().scoreCandidateResponse(completedId, promptOrder),
+        { onSettled: async () => { setFeedback(await api().feedback(completedId)); } },
       );
       failureMessage = candidateMmiScoringFailureMessage(outcomes);
       try {
@@ -733,7 +765,7 @@ export default function CandidateMmiStationScreen() {
           {projection.phase === 'completed' ? (
             <>
               <Text style={styles.status}>Rubric results · five questions in station order</Text>
-              {feedback?.map((item) => <FeedbackCard key={item.promptOrder} item={item} />) ?? (
+              {feedback?.map((item) => <FeedbackCard key={item.promptOrder} item={item} scoringInProgress={scoringInProgress} retryAvailable />) ?? (
                 <Text style={styles.reading}>Preparing feedback…</Text>
               )}
               {scoringInProgress ? (

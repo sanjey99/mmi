@@ -319,10 +319,14 @@ async function installCandidateMmiController(page: Page) {
   let nextAfterFinalization: CandidateMmiProjection = candidateResponseProjections[2];
   let abandonCount = 0;
   let scoringFailureCode: string | null = null;
+  let checkpointFailuresRemaining = 0;
+  let checkpointWindowClosed = false;
+  let feedbackFollowsFinalization = false;
   const rpcCalls: string[] = [];
   const startRequests: Array<Record<string, unknown>> = [];
   const checkpoints: Array<Record<string, unknown>> = [];
   const finalizations: Array<Record<string, unknown>> = [];
+  const finalizedResponses: Array<{ responseState: 'response' | 'no_response'; transcript: string }> = [];
   const scoringRequests: Array<Record<string, unknown>> = [];
   const json = (body: unknown) => ({
     status: 200,
@@ -368,6 +372,11 @@ async function installCandidateMmiController(page: Page) {
     })),
   );
   let feedbackMode: 'terminal' | 'pending' = 'terminal';
+  let partialFeedback: Array<{ promptOrder: number; status: 'pending' | 'in_progress' | 'failed' | 'scored' | 'no_response'; legacy: false; assessment: unknown }> | null = null;
+  let partialFailure = true;
+  const scoringAttempts = new Map<number, number>();
+  let activeScoring = 0;
+  let peakScoring = 0;
 
   // Registered after the default route: Playwright's reverse matching gives
   // this candidate-only controller precedence without widening the wildcard.
@@ -387,6 +396,13 @@ async function installCandidateMmiController(page: Page) {
     rpcCalls.push('checkpoint');
     const body = route.request().postDataJSON() as Record<string, unknown>;
     checkpoints.push(body);
+    if (checkpointWindowClosed) {
+      return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'P0001', message: 'candidate_response_not_open' }) });
+    }
+    if (checkpointFailuresRemaining > 0) {
+      checkpointFailuresRemaining--;
+      return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'P0001', message: 'synthetic_checkpoint_failure' }) });
+    }
     if (currentProjection.phase === 'response') {
       currentProjection = Object.freeze({
         ...currentProjection,
@@ -406,6 +422,7 @@ async function installCandidateMmiController(page: Page) {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     finalizations.push(body);
     const responseState = currentProjection.draftTranscript?.trim() ? 'response' : 'no_response';
+    finalizedResponses.push({ responseState, transcript: currentProjection.draftTranscript ?? '' });
     const result = {
       sessionId: body.p_session_id,
       promptOrder: body.p_prompt_order,
@@ -413,21 +430,44 @@ async function installCandidateMmiController(page: Page) {
       finalizedAt: '2026-08-26T00:03:00.000Z',
       scoringStatus: responseState === 'response' ? 'pending' : 'no_response',
     };
+    if (feedbackFollowsFinalization) {
+      partialFeedback = feedback.map((item) => item.promptOrder === body.p_prompt_order ? {
+        promptOrder: item.promptOrder,
+        status: responseState === 'response' ? 'pending' : 'no_response',
+        legacy: false,
+        assessment: responseState === 'response' ? null : { ...assessment, questionScorePct: 0, criteria: assessment.criteria.map((criterion) => ({ ...criterion, achieved: false })) },
+      } : item);
+    }
     currentProjection = nextAfterFinalization;
     return route.fulfill(json(result));
   });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_feedback', route => {
     rpcCalls.push('feedback');
-    return route.fulfill(json(feedbackMode === 'terminal' ? feedback : pendingFeedback));
+    return route.fulfill(json(partialFeedback ?? (feedbackMode === 'terminal' ? feedback : pendingFeedback)));
   });
   await page.route('https://e2e.supabase.co/rest/v1/rpc/abandon_candidate_mmi_station_session', route => {
     rpcCalls.push('abandon');
     abandonCount += 1;
     return route.fulfill(json({}));
   });
-  await page.route('https://e2e.supabase.co/functions/v1/score-candidate-mmi-response', route => {
+  await page.route('https://e2e.supabase.co/functions/v1/score-candidate-mmi-response', async route => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     scoringRequests.push(body);
+    if (partialFeedback) {
+      const order = body.promptOrder as 1 | 2 | 3 | 4 | 5;
+      const attempt = (scoringAttempts.get(order) ?? 0) + 1;
+      scoringAttempts.set(order, attempt);
+      peakScoring = Math.max(peakScoring, ++activeScoring);
+      partialFeedback[order - 1] = { promptOrder: order, status: 'in_progress', legacy: false, assessment: null };
+      await new Promise(resolve => setTimeout(resolve, 100));
+      activeScoring--;
+      if ((order === 2 && attempt === 1) || (order === 4 && partialFailure)) {
+        partialFeedback[order - 1] = { promptOrder: order, status: 'failed', legacy: false, assessment: null };
+        return route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ code: 'invalid_provider_response' }) });
+      }
+      partialFeedback[order - 1] = { promptOrder: order, status: 'scored', legacy: false, assessment };
+      return route.fulfill(json({ status: 'scored' }));
+    }
     if (scoringFailureCode) {
       return route.fulfill({
         status: 500,
@@ -461,11 +501,17 @@ async function installCandidateMmiController(page: Page) {
     },
     selectCompleted: () => { currentProjection = candidateCompletedProjection; },
     failScoringWith: (code: string) => { scoringFailureCode = code; feedbackMode = 'pending'; },
+    selectPartialFeedback: () => { partialFeedback = [...pendingFeedback]; partialFeedback[0] = feedback[0]; partialFeedback[4] = feedback[4]; },
+    recoverPartialFailure: () => { partialFailure = false; },
+    failNextCheckpoint: () => { checkpointFailuresRemaining = 1; feedbackFollowsFinalization = true; },
+    closeCheckpointWindow: () => { checkpointWindowClosed = true; },
+    peakScoring: () => peakScoring,
     abandonCount: () => abandonCount,
     rpcCalls: () => [...rpcCalls],
     startRequests: () => startRequests.map((request) => ({ ...request })),
     checkpoints: () => [...checkpoints],
     finalizations: () => [...finalizations],
+    finalizedResponses: () => [...finalizedResponses],
     scoringRequests: () => [...scoringRequests],
   });
 }
@@ -719,6 +765,66 @@ test('MMI responses can be submitted early or deliberately skipped with softer r
   });
 });
 
+for (const action of ['submit', 'skip'] as const) {
+  test(`MMI retry preserves a failed ${action} and its original transcript`, async ({ page }) => {
+    const controller = await installCandidateMmiController(page);
+    const answer = 'I would identify the immediate priority and escalate proportionately.';
+    controller.selectResponse(1, action === 'skip' ? 'Previously saved draft to discard' : '', action === 'skip' ? 1 : 0);
+    controller.advanceTo(candidateCompletedProjection);
+    controller.failNextCheckpoint();
+    await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+    const transcript = page.getByRole('textbox', { name: 'Your response transcript' });
+    await expect(transcript).toHaveValue(action === 'skip' ? 'Previously saved draft to discard' : '');
+    if (action === 'submit') await transcript.fill(answer);
+    await page.getByRole('button', { name: action === 'submit' ? 'Submit answer now' : 'Skip question', exact: true }).click();
+
+    await expect(page.getByText('The MMI station could not advance safely.', { exact: true })).toBeVisible();
+    await expect(transcript).not.toBeEditable();
+    expect(controller.finalizations()).toHaveLength(0);
+    expect(controller.checkpoints()).toHaveLength(1);
+    const originalFinalizationKey = await page.evaluate((id) => sessionStorage.getItem(`candidate-mmi-finalization:${id}:1`), candidateStationSessionId);
+    expect(originalFinalizationKey).toMatch(/^[0-9a-f-]{36}$/i);
+
+    await page.getByRole('button', { name: 'Retry advance', exact: true }).click();
+    await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
+    await expect(page.getByText(`Question 1 · ${action === 'submit' ? 25 : 0}%`, { exact: true })).toBeVisible();
+    expect(controller.checkpoints()).toHaveLength(2);
+    expect(controller.checkpoints().map((request) => request.p_transcript)).toEqual(action === 'submit' ? [answer, answer] : ['', '']);
+    expect(controller.finalizations()).toHaveLength(1);
+    expect(controller.finalizations()[0]).toMatchObject({ p_prompt_order: 1, p_finalization_key: originalFinalizationKey });
+    expect(controller.finalizedResponses()).toEqual([{ responseState: action === 'submit' ? 'response' : 'no_response', transcript: action === 'submit' ? answer : '' }]);
+    expect(controller.scoringRequests().map((request) => request.promptOrder)).toEqual(action === 'submit' ? [1] : []);
+  });
+}
+
+test('MMI deadline finalizes the saved draft after a failed submit without retrying late checkpoints', async ({ page }) => {
+  await page.clock.install();
+  const controller = await installCandidateMmiController(page);
+  const savedDraft = 'I would identify the immediate priority.';
+  const unsavedAnswer = `${savedDraft} I would also escalate proportionately.`;
+  controller.selectResponse(1, savedDraft, 1);
+  controller.advanceTo(candidateCompletedProjection);
+  controller.failNextCheckpoint();
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+  await page.getByRole('textbox', { name: 'Your response transcript' }).fill(unsavedAnswer);
+  await page.getByRole('button', { name: 'Submit answer now', exact: true }).click();
+  await expect(page.getByText('The MMI station could not advance safely.', { exact: true })).toBeVisible();
+  expect(controller.checkpoints()).toHaveLength(1);
+  expect(controller.finalizations()).toHaveLength(0);
+  const originalFinalizationKey = await page.evaluate((id) => sessionStorage.getItem(`candidate-mmi-finalization:${id}:1`), candidateStationSessionId);
+
+  controller.closeCheckpointWindow();
+  await page.clock.fastForward(111_000);
+  await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
+  await expect(page.getByText('Question 1 · 25%', { exact: true })).toBeVisible();
+  expect(controller.checkpoints()).toHaveLength(1);
+  expect(controller.finalizations()).toHaveLength(1);
+  expect(controller.finalizations()[0]).toMatchObject({ p_finalization_key: originalFinalizationKey });
+  expect(controller.finalizedResponses()).toEqual([{ responseState: 'response', transcript: savedDraft }]);
+  await expect(page.getByRole('button', { name: 'Retry advance', exact: true })).toHaveCount(0);
+});
+
 test('MMI completion renders retained strict rubric-only feedback without re-scoring', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.selectCompleted();
@@ -741,6 +847,31 @@ test('MMI completion explains when AI scoring is not configured', async ({ page 
   await expect(page.getByText('AI scoring is not configured yet.', { exact: true })).toBeVisible();
   await expect(page.getByText('Your station is saved. You can retry the evaluation without repeating it.'))
     .toHaveCount(0);
+});
+
+test('MMI partial feedback recovers transient failures and retries only unscored answers', async ({ page }) => {
+  const controller = await installCandidateMmiController(page);
+  controller.selectPartialFeedback();
+  controller.selectCompleted();
+  await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+  await expect(page.getByText('Question 2 · 25%', { exact: true })).toBeVisible();
+  await expect(page.getByText('Question 3 · 25%', { exact: true })).toBeVisible();
+  await expect(page.getByText('Question 4', { exact: true })).toBeVisible();
+  await expect(page.getByText('AI scoring could not complete for this answer. Retry AI scoring to try again.', { exact: true })).toBeVisible();
+  expect(controller.peakScoring()).toBe(2);
+  expect(controller.scoringRequests().filter(request => request.promptOrder === 1 || request.promptOrder === 5)).toHaveLength(0);
+  expect(controller.scoringRequests().filter(request => request.promptOrder === 2)).toHaveLength(2);
+  expect(controller.scoringRequests().filter(request => request.promptOrder === 4)).toHaveLength(2);
+
+  controller.recoverPartialFailure();
+  await page.getByRole('button', { name: 'Retry AI scoring', exact: true }).click();
+  await expect(page.getByText('Question 4 · 25%', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry AI scoring', exact: true })).toHaveCount(0);
+  expect(controller.scoringRequests().filter(request => request.promptOrder === 4)).toHaveLength(3);
+  expect(controller.scoringRequests().filter(request => request.promptOrder === 2)).toHaveLength(2);
+  await page.getByText('Question 2 · 25%', { exact: true }).evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  await page.screenshot({ path: '/private/tmp/mmi-feedback-recovery.jpg', fullPage: true });
 });
 
 test('MMI leave abandons exactly once from a current response and returns to practice', async ({ page }) => {

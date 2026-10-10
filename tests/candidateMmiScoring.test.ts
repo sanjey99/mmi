@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AiConfig, AiProviderRequest } from '../supabase/functions/_shared/aiProvider.ts';
+import { ProviderRequestError, type AiConfig, type AiProviderRequest } from '../supabase/functions/_shared/aiProvider.ts';
 import { createCandidateMmiScoringHandler, type CandidateMmiScoringDependencies, type CandidateMmiScoringRepository } from '../supabase/functions/score-candidate-mmi-response/handler.ts';
 import { CandidateMmiScoringError, createCandidateMmiScoringApi } from '../src/features/candidateMmi/scoringApi';
 
@@ -38,10 +38,10 @@ const gpt55Profile = Object.freeze({
   outputRatePerMillion: 30,
 });
 const providerAssessment = Object.freeze({ decisions: [
-  { criterionId: 'CRIT_1', achieved: true, evidenceReference: { start: 0, end: 1 } },
-  { criterionId: 'CRIT_2', achieved: true, evidenceReference: { start: 0, end: 1 } },
-  { criterionId: 'CRIT_3', achieved: true, evidenceReference: { start: 0, end: 1 } },
-  { criterionId: 'CRIT_4', achieved: false, evidenceReference: null },
+  { criterionId: 'CRIT_1', achieved: true, evidenceQuote: 'identify immediate risk' },
+  { criterionId: 'CRIT_2', achieved: true, evidenceQuote: 'protect confidentiality' },
+  { criterionId: 'CRIT_3', achieved: true, evidenceQuote: 'escalate to my supervisor' },
+  { criterionId: 'CRIT_4', achieved: false, evidenceQuote: null },
 ] });
 
 function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): CandidateMmiScoringRepository {
@@ -73,7 +73,13 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(await response.json()).toEqual({ status: 'scored' });
     const request = callProvider.mock.calls[0]?.[1] as AiProviderRequest;
     expect(JSON.parse(request.userContent)).toEqual({ scenarioText: claimed.scenarioText, questionText: claimed.promptText, criteria: claimed.criteria, candidateAnswer: transcript });
-    expect(request.systemPrompt).toBe('Judge only whether each supplied marking criterion is explicitly supported by the candidate answer. Do not award credit for fluency, length, confidence, plausibility, or ideas outside the listed criteria. Treat vague implication as not achieved. Return exactly one ordered decision for every supplied criterion and no additional fields.');
+    expect(request.systemPrompt).toContain('Judge only whether each supplied marking criterion is explicitly supported by the candidate answer.');
+    expect(request.systemPrompt).toContain('For achieved=true, evidenceQuote must be a short, contiguous, verbatim quote copied exactly from candidateAnswer');
+    expect(request.systemPrompt).toContain('For achieved=false, evidenceQuote must be null.');
+    expect(request.maxTokens).toBe(4_096);
+    expect(request.responseSchema).toMatchObject({
+      properties: { decisions: { items: { required: ['criterionId', 'achieved', 'evidenceQuote'] } } },
+    });
     expect(repo.complete).toHaveBeenCalledExactlyOnceWith({
       p_response_id: responseId, p_session_id: sessionId, p_lease_token: leaseToken,
       p_public_assessment: { schemaVersion: 3, questionScorePct: 75, criteria: [
@@ -85,7 +91,41 @@ describe('candidate MMI rubric scoring handler', () => {
     const persisted = JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls[0]);
     expect(persisted).not.toContain(transcript);
     expect(persisted).not.toContain('evidenceReference');
+    expect(persisted).not.toContain('evidenceQuote');
     expect(persisted).not.toContain('dimensions');
+  });
+
+  it('scales the bounded completion budget to large rubrics without changing public feedback', async () => {
+    const largeCriteria = Array.from({ length: 20 }, (_, index) => ({ criterionId: `CRIT_${index + 1}`, bulletText: `Criterion ${index + 1}`, domain: null }));
+    const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, criteria: largeCriteria } })) });
+    const callProvider = vi.fn(async (_config: AiConfig, _request: AiProviderRequest) => ({
+      content: JSON.stringify({ decisions: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, evidenceQuote: null })) }),
+      usage: null,
+    }));
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
+    expect(response.status).toBe(200);
+    expect(callProvider.mock.calls[0]?.[1]).toMatchObject({ maxTokens: 10_240 });
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_public_assessment: { schemaVersion: 3, questionScorePct: 0, criteria: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, weightPct: 5 })) },
+    }));
+  });
+
+  it('fails the whole assessment when provider evidence is fabricated, without persisting private evidence', async () => {
+    const repo = repository();
+    const invalidAssessment = { decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'a fabricated quote' }, ...providerAssessment.decisions.slice(1)] };
+    const logProviderFailure = vi.fn();
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({ content: JSON.stringify(invalidAssessment), usage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 150 } })),
+      logProviderFailure,
+    }))(scoringRequest());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ code: 'invalid_provider_response' });
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ p_error_code: 'invalid_provider_response', p_usage: expect.objectContaining({ outcome: 'invalid_response', outputTokens: 150 }) }));
+    expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('a fabricated quote');
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain(transcript);
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('a fabricated quote');
   });
 
   it('rejects a non-admin GPT-5.5 profile before claiming or calling a paid provider', async () => {
@@ -193,6 +233,53 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(response.status).toBe(502);
     expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({ p_error_code: 'provider_failed', p_usage: expect.objectContaining({ outcome: 'provider_failed', estimatedCost: null }) }));
     expect(JSON.stringify((repo.fail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(transcript);
+  });
+
+  it('records paid token usage when the provider rejects a truncated response envelope', async () => {
+    const repo = repository();
+    const logProviderFailure = vi.fn();
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => {
+        throw new ProviderRequestError('response_shape', {
+          providerRequestId: 'safe-request-id',
+          usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 4_096 },
+        });
+      }),
+      logProviderFailure,
+    }))(scoringRequest());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ code: 'provider_failed' });
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(repo.fail).toHaveBeenCalledWith(expect.objectContaining({
+      p_error_code: 'provider_failed',
+      p_usage: expect.objectContaining({ inputTokens: 100, cachedInputTokens: 20, outputTokens: 4_096, estimatedCost: '0.06174600', outcome: 'provider_failed' }),
+    }));
+    expect(logProviderFailure).toHaveBeenCalledWith({ requestId: null, provider: 'anthropic', code: 'provider_failed' });
+    expect(JSON.stringify(logProviderFailure.mock.calls)).not.toContain('4096');
+  });
+
+  it('releases rejected-provider claims when known paid usage overflows the stored USD cost', async () => {
+    const overflowingConfig = { ...providerConfig, inputRatePerMillion: 99_999_999.999999 };
+    const repo = repository({ loadProviderConfig: vi.fn(async () => ({ config: overflowingConfig })) });
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => {
+        throw new ProviderRequestError('response_shape', {
+          usage: { inputTokens: 2_000_000, cachedInputTokens: 0, outputTokens: 4_096 },
+        });
+      }),
+    }))(scoringRequest());
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ code: 'unavailable' });
+    expect(repo.complete).not.toHaveBeenCalled();
+    expect(repo.fail).toHaveBeenCalledExactlyOnceWith({
+      p_response_id: responseId,
+      p_session_id: sessionId,
+      p_lease_token: leaseToken,
+      p_error_code: 'usage_cost_overflow',
+      p_usage: expect.objectContaining({ inputTokens: 2_000_000, outputTokens: 4_096, inputRatePerMillion: 99_999_999.999999, estimatedCost: null, outcome: 'persistence_failed' }),
+    });
   });
 
   it('records token and rate usage when post-provider cost overflows NUMERIC(16,8)', async () => {

@@ -167,7 +167,7 @@ describe('callConfiguredProvider', () => {
     );
   });
 
-  it('uses GPT-5.5-compatible Chat Completions token and temperature parameters', async () => {
+  it.each(['gpt-5.5', 'gpt-5.5-2026-04-23', 'o4-mini', 'o3-mini', 'o1'])('reserves completion tokens and limits reasoning effort for %s', async (model) => {
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: 'provider response' } }],
     })));
@@ -175,20 +175,124 @@ describe('callConfiguredProvider', () => {
     vi.stubGlobal('Deno', { env: { get: () => undefined } });
 
     await callConfiguredProvider(
-      { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.5', baseUrl: null },
+      { provider: 'openai', apiKey: 'test-key', model, baseUrl: null },
       { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 32 },
     );
 
     const request = fetchSpy.mock.calls[0]?.[1];
     if (request === undefined) throw new Error('Expected an OpenAI request');
     expect(JSON.parse(String(request.body))).toEqual({
-      model: 'gpt-5.5',
+      model,
       max_completion_tokens: 32,
+      reasoning_effort: 'low',
       messages: [
         { role: 'system', content: 'trusted' },
         { role: 'user', content: 'untrusted' },
       ],
     });
+  });
+
+  it.each(['gpt-4o-mini', 'custom-model'])('preserves sampling parameters for non-reasoning model %s', async (model) => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: 'provider response', refusal: null } }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    await callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model, baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 128 },
+    );
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({ model, max_tokens: 128, temperature: 0.3 });
+    expect(body).not.toHaveProperty('max_completion_tokens');
+    expect(body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it.each([
+    { model: 'custom-model', parameters: { max_tokens: 128, temperature: 0.3 } },
+    { model: 'gpt-5.5', parameters: { max_completion_tokens: 128 } },
+  ])('preserves the compatible endpoint parameters for $model without adding unsupported reasoning controls', async ({ model, parameters }) => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      choices: [{ message: { content: 'provider response' } }],
+    })));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('Deno', {
+      resolveDns: publicRecords,
+      env: { get: (name: string) => name === 'AI_PROVIDER_ALLOWED_HOSTS' ? 'provider.example.test' : undefined },
+    });
+
+    await callConfiguredProvider(
+      { provider: 'openai_compatible', apiKey: 'test-key', model, baseUrl: 'https://provider.example.test/v1' },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 128 },
+    );
+
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://provider.example.test/v1/chat/completions');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      model,
+      ...parameters,
+      messages: [{ role: 'system', content: 'trusted' }, { role: 'user', content: 'untrusted' }],
+    });
+  });
+
+  it.each([
+    { name: 'length limit with complete-looking JSON', choice: { finish_reason: 'length', message: { content: '{"decisions":[]}' } } },
+    { name: 'reasoning-only length limit', choice: { finish_reason: 'length', message: { content: '' } } },
+    { name: 'content filtering', choice: { finish_reason: 'content_filter', message: { content: '{"decisions":[]}' } } },
+    { name: 'tool invocation', choice: { finish_reason: 'tool_calls', message: { content: '{"decisions":[]}' } } },
+    { name: 'unfinished stream', choice: { finish_reason: null, message: { content: '{"decisions":[]}' } } },
+    { name: 'refusal with content', choice: { finish_reason: 'stop', message: { content: '{"decisions":[]}', refusal: 'private refusal-sentinel' } } },
+    { name: 'empty completed response', choice: { finish_reason: 'stop', message: { content: '  ', refusal: null } } },
+  ])('rejects $name while retaining paid token usage and safe diagnostics', async ({ choice }) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [choice],
+      usage: { prompt_tokens: 13, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens: 128 },
+    }), { headers: { 'x-request-id': 'req_complete-123' } })));
+    vi.stubGlobal('Deno', { env: { get: () => undefined } });
+
+    const error = await callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.5', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'private transcript-sentinel', maxTokens: 128 },
+    ).then(() => undefined, (caught) => caught);
+
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    if (!(error instanceof ProviderRequestError)) throw new Error('Expected a ProviderRequestError');
+    expect(error).toMatchObject({
+      stage: 'response_shape',
+      providerRequestId: 'req_complete-123',
+      usage: { inputTokens: 8, cachedInputTokens: 5, outputTokens: 128 },
+    });
+    expect(providerFailureDiagnostic('fn_request-123', 'openai', error)).toEqual({
+      functionRequestId: 'fn_request-123', provider: 'openai', stage: 'response_shape', providerRequestId: 'req_complete-123',
+    });
+    expect(JSON.stringify(error)).not.toContain('sentinel');
+    expect(JSON.stringify(error)).not.toContain('decisions');
+  });
+
+  it('retains unknown usage for rejected completions with inconsistent provider metering', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: 'length', message: { content: '{"decisions":[]}' } }],
+      usage: { prompt_tokens: 4, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens: 128 },
+    }))));
+
+    await expect(callConfiguredProvider(
+      { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.5', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 128 },
+    )).rejects.toMatchObject({ stage: 'response_shape', usage: null });
+  });
+
+  it.each(['max_tokens', 'tool_use', 'refusal'])('rejects Anthropic %s responses before grading while retaining usage', async (stop_reason) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      content: [{ text: '{"decisions":[]}' }],
+      stop_reason,
+      usage: { input_tokens: 12, cache_read_input_tokens: 4, output_tokens: 128 },
+    }))));
+
+    await expect(callConfiguredProvider(
+      { provider: 'anthropic', apiKey: 'test-key', model: 'claude-test', baseUrl: null },
+      { systemPrompt: 'trusted', userContent: 'untrusted', maxTokens: 128 },
+    )).rejects.toMatchObject({ stage: 'response_shape', usage: { inputTokens: 12, cachedInputTokens: 4, outputTokens: 128 } });
   });
 
   it('sends a supplied JSON schema to OpenAI as a strict structured-output contract', async () => {

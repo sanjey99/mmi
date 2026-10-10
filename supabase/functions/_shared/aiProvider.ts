@@ -56,12 +56,14 @@ type DiagnosticProvider = 'anthropic' | 'openai' | 'openai_compatible' | 'unknow
 interface ProviderRequestErrorOptions {
   status?: number;
   providerRequestId?: string | null;
+  usage?: AiTokenUsage | null;
 }
 
 export class ProviderRequestError extends Error {
   readonly stage: ProviderRequestStage;
   readonly status?: number;
   readonly providerRequestId?: string;
+  readonly usage: AiTokenUsage | null;
 
   constructor(stage: ProviderRequestStage, options: ProviderRequestErrorOptions = {}) {
     super('AI_PROVIDER_REQUEST_FAILED');
@@ -71,6 +73,7 @@ export class ProviderRequestError extends Error {
       this.status = options.status;
     }
     this.providerRequestId = sanitizeDiagnosticRequestId(options.providerRequestId);
+    this.usage = options.usage ?? null;
   }
 }
 
@@ -154,12 +157,23 @@ function providerResponseContent(provider: string, payload: unknown): string | u
   if (!payload || typeof payload !== 'object') return undefined;
   const response = payload as {
     content?: Array<{ text?: unknown }>;
-    choices?: Array<{ message?: { content?: unknown } }>;
+    stop_reason?: unknown;
+    choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown; refusal?: unknown } }>;
   };
+  if (provider === 'anthropic') {
+    if (response.stop_reason !== undefined && response.stop_reason !== 'end_turn' && response.stop_reason !== 'stop_sequence') {
+      return undefined;
+    }
+  } else {
+    const choice = response.choices?.[0];
+    // A token limit can return valid-looking partial JSON; never grade it.
+    if (choice?.finish_reason !== undefined && choice.finish_reason !== 'stop') return undefined;
+    if (choice?.message?.refusal !== undefined && choice.message.refusal !== null) return undefined;
+  }
   const content = provider === 'anthropic'
     ? response.content?.[0]?.text
     : response.choices?.[0]?.message?.content;
-  return typeof content === 'string' ? content : undefined;
+  return typeof content === 'string' && content.trim() ? content : undefined;
 }
 
 function validTokenCount(value: unknown): value is number {
@@ -298,6 +312,8 @@ export async function callConfiguredProvider(
       Authorization: `Bearer ${config.apiKey}`,
     };
   const usesGpt55ChatParameters = /^gpt-5\.5(?:-|$)/.test(config.model);
+  const usesReasoningChatParameters = usesGpt55ChatParameters || /^o[134](?:-|$)/.test(config.model);
+  const supportsReasoningEffort = !/^o1-(?:mini|preview)(?:-|$)/.test(config.model);
   const body = provider === 'anthropic'
     ? {
       model: config.model,
@@ -307,8 +323,12 @@ export async function callConfiguredProvider(
     }
     : {
       model: config.model,
-      ...(usesGpt55ChatParameters
-        ? { max_completion_tokens: request.maxTokens }
+      ...(usesReasoningChatParameters
+        ? {
+          max_completion_tokens: request.maxTokens,
+          // Custom endpoints may not implement OpenAI's reasoning controls.
+          ...(!customOpenAiCompatible && supportsReasoningEffort ? { reasoning_effort: 'low' } : {}),
+        }
         : { max_tokens: request.maxTokens, temperature: 0.3 }),
       messages: [
         { role: 'system', content: request.systemPrompt },
@@ -343,12 +363,14 @@ export async function callConfiguredProvider(
     throw new ProviderRequestError('http', { status: response.status, providerRequestId });
   }
 
+  let usage: AiTokenUsage | null = null;
   try {
     const payload = await response.json();
+    usage = providerTokenUsage(provider, payload);
     const content = providerResponseContent(provider, payload);
     if (content === undefined) throw new TypeError('Provider response is missing content');
-    return Object.freeze({ content, usage: providerTokenUsage(provider, payload) });
+    return Object.freeze({ content, usage });
   } catch {
-    throw new ProviderRequestError('response_shape', { providerRequestId });
+    throw new ProviderRequestError('response_shape', { providerRequestId, usage });
   }
 }

@@ -22,6 +22,8 @@ export type PublicRubricAssessment = Readonly<{
 
 type JsonSchema = Readonly<Record<string, unknown>>;
 
+export const MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS = 300;
+
 const invalidAssessment = (): never => {
   throw new Error('AI_PROVIDER_RESPONSE_INVALID');
 };
@@ -71,6 +73,85 @@ export function createRubricResponseSchema(criteria: readonly RubricCriterionSna
       },
     },
   };
+}
+
+/** Provider-only contract: quote evidence instead of asking the model to count characters. */
+export function createRubricQuoteResponseSchema(criteria: readonly RubricCriterionSnapshot[]): JsonSchema {
+  const ids = criterionIds(criteria);
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['decisions'],
+    properties: {
+      decisions: {
+        type: 'array',
+        minItems: ids.length,
+        maxItems: ids.length,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['criterionId', 'achieved', 'evidenceQuote'],
+          properties: {
+            criterionId: { type: 'string', enum: ids },
+            achieved: { type: 'boolean' },
+            evidenceQuote: {
+              anyOf: [
+                { type: 'string', minLength: 1, maxLength: MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS },
+                { type: 'null' },
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+/** Resolves only exact candidate quotations to the retained internal evidence contract. */
+export function parseRubricQuoteProviderAssessment(
+  raw: unknown,
+  criteria: readonly RubricCriterionSnapshot[],
+  transcript: string,
+): readonly ProviderCriterionDecision[] {
+  const ids = criterionIds(criteria);
+  if (typeof raw !== 'string' || typeof transcript !== 'string') invalidAssessment();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw as string);
+  } catch {
+    invalidAssessment();
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalidAssessment();
+  const envelope = parsed as Record<string, unknown>;
+  const rawDecisions = envelope.decisions;
+  if (Object.keys(envelope).length !== 1 || !Array.isArray(rawDecisions) || rawDecisions.length !== ids.length) {
+    invalidAssessment();
+  }
+  const transcriptPoints = Array.from(transcript);
+  const decisions = (rawDecisions as unknown[]).map((value, index): ProviderCriterionDecision => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalidAssessment();
+    const decision = value as Record<string, unknown>;
+    if (Object.keys(decision).length !== 3 || !('criterionId' in decision) || !('achieved' in decision) || !('evidenceQuote' in decision)) {
+      invalidAssessment();
+    }
+    if (decision.criterionId !== ids[index] || typeof decision.achieved !== 'boolean') invalidAssessment();
+    if (!decision.achieved) {
+      if (decision.evidenceQuote !== null) invalidAssessment();
+      return { criterionId: ids[index], achieved: false, evidenceReference: null };
+    }
+    const quote = decision.evidenceQuote;
+    if (typeof quote !== 'string' || !quote.trim() || codePointLength(quote) > MAX_RUBRIC_EVIDENCE_QUOTE_CODE_POINTS) {
+      invalidAssessment();
+    }
+    const matchedAt = transcript.indexOf(quote as string);
+    if (matchedAt < 0) invalidAssessment();
+    const start = codePointLength(transcript.slice(0, matchedAt));
+    const end = start + codePointLength(quote as string);
+    // A partial UTF-16 surrogate must never become an evidence code-point range.
+    if (transcriptPoints.slice(start, end).join('') !== quote) invalidAssessment();
+    return { criterionId: ids[index], achieved: true, evidenceReference: { start, end } };
+  });
+  return parseRubricProviderAssessment(JSON.stringify({ decisions }), criteria, transcript);
 }
 
 function codePointLength(value: string): number {
