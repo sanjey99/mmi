@@ -1,4 +1,5 @@
 import { CandidateMmiScoringError } from './scoringApi';
+import { criterionPerformanceLevel } from '../mmi/rubricPerformance';
 import type {
   CandidateMmiCriterionResult,
   CandidateMmiPublicAssessment,
@@ -34,7 +35,7 @@ export function summarizeCandidateMmiAssessment(
   assessment: CandidateMmiPublicAssessment,
 ): CandidateMmiRubricSummary {
   return Object.freeze({
-    covered: Object.freeze(assessment.criteria.filter((criterion) => criterion.achieved)),
-    nextTime: Object.freeze(assessment.criteria.filter((criterion) => !criterion.achieved)),
+    covered: Object.freeze(assessment.criteria.filter((criterion) => criterionPerformanceLevel(criterion) >= 3)),
+    nextTime: Object.freeze(assessment.criteria.filter((criterion) => criterionPerformanceLevel(criterion) < 4)),
   });
 }

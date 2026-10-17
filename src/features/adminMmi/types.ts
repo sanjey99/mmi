@@ -191,6 +191,13 @@ export type AdminMmiAssessmentList = Readonly<{
   items: readonly AdminMmiAssessmentSummary[];
   total: number;
 }>;
+export type AdminMmiAssessmentCriterion = Readonly<{
+  criterionId: string;
+  bulletText: string;
+  domain: string | null;
+  weightPct: number;
+}> & (Readonly<{ achieved: boolean }> | Readonly<{ performanceLevel: 0 | 1 | 2 | 3 | 4 }>);
+
 export type AdminMmiAssessmentDetail = Readonly<{
   accessAuditId: string;
   responseId: string;
@@ -200,13 +207,7 @@ export type AdminMmiAssessmentDetail = Readonly<{
   subQuestionId: string;
   promptOrder: number;
   questionScorePct: number;
-  criteria: readonly Readonly<{
-    criterionId: string;
-    bulletText: string;
-    domain: string | null;
-    achieved: boolean;
-    weightPct: number;
-  }>[];
+  criteria: readonly AdminMmiAssessmentCriterion[];
   provider: string | null;
   model: string | null;
   inputTokens: number | null;

@@ -838,6 +838,46 @@ test('MMI completion renders retained strict rubric-only feedback without re-sco
   await expect.poll(() => controller.scoringRequests().length).toBe(0);
 });
 
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`five-level feedback shows weighted marks and answer evidence at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const controller = await installCandidateMmiController(page);
+    controller.selectCompleted();
+    const evidenceQuote = "I acknowledged the patient's frustration and asked what worried them about treatment.";
+    const justification = 'You acknowledged frustration and asked about the concern, but did not explore its impact or check understanding.';
+    const feedback = [1, 2, 3, 4, 5].map((promptOrder) => {
+      const levels = promptOrder === 2 ? [3, 3, 3, 3] : [0, 1, 2, 4];
+      return {
+        promptOrder, status: 'scored', legacy: false,
+        assessment: {
+          schemaVersion: 4, questionScorePct: promptOrder === 2 ? 75 : 43.75,
+          criteria: levels.map((performanceLevel, index) => ({
+            criterionId: `Q${promptOrder}_C${index + 1}`, performanceLevel, weightPct: 25,
+            bulletText: ['Explore the concern', 'Explain the approach', 'Listen to concerns', 'Agree the next step'][index],
+            domain: 'communication', evidenceQuote: performanceLevel === 0 ? null : evidenceQuote,
+            justification: performanceLevel === 0 ? 'The answer did not explore the reason for the concern.' : justification,
+          })),
+        },
+      };
+    });
+    await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_station_feedback', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(feedback),
+    }));
+    await page.goto(`/practice/mmi-station?sessionId=${candidateStationSessionId}`);
+
+    await expect(page.getByText('Question 1 · 43.75%', { exact: true })).toBeVisible();
+    await expect(page.getByText('Listen to concerns: 12.5/25', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(`From your answer: “${evidenceQuote}”`, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(justification, { exact: true }).first()).toBeVisible();
+    for (const label of ['Not demonstrated', 'Mentioned only', 'Basic demonstration', 'Good demonstration', 'Excellent demonstration']) {
+      await expect(page.getByText(new RegExp(`${label} ·`)).first()).toHaveCount(1);
+    }
+    await expect(page.getByRole('checkbox')).toHaveCount(0);
+    expect(controller.scoringRequests()).toHaveLength(0);
+    await page.screenshot({ path: `/private/tmp/mmi-five-level-${viewport.width}.png`, fullPage: false });
+  });
+}
+
 test('MMI completion explains when AI scoring is not configured', async ({ page }) => {
   const controller = await installCandidateMmiController(page);
   controller.failScoringWith('provider_not_configured');

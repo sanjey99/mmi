@@ -167,23 +167,23 @@ function retryablePromptOrders(feedback: readonly CandidateMmiFeedback[] | null)
 
 function FeedbackCard({ item, scoringInProgress = false, retryAvailable = false }: Readonly<{ item: CandidateMmiFeedback; scoringInProgress?: boolean; retryAvailable?: boolean }>) {
   const assessment = item.assessment;
-  const rubricSummary = assessment?.schemaVersion === 3
+  const rubricSummary = assessment?.schemaVersion === 3 || assessment?.schemaVersion === 4
     ? summarizeCandidateMmiAssessment(assessment)
     : null;
   return (
     <View style={styles.feedbackCard}>
-      {rubricSummary && assessment?.schemaVersion === 3 ? (
+      {rubricSummary && (assessment?.schemaVersion === 3 || assessment?.schemaVersion === 4) ? (
           <>
             <Text style={styles.score}>Question {item.promptOrder} · {assessment.questionScorePct}%</Text>
             <RubricChecklist criteria={assessment.criteria} />
-            <Text style={styles.feedbackHeading}>Covered</Text>
+            <Text style={styles.feedbackHeading}>{assessment.schemaVersion === 4 ? 'Demonstrated well' : 'Covered'}</Text>
             {rubricSummary.covered.length > 0 ? rubricSummary.covered.map((criterion) => (
               <Text key={criterion.criterionId} style={styles.feedbackText}>• {criterion.bulletText}</Text>
-            )) : <Text style={styles.feedbackText}>No rubric points were achieved.</Text>}
+            )) : <Text style={styles.feedbackText}>{assessment.schemaVersion === 4 ? 'No criterion reached good demonstration yet. Use the feedback above to build on your answer.' : 'No rubric points were achieved.'}</Text>}
             <Text style={styles.feedbackHeading}>Next time</Text>
             {rubricSummary.nextTime.length > 0 ? rubricSummary.nextTime.map((criterion) => (
               <Text key={criterion.criterionId} style={styles.feedbackText}>• {criterion.bulletText}</Text>
-            )) : <Text style={styles.feedbackText}>Every rubric point was achieved.</Text>}
+            )) : <Text style={styles.feedbackText}>{assessment.schemaVersion === 4 ? 'Every criterion reached excellent demonstration.' : 'Every rubric point was achieved.'}</Text>}
           </>
       ) : assessment && item.legacy && 'overallPct' in assessment ? (
         <>
@@ -708,7 +708,8 @@ export default function CandidateMmiStationScreen() {
             <Text style={styles.reading}>
               Your browser or platform may send microphone audio to its speech
               provider for transcription. This app and its database store no raw
-              audio. Finalized transcript text is deleted immediately after successful scoring;
+              audio. The full finalized transcript text is deleted immediately after successful scoring;
+              answer excerpts of up to 300 characters per criterion are retained with your feedback;
               unresolved transcript text is automatically deleted within 24 hours.
               Your browser speech provider may process audio under its own terms.
             </Text>

@@ -14,7 +14,7 @@ const SECTIONS: readonly LegalSection[] = [
     paragraphs: ['We collect only information used to operate, secure, and evaluate the preview.'],
     points: [
       'Account and profile data: email address, name, target university, entry year, onboarding status, role, and account timestamps.',
-      'Practice data: selected question and category, session timing and status, AI-generated rubric scores and structured outcomes, and progress summaries. Our application and database never store raw MMI audio; we delete MMI transcript text immediately after successful scoring and within 24 hours when unresolved.',
+      'Practice data: selected question and category, session timing and status, AI-generated rubric scores, per-criterion justifications, supporting answer excerpts of up to 300 characters per criterion, and progress summaries. Our application and database never store raw MMI audio; we delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved. Supporting excerpts remain with your feedback.',
       'Content operations: questions, guidance notes, tags, draft or published status, and configuration actions submitted by authorized administrators.',
       'Partner reports: category, severity, screen, message, app version, reply permission, and account ID. The review API hides the account ID when reply permission is off.',
       'Technical records: security, authentication, delivery, and error metadata processed by our hosting and backend providers. The app does not intentionally attach screenshots, browser logs, access tokens, answers, or transcripts to partner reports.',
@@ -45,7 +45,7 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Retention and your choices',
     paragraphs: [
-      'Structured practice outcomes are kept while needed to operate the invited test, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete MMI transcript text immediately after successful scoring and within 24 hours when unresolved; raw MMI audio is never stored by us. External speech and AI providers may retain or process data under their own terms. Exact production retention periods for other records must be approved before the approximately 100-person round.',
+      'Structured practice outcomes, bounded supporting answer excerpts, and scoring justifications are kept while needed to operate the invited test, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved; raw MMI audio is never stored by us. Supporting excerpts remain with your feedback and may include a complete short answer. External speech and AI providers may retain or process data under their own terms. Exact production retention periods for other records must be approved before the approximately 100-person round.',
       'Ask the founding team to access, correct, export, restrict, object to use of, or delete information associated with your invited account. The available rights depend on the applicable law and legal basis. You may also raise a concern with the relevant data-protection authority; UK participants can contact the Information Commissioner’s Office.',
     ],
   },
@@ -62,7 +62,7 @@ export default function PrivacyScreen() {
     <LegalDocument
       code="PRIVACY / 02"
       title="Privacy notice"
-      effectiveDate="25 August 2026"
+      effectiveDate="17 October 2026"
       reviewNotice="Operational preview notice based on the current data flows. The controller identity, contact, legal bases, international-transfer safeguards, and exact retention periods require qualified legal review before external testing."
       sections={SECTIONS}
     />

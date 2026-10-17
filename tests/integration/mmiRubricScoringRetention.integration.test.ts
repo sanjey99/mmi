@@ -55,6 +55,20 @@ function assessmentFor(criteria: Array<{ criterionId: string }>) {
   };
 }
 
+function fiveLevelAssessmentFor(criteria: Array<{ criterionId: string }>, level = 2, evidenceQuote: string | null = 'local fixture answer') {
+  return {
+    schemaVersion: 4,
+    questionScorePct: level * 25,
+    criteria: criteria.map((criterion) => ({
+      criterionId: criterion.criterionId,
+      performanceLevel: level,
+      weightPct: Number((100 / criteria.length).toFixed(8)),
+      evidenceQuote,
+      justification: level > 0 ? 'The quoted answer gives a basic demonstration of this criterion.' : 'This criterion was not demonstrated in the answer.',
+    })),
+  };
+}
+
 function scoredUsage(overrides: Record<string, unknown> = {}) {
   return {
     provider: 'anthropic', model: 'local-test', inputTokens: 1, cachedInputTokens: 0,
@@ -83,6 +97,68 @@ INSERT INTO public.mmi_marking_criteria(criterion_id,sub_q_id,order_num,bullet_t
   afterAll(async () => {
     if (userId) await service.auth.admin.deleteUser(userId);
     sql(`DELETE FROM public.mmi_marking_criteria WHERE source_namespace='retention_test' AND sub_q_id LIKE '${fixtureStationId}%'; DELETE FROM public.mmi_sub_questions WHERE station_id='${fixtureStationId}'; DELETE FROM public.mmi_stations WHERE station_id='${fixtureStationId}';`);
+  });
+
+  it('stores a five-level partial score and verified quote while atomically erasing the full answer', async () => {
+    const fixture = createResponseFixture('😀 local fixture answer with additional private content');
+    const partialLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: partialLease });
+    assert.equal(claim.error, null, claim.error?.message);
+    const criteria = (claim.data as { criteria: Array<{ criterionId: string }> }).criteria;
+    const assessment = fiveLevelAssessmentFor(criteria);
+    const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
+      p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: partialLease,
+      p_public_assessment: assessment, p_usage: scoredUsage(),
+    });
+    assert.equal(completion.error, null, completion.error?.message);
+    const persisted = JSON.parse(sql(`SELECT public_assessment::text FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}';`));
+    assert.deepEqual(persisted, assessment);
+    assert.equal(sql(`SELECT coalesce(finalized_transcript,'<null>') FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}';`), '<null>');
+    assert.equal(JSON.stringify(persisted).includes('additional private content'), false);
+    const projection = JSON.parse(sql(`BEGIN;
+SET LOCAL request.jwt.claim.role='authenticated';
+SET LOCAL request.jwt.claim.sub='${userId}';
+SET LOCAL request.jwt.claims='{"role":"authenticated","sub":"${userId}"}';
+SELECT jsonb_build_object(
+  'result',public.get_candidate_mmi_station_result('${fixture.sessionId}'),
+  'history',(SELECT item FROM jsonb_array_elements(public.list_candidate_mmi_history(100)) item WHERE item->>'sessionId'='${fixture.sessionId}')
+)::text;
+ROLLBACK;`));
+    assert.equal(projection.result.status, 'completed');
+    assert.equal(projection.result.overallPct, 10);
+    assert.equal(projection.result.feedback[0].legacy, false);
+    assert.equal(projection.result.feedback[0].assessment.schemaVersion, 4);
+    assert.equal(projection.result.feedback[0].assessment.criteria[0].evidenceQuote, 'local fixture answer');
+    assert.deepEqual(projection.history.domainAttainment, [{ domain: 'safety', achieved: 0.5, total: 5, pct: 10 }]);
+  });
+
+  it('rejects forged quotes, invalid levels, and incorrect totals without purging a retryable answer', async () => {
+    const fixture = createResponseFixture('local fixture answer');
+    const validationLease = randomUUID();
+    const claim = await service.rpc('claim_candidate_mmi_response_scoring', { p_user_id: userId, p_session_id: fixture.sessionId, p_prompt_order: 1, p_lease_token: validationLease });
+    assert.equal(claim.error, null, claim.error?.message);
+    const criteria = (claim.data as { criteria: Array<{ criterionId: string }> }).criteria;
+    const base = fiveLevelAssessmentFor(criteria);
+    for (const assessment of [
+      fiveLevelAssessmentFor(criteria, 2, 'a fabricated quotation'),
+      fiveLevelAssessmentFor(criteria, 0, 'a fabricated quotation'),
+      fiveLevelAssessmentFor(criteria, 2, null),
+      { ...base, questionScorePct: 100 },
+      { ...base, criteria: [{ ...base.criteria[0], performanceLevel: 1.5 }] },
+      { ...base, criteria: [{ ...base.criteria[0], performanceLevel: 5 }] },
+      { ...base, criteria: [{ ...base.criteria[0], justification: ' \n\t ' }] },
+      { ...base, criteria: [{ ...base.criteria[0], justification: 'a'.repeat(601) }] },
+      { ...base, criteria: [{ ...base.criteria[0], evidenceQuote: '😀'.repeat(301) }] },
+      { ...base, criteria: [{ ...base.criteria[0], unexpected: true }] },
+    ]) {
+      const completion = await service.rpc('complete_candidate_mmi_response_scoring', {
+        p_response_id: fixture.responseId, p_session_id: fixture.sessionId, p_lease_token: validationLease,
+        p_public_assessment: assessment, p_usage: scoredUsage(),
+      });
+      assert.ok(completion.error, 'invalid five-level assessment must be rejected');
+    }
+    assert.equal(sql(`SELECT scoring_status || '|' || finalized_transcript FROM public.candidate_mmi_station_responses WHERE id='${fixture.responseId}';`), 'in_progress|local fixture answer');
+    assert.equal(sql(`SELECT count(*) FROM public.mmi_ai_usage_events WHERE response_id='${fixture.responseId}';`), '0');
   });
 
   it('stores decisions and metered usage then erases the finalized transcript in the same completion RPC', async () => {

@@ -27,6 +27,10 @@ const finalHardeningMigration = readFileSync(fileURLToPath(new URL(
   '../supabase/migrations/20260910005000_mmi_final_high_blockers.sql',
   import.meta.url,
 )), 'utf8');
+const fiveLevelMigration = readFileSync(fileURLToPath(new URL(
+  '../supabase/migrations/20261017000000_mmi_five_level_scoring.sql',
+  import.meta.url,
+)), 'utf8');
 const candidateApi = readFileSync(fileURLToPath(new URL(
   '../src/features/candidateMmi/api.ts',
   import.meta.url,
@@ -98,7 +102,7 @@ describe('MMI rubric retention and admin projection policy', () => {
   });
 
   it('uses the final installed definitions for atomic scoring and margin-backed retention', () => {
-    const installedSql = `${scoringMigration}\n${practiceMigration}\n${adminMigration}\n${finalHardeningMigration}`;
+    const installedSql = `${scoringMigration}\n${practiceMigration}\n${adminMigration}\n${finalHardeningMigration}\n${fiveLevelMigration}`;
     const complete = lastFunctionBody(installedSql, 'complete_candidate_mmi_response_scoring');
     const usageInsert = complete.indexOf('INSERT INTO public.mmi_ai_usage_events');
     const scoreUpdate = complete.indexOf("scoring_status='scored',finalized_transcript=NULL,transcript_purged_at=clock_timestamp()");
@@ -112,6 +116,37 @@ describe('MMI rubric retention and admin projection policy', () => {
     assert.match(finalHardeningMigration, /'\*\/5 \* \* \* \*'/);
     assert.match(finalHardeningMigration, /CREATE TABLE public\.mmi_retention_job_health/i);
     assert.match(finalHardeningMigration, /REVOKE ALL ON TABLE public\.mmi_retention_job_health FROM PUBLIC, anon, authenticated, service_role/i);
+  });
+
+  it('validates five-level scores and exact bounded evidence before purging the answer', () => {
+    const validate = lastFunctionBody(fiveLevelMigration, 'is_valid_candidate_mmi_v4_assessment');
+    assert.match(validate, /ARRAY\['criterionId','performanceLevel','weightPct','evidenceQuote','justification'\]/);
+    assert.match(validate, /v_level NOT BETWEEN 0 AND 4 OR v_level % 1 <> 0/);
+    assert.match(validate, /char_length\(v_criterion->>'evidenceQuote'\) NOT BETWEEN 1 AND 300/);
+    assert.match(validate, /char_length\(v_criterion->>'justification'\) NOT BETWEEN 1 AND 600/);
+    const complete = lastFunctionBody(fiveLevelMigration, 'complete_candidate_mmi_response_scoring');
+    const quoteCheck = complete.indexOf("position(item.value->>'evidenceQuote' IN v_response.finalized_transcript)");
+    const purge = complete.indexOf('finalized_transcript=NULL');
+    assert.ok(quoteCheck >= 0 && quoteCheck < purge, 'quotes must be checked against the current answer before it is erased');
+    assert.match(complete, /v_score := round\(v_level_total \* 100 \/ \(4 \* cardinality\(v_expected_ids\)\), 2\)/);
+    assert.match(complete, /v_actual_ids IS DISTINCT FROM v_expected_ids/);
+    assert.match(complete, /round\(100::numeric\/cardinality\(v_expected_ids\), 8\)/);
+  });
+
+  it('projects candidate evidence while keeping admin review free of answer excerpts', () => {
+    const candidate = lastFunctionBody(fiveLevelMigration, 'get_candidate_mmi_station_feedback');
+    assert.match(candidate, /'schemaVersion', 4/);
+    assert.match(candidate, /'evidenceQuote', decision.value->'evidenceQuote'/);
+    assert.match(candidate, /'justification', decision.value->>'justification'/);
+    const admin = lastFunctionBody(fiveLevelMigration, 'get_admin_mmi_assessment');
+    assert.match(admin, /'performanceLevel'/);
+    assert.match(admin, /'achieved'/);
+    assert.doesNotMatch(admin, /'evidenceQuote'|'justification'/);
+    assert.ok(admin.indexOf('INSERT INTO public.mmi_admin_access_audit') < admin.indexOf('RETURN jsonb_build_object'));
+    for (const name of ['candidate_mmi_station_has_complete_v3_result', 'list_admin_mmi_assessments', 'get_admin_mmi_assessment']) {
+      assert.match(lastFunctionBody(fiveLevelMigration, name), /IN \('3','4'\)/);
+    }
+    assert.match(lastFunctionBody(fiveLevelMigration, 'list_candidate_mmi_history'), /performanceLevel'\)::numeric,0\)\/4/);
   });
 
   it('keeps AI keys write-only and revokes direct browser-table access', () => {

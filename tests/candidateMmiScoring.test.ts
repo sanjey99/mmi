@@ -38,10 +38,10 @@ const gpt55Profile = Object.freeze({
   outputRatePerMillion: 30,
 });
 const providerAssessment = Object.freeze({ decisions: [
-  { criterionId: 'CRIT_1', achieved: true, evidenceId: 'E1' },
-  { criterionId: 'CRIT_2', achieved: true, evidenceId: 'E1' },
-  { criterionId: 'CRIT_3', achieved: true, evidenceId: 'E1' },
-  { criterionId: 'CRIT_4', achieved: false, evidenceId: null },
+  { criterionId: 'CRIT_1', performanceLevel: 4, evidenceId: 'E1', justification: 'The answer identifies immediate risk and gives a clear protective response.' },
+  { criterionId: 'CRIT_2', performanceLevel: 4, evidenceId: 'E1', justification: 'The answer explicitly protects confidentiality in the proposed response.' },
+  { criterionId: 'CRIT_3', performanceLevel: 4, evidenceId: 'E1', justification: 'The answer names a supervisor as the appropriate escalation route.' },
+  { criterionId: 'CRIT_4', performanceLevel: 0, evidenceId: null, justification: 'The answer does not describe documenting the action.' },
 ] });
 
 function repository(overrides: Partial<CandidateMmiScoringRepository> = {}): CandidateMmiScoringRepository {
@@ -73,26 +73,26 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(await response.json()).toEqual({ status: 'scored' });
     const request = callProvider.mock.calls[0]?.[1] as AiProviderRequest;
     expect(JSON.parse(request.userContent)).toEqual({ scenarioText: claimed.scenarioText, questionText: claimed.promptText, criteria: claimed.criteria, candidateAnswer: transcript, evidenceExcerpts: [{ evidenceId: 'E1', text: transcript }] });
-    expect(request.systemPrompt).toContain('Judge only whether each supplied marking criterion is explicitly supported by the candidate answer.');
-    expect(request.systemPrompt).toContain('For achieved=true, evidenceId must identify one supplied excerpt whose text explicitly supports that criterion.');
-    expect(request.systemPrompt).toContain('For achieved=false, evidenceId must be null.');
+    for (const label of ['Not demonstrated', 'Mentioned only', 'Basic demonstration', 'Good demonstration', 'Excellent demonstration']) {
+      expect(request.systemPrompt).toContain(label);
+    }
+    expect(request.systemPrompt).toContain('justification');
+    expect(request.systemPrompt).toContain('evidenceId');
     expect(request.systemPrompt).toContain('never return copied quotes or character offsets');
     expect(request.maxTokens).toBe(4_096);
     expect(request.responseSchema).toMatchObject({
-      properties: { decisions: { items: { required: ['criterionId', 'achieved', 'evidenceId'], properties: { evidenceId: { anyOf: [{ type: 'string', enum: ['E1'] }, { type: 'null' }] } } } } },
+      properties: { decisions: { items: { required: ['criterionId', 'performanceLevel', 'evidenceId', 'justification'], properties: { performanceLevel: { type: 'integer', enum: [0, 1, 2, 3, 4] }, justification: { type: 'string', minLength: 1, maxLength: 600 }, evidenceId: { anyOf: [{ type: 'string', enum: ['E1'] }, { type: 'null' }] } } } } },
     });
     expect(repo.complete).toHaveBeenCalledExactlyOnceWith({
       p_response_id: responseId, p_session_id: sessionId, p_lease_token: leaseToken,
-      p_public_assessment: { schemaVersion: 3, questionScorePct: 75, criteria: [
-        { criterionId: 'CRIT_1', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_2', achieved: true, weightPct: 25 },
-        { criterionId: 'CRIT_3', achieved: true, weightPct: 25 }, { criterionId: 'CRIT_4', achieved: false, weightPct: 25 },
-      ] },
+      p_public_assessment: { schemaVersion: 4, questionScorePct: 75, criteria: providerAssessment.decisions.map(({ criterionId, performanceLevel, justification }) => ({
+        criterionId, performanceLevel, weightPct: 25, evidenceQuote: performanceLevel > 0 ? transcript : null, justification,
+      })) },
       p_usage: { provider: 'anthropic', model: 'synthetic-model', inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, inputRatePerMillion: 3, cachedInputRatePerMillion: 0.3, outputRatePerMillion: 15, currency: 'USD', estimatedCost: '0.00045600', latencyMs: expect.any(Number), outcome: 'scored' },
     });
     const persisted = JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls[0]);
-    expect(persisted).not.toContain(transcript);
+    expect(persisted).toContain(transcript);
     expect(persisted).not.toContain('evidenceReference');
-    expect(persisted).not.toContain('evidenceQuote');
     expect(persisted).not.toContain('evidenceId');
     expect(persisted).not.toContain('evidenceExcerpts');
     expect(persisted).not.toContain('dimensions');
@@ -102,14 +102,85 @@ describe('candidate MMI rubric scoring handler', () => {
     const largeCriteria = Array.from({ length: 20 }, (_, index) => ({ criterionId: `CRIT_${index + 1}`, bulletText: `Criterion ${index + 1}`, domain: null }));
     const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, criteria: largeCriteria } })) });
     const callProvider = vi.fn(async (_config: AiConfig, _request: AiProviderRequest) => ({
-      content: JSON.stringify({ decisions: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, evidenceId: null })) }),
+      content: JSON.stringify({ decisions: largeCriteria.map(({ criterionId }) => ({ criterionId, performanceLevel: 0, evidenceId: null, justification: 'The answer does not demonstrate this criterion.' })) }),
       usage: null,
     }));
     const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
     expect(response.status).toBe(200);
     expect(callProvider.mock.calls[0]?.[1]).toMatchObject({ maxTokens: 10_240 });
     expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
-      p_public_assessment: { schemaVersion: 3, questionScorePct: 0, criteria: largeCriteria.map(({ criterionId }) => ({ criterionId, achieved: false, weightPct: 5 })) },
+      p_public_assessment: { schemaVersion: 4, questionScorePct: 0, criteria: largeCriteria.map(({ criterionId }) => ({ criterionId, performanceLevel: 0, weightPct: 5, evidenceQuote: null, justification: 'The answer does not demonstrate this criterion.' })) },
+    }));
+  });
+
+  it('calculates partial marks on the five-level scale and retains the evidence for each score', async () => {
+    const repo = repository();
+    const levels = [0, 1, 2, 4];
+    const decisions = providerAssessment.decisions.map((decision, index) => ({
+      ...decision,
+      performanceLevel: levels[index],
+      evidenceId: index === 0 ? null : 'E1',
+      justification: `Criterion ${index + 1} receives level ${levels[index]} based on the answer.`,
+    }));
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({ content: JSON.stringify({ decisions }), usage: null })),
+    }))(scoringRequest());
+
+    expect(response.status).toBe(200);
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_public_assessment: {
+        schemaVersion: 4,
+        questionScorePct: 43.75,
+        criteria: decisions.map(({ criterionId, performanceLevel, justification }) => ({
+          criterionId, performanceLevel, weightPct: 25,
+          evidenceQuote: performanceLevel > 0 ? transcript : null, justification,
+        })),
+      },
+    }));
+  });
+
+  it('asks the provider to cap vague intentions at mentioned only and explain the missing demonstration', async () => {
+    const candidateTranscript = 'I would listen to the patient.';
+    const repo = repository({ claim: vi.fn(async () => ({ data: { ...claimed, transcript: candidateTranscript } })) });
+    const callProvider = vi.fn(async (_config: AiConfig, _request: AiProviderRequest) => ({
+      content: JSON.stringify({ decisions: providerAssessment.decisions.map((decision) => ({
+        ...decision, performanceLevel: 1, evidenceId: 'E1',
+        justification: 'The answer mentions listening but gives no concrete question or response to a concern.',
+      })) }), usage: null,
+    }));
+    const response = await createCandidateMmiScoringHandler(dependencies({ repository: repo, callProvider }))(scoringRequest());
+
+    expect(response.status).toBe(200);
+    const prompt = callProvider.mock.calls[0]?.[1].systemPrompt.toLowerCase();
+    expect(prompt).toContain('mentioned only');
+    expect(prompt).toContain('"i would listen to the patient" alone earns at most this level');
+    expect(prompt).toContain('intention');
+    expect(prompt).toContain('justification');
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_public_assessment: expect.objectContaining({ questionScorePct: 25 }),
+    }));
+  });
+
+  it('allows level zero to cite a verified excerpt explaining why the criterion was not demonstrated', async () => {
+    const repo = repository();
+    const decisions = providerAssessment.decisions.map((decision) => ({
+      ...decision, performanceLevel: 0, evidenceId: 'E1',
+      justification: 'The quoted answer does not demonstrate the required action.',
+    }));
+    const response = await createCandidateMmiScoringHandler(dependencies({
+      repository: repo,
+      callProvider: vi.fn(async () => ({ content: JSON.stringify({ decisions }), usage: null })),
+    }))(scoringRequest());
+
+    expect(response.status).toBe(200);
+    expect(repo.complete).toHaveBeenCalledWith(expect.objectContaining({
+      p_public_assessment: {
+        schemaVersion: 4, questionScorePct: 0,
+        criteria: decisions.map(({ criterionId, performanceLevel, justification }) => ({
+          criterionId, performanceLevel, weightPct: 25, evidenceQuote: transcript, justification,
+        })),
+      },
     }));
   });
 
@@ -136,8 +207,12 @@ describe('candidate MMI rubric scoring handler', () => {
     ['envelope', '{"decisions":[', transcript],
     ['count', JSON.stringify({ decisions: providerAssessment.decisions.slice(0, 3) }), transcript],
     ['order', JSON.stringify({ decisions: [providerAssessment.decisions[1], providerAssessment.decisions[0], ...providerAssessment.decisions.slice(2)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], performanceLevel: 5 }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], performanceLevel: 1.5 }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], performanceLevel: '4' }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], justification: '   ' }, ...providerAssessment.decisions.slice(1)] }), transcript],
+    ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], justification: '😀'.repeat(601) }, ...providerAssessment.decisions.slice(1)] }), transcript],
     ['evidence_null', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: null }, ...providerAssessment.decisions.slice(1)] }), transcript],
-    ['evidence_null', JSON.stringify({ decisions: [...providerAssessment.decisions.slice(0, 3), { ...providerAssessment.decisions[3], evidenceId: 'E1' }] }), transcript],
     ['evidence_unknown', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: 1 }, ...providerAssessment.decisions.slice(1)] }), transcript],
     ['evidence_unknown', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceId: 'E1 ' }, ...providerAssessment.decisions.slice(1)] }), transcript],
     ['envelope', JSON.stringify({ decisions: [{ ...providerAssessment.decisions[0], evidenceQuote: 'altered quote' }, ...providerAssessment.decisions.slice(1)] }), transcript],
@@ -173,9 +248,14 @@ describe('candidate MMI rubric scoring handler', () => {
     expect(content.evidenceExcerpts[1]).toEqual({ evidenceId: 'E2', text: Array.from(candidateTranscript).slice(150, 450).join('') });
     expect(content.evidenceExcerpts.every((excerpt: Record<string, unknown>) => Object.keys(excerpt).sort().join(',') === 'evidenceId,text')).toBe(true);
     expect(request.responseSchema).toMatchObject({ properties: { decisions: { items: { properties: { evidenceId: { anyOf: [{ enum: content.evidenceExcerpts.map((excerpt: { evidenceId: string }) => excerpt.evidenceId) }, { type: 'null' }] } } } } } });
-    expect(repo.complete).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ p_public_assessment: expect.objectContaining({ schemaVersion: 3, questionScorePct: 75 }) }));
-    expect(JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('evidence');
-    expect(JSON.stringify((repo.complete as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('café');
+    const assessment = (repo.complete as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].p_public_assessment;
+    expect(assessment).toMatchObject({ schemaVersion: 4, questionScorePct: 75 });
+    expect(assessment.criteria[0].evidenceQuote).toBe(content.evidenceExcerpts[1].text);
+    expect(Array.from(assessment.criteria[0].evidenceQuote).length).toBe(300);
+    expect(assessment.criteria[1].evidenceQuote).toBe(content.evidenceExcerpts[0].text);
+    expect(assessment.criteria[3].evidenceQuote).toBeNull();
+    expect(JSON.stringify(assessment)).not.toContain('evidenceId');
+    expect(JSON.stringify(assessment)).not.toContain('evidenceReference');
   });
 
   it('rejects a non-admin GPT-5.5 profile before claiming or calling a paid provider', async () => {

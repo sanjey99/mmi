@@ -25,6 +25,7 @@ import type {
 } from './types';
 import { isMmiSourceId } from '../mmi/sourceId';
 import { validateStationDraft } from './validation';
+import { criterionMarks, type MmiPerformanceLevel } from '../mmi/rubricPerformance';
 
 export type AdminMmiApiErrorKind =
   | 'access_denied'
@@ -313,14 +314,21 @@ function parseAssessment(value: unknown): AdminMmiAssessmentDetail {
   const root = record(value); exact(root, ['accessAuditId', 'cachedInputTokens', 'criteria', 'estimatedCost', 'finalizedAt', 'inputTokens', 'latencyMs', 'model', 'outcome', 'outputTokens', 'promptOrder', 'provider', 'questionScorePct', 'responseId', 'scoredAt', 'stationId', 'subQuestionId', 'userDisplayName', 'userId']);
   if (!Array.isArray(root.criteria) || root.criteria.length < 1 || root.criteria.length > 20) invalidResponse();
   const criteria = root.criteria.map((entry) => {
-    const row = record(entry); exact(row, ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct']);
+    const row = record(entry);
+    const base = { criterionId: sourceId(row.criterionId), bulletText: text(row.bulletText, 2_000), domain: nullableText(row.domain, 100), weightPct: decimal(row.weightPct) };
+    if (base.weightPct <= 0) invalidResponse();
+    if ('performanceLevel' in row) {
+      exact(row, ['bulletText', 'criterionId', 'domain', 'performanceLevel', 'weightPct']);
+      return Object.freeze({ ...base, performanceLevel: whole(row.performanceLevel, 4) as MmiPerformanceLevel });
+    }
+    exact(row, ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct']);
     if (typeof row.achieved !== 'boolean') invalidResponse();
-    return Object.freeze({ criterionId: sourceId(row.criterionId), bulletText: text(row.bulletText, 2_000), domain: nullableText(row.domain, 100), achieved: row.achieved, weightPct: decimal(row.weightPct) });
+    return Object.freeze({ ...base, achieved: row.achieved });
   });
   const totalWeight = criteria.reduce((sum, criterion) => sum + criterion.weightPct, 0);
-  const achievedWeight = criteria.reduce((sum, criterion) => sum + (criterion.achieved ? criterion.weightPct : 0), 0);
+  const achievedWeight = criteria.reduce((sum, criterion) => sum + criterionMarks(criterion), 0);
   const questionScorePct = decimal(root.questionScorePct);
-  if (new Set(criteria.map((item) => item.criterionId)).size !== criteria.length || Math.abs(totalWeight - 100) > 0.01 || Math.abs(achievedWeight - questionScorePct) > 0.01) invalidResponse();
+  if (new Set(criteria.map((item) => item.criterionId)).size !== criteria.length || Math.abs(totalWeight - 100) > 0.01 || Math.abs(achievedWeight - questionScorePct) > 0.01 || criteria.some((criterion) => ('performanceLevel' in criterion) !== ('performanceLevel' in criteria[0]))) invalidResponse();
   return Object.freeze({
     accessAuditId: uuid(root.accessAuditId), responseId: uuid(root.responseId), userId: uuid(root.userId), userDisplayName: text(root.userDisplayName, 200),
     stationId: sourceId(root.stationId), subQuestionId: sourceId(root.subQuestionId), promptOrder: positiveWhole(root.promptOrder, 5), questionScorePct, criteria: Object.freeze(criteria),

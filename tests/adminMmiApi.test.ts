@@ -120,6 +120,30 @@ describe('admin MMI API', () => {
     }
   });
 
+  it('accepts five-level admin marks without answer excerpts or explanations', async () => {
+    const graded = {
+      ...assessment, questionScorePct: 43.75,
+      criteria: assessment.criteria.map(({ achieved: _achieved, ...criterion }, index) => ({
+        ...criterion, performanceLevel: [0, 1, 2, 4][index],
+      })),
+    };
+    await expect(createAdminMmiApi(rpcClient([{ data: graded, error: null }])).getAssessment(responseId, 'scoring_review'))
+      .resolves.toEqual(graded);
+    for (const fields of [
+      { performanceLevel: -1 }, { performanceLevel: 0.5 }, { performanceLevel: 5 },
+      { performanceLevel: '2' }, { performanceLevel: Number.NaN },
+      { evidenceQuote: 'Private answer' }, { justification: 'Private answer explanation' },
+      { achieved: true }, { weightPct: 0 },
+    ]) {
+      const malformed = { ...graded, criteria: graded.criteria.map((criterion, index) => index === 0 ? { ...criterion, ...fields } : criterion) };
+      await expect(createAdminMmiApi(rpcClient([{ data: malformed, error: null }])).getAssessment(responseId, 'scoring_review'))
+        .rejects.toMatchObject({ kind: 'invalid_response' });
+    }
+    const mixed = { ...graded, questionScorePct: 68.75, criteria: [assessment.criteria[0], ...graded.criteria.slice(1)] };
+    await expect(createAdminMmiApi(rpcClient([{ data: mixed, error: null }])).getAssessment(responseId, 'scoring_review'))
+      .rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
   it('validates filters, identifiers, purpose and AI settings before making RPC calls', async () => {
     const client = rpcClient([]);
     const api = createAdminMmiApi(client);
