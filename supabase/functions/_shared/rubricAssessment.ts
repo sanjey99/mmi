@@ -355,3 +355,131 @@ export function toPublicRubricAssessment(
     }))),
   });
 }
+
+export type RubricPerformanceLevel = 0 | 1 | 2 | 3 | 4;
+export const MAX_RUBRIC_JUSTIFICATION_CODE_POINTS = 600;
+
+export type GradedCriterionDecision = Readonly<{
+  criterionId: string;
+  performanceLevel: RubricPerformanceLevel;
+  evidenceReference: Readonly<{ start: number; end: number }> | null;
+  justification: string;
+}>;
+
+export type PublicGradedRubricAssessment = Readonly<{
+  schemaVersion: 4;
+  questionScorePct: number;
+  criteria: readonly Readonly<{
+    criterionId: string;
+    performanceLevel: RubricPerformanceLevel;
+    weightPct: number;
+    evidenceQuote: string | null;
+    justification: string;
+  }>[];
+}>;
+
+/** Five anchored performance levels; evidence remains selected from server-owned excerpts. */
+export function createGradedRubricResponseSchema(
+  criteria: readonly RubricCriterionSnapshot[],
+  transcript: string,
+): JsonSchema {
+  const ids = criterionIds(criteria);
+  const evidenceIds = createRubricEvidenceExcerpts(transcript).map(({ evidenceId }) => evidenceId);
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['decisions'],
+    properties: {
+      decisions: {
+        type: 'array', minItems: ids.length, maxItems: ids.length,
+        items: {
+          type: 'object', additionalProperties: false,
+          required: ['criterionId', 'performanceLevel', 'evidenceId', 'justification'],
+          properties: {
+            criterionId: { type: 'string', enum: ids },
+            performanceLevel: { type: 'integer', enum: [0, 1, 2, 3, 4] },
+            evidenceId: { anyOf: [{ type: 'string', enum: evidenceIds }, { type: 'null' }] },
+            justification: { type: 'string', minLength: 1, maxLength: MAX_RUBRIC_JUSTIFICATION_CODE_POINTS },
+          },
+        },
+      },
+    },
+  };
+}
+
+function isPerformanceLevel(value: unknown): value is RubricPerformanceLevel {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 4;
+}
+
+function isJustification(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+    && codePointLength(value) <= MAX_RUBRIC_JUSTIFICATION_CODE_POINTS;
+}
+
+/** Rejects missing criteria, fabricated evidence, unsupported levels, and unbounded feedback. */
+export function parseGradedRubricAssessment(
+  raw: unknown,
+  criteria: readonly RubricCriterionSnapshot[],
+  transcript: string,
+): readonly GradedCriterionDecision[] {
+  const ids = criterionIds(criteria);
+  const evidenceById = new Map(createRubricEvidenceExcerpts(transcript).map((excerpt) => [excerpt.evidenceId, excerpt]));
+  if (typeof raw !== 'string') invalidQuoteAssessment('envelope');
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw as string); } catch { invalidQuoteAssessment('envelope'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalidQuoteAssessment('envelope');
+  const envelope = parsed as Record<string, unknown>;
+  if (Object.keys(envelope).length !== 1 || !Array.isArray(envelope.decisions)) invalidQuoteAssessment('envelope');
+  const values = envelope.decisions as unknown[];
+  if (values.length !== ids.length) invalidQuoteAssessment('count');
+  return Object.freeze(values.map((value, index): GradedCriterionDecision => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalidQuoteAssessment('envelope');
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).length !== 4 || !('criterionId' in item) || !('performanceLevel' in item)
+      || !('evidenceId' in item) || !('justification' in item)) invalidQuoteAssessment('envelope');
+    if (item.criterionId !== ids[index]) invalidQuoteAssessment('order');
+    if (!isPerformanceLevel(item.performanceLevel) || !isJustification(item.justification)) invalidQuoteAssessment('envelope');
+    let evidenceReference: GradedCriterionDecision['evidenceReference'] = null;
+    if (item.evidenceId !== null) {
+      if (typeof item.evidenceId !== 'string') invalidQuoteAssessment('evidence_unknown');
+      const excerpt = evidenceById.get(item.evidenceId as string);
+      if (!excerpt) invalidQuoteAssessment('evidence_unknown');
+      evidenceReference = (excerpt as RubricEvidenceExcerpt).evidenceReference;
+    } else if ((item.performanceLevel as number) > 0) invalidQuoteAssessment('evidence_null');
+    return Object.freeze({
+      criterionId: ids[index], performanceLevel: item.performanceLevel as RubricPerformanceLevel,
+      evidenceReference, justification: (item.justification as string).trim(),
+    });
+  }));
+}
+
+/** Owns all score arithmetic and copies only bounded, verified candidate evidence into feedback. */
+export function toPublicGradedRubricAssessment(
+  decisions: readonly GradedCriterionDecision[],
+  criteria: readonly RubricCriterionSnapshot[],
+  transcript: string,
+): PublicGradedRubricAssessment {
+  const ids = criterionIds(criteria);
+  const excerpts = createRubricEvidenceExcerpts(transcript);
+  const points = Array.from(transcript);
+  if (decisions.length !== ids.length) invalidQuoteAssessment('count');
+  const weightPct = roundWeightPct(100 / ids.length);
+  const projected = decisions.map((decision, index) => {
+    if (!decision || decision.criterionId !== ids[index]) invalidQuoteAssessment('order');
+    if (!isPerformanceLevel(decision.performanceLevel) || !isJustification(decision.justification)) invalidQuoteAssessment('envelope');
+    const reference = decision.evidenceReference;
+    let evidenceQuote: string | null = null;
+    if (reference !== null) {
+      if (!reference || !excerpts.some((excerpt) => excerpt.evidenceReference.start === reference.start
+        && excerpt.evidenceReference.end === reference.end)) invalidQuoteAssessment('evidence_unknown');
+      evidenceQuote = points.slice(reference.start, reference.end).join('');
+    } else if (decision.performanceLevel > 0) invalidQuoteAssessment('evidence_null');
+    return Object.freeze({
+      criterionId: ids[index], performanceLevel: decision.performanceLevel, weightPct,
+      evidenceQuote, justification: decision.justification.trim(),
+    });
+  });
+  // Equal snapshot weights are rounded for storage; divide before rounding the final total.
+  const questionScorePct = roundPct(projected.reduce((sum, item) => sum + item.performanceLevel, 0) / (4 * ids.length) * 100);
+  return Object.freeze({ schemaVersion: 4, questionScorePct, criteria: Object.freeze(projected) });
+}

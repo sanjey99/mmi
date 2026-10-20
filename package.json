@@ -1,7 +1,7 @@
 {
   "name": "interview-station",
   "version": "1.0.0",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -60,6 +60,6 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "shell-quote": "1.10.0"
+    "shell-quote": "1.11.0"
   }
 }

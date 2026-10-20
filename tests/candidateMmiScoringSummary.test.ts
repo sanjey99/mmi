@@ -41,4 +41,15 @@ describe('candidate MMI scoring failure summary', () => {
       ],
     });
   });
+
+  it('recognizes good demonstrations and keeps partial credit in next-time practice', () => {
+    const criteria = [0, 1, 2, 3, 4].map((performanceLevel) => ({
+      criterionId: `C${performanceLevel}`, bulletText: `Criterion ${performanceLevel}`, domain: null,
+      weightPct: 20, performanceLevel: performanceLevel as 0 | 1 | 2 | 3 | 4,
+      evidenceQuote: performanceLevel === 0 ? null : 'Specific answer evidence',
+      justification: 'A criterion-specific explanation.',
+    }));
+    expect(summarizeCandidateMmiAssessment({ schemaVersion: 4, questionScorePct: 50, criteria }))
+      .toEqual({ covered: criteria.slice(3), nextTime: criteria.slice(0, 4) });
+  });
 });

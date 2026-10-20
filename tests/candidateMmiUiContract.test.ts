@@ -176,14 +176,21 @@ describe('single MMI station route contract', () => {
     expect(routeSource).not.toMatch(/accent evaluation|speaking pace|eye contact|body language/i);
   });
 
-  it('renders rubric points as accessible, non-interactive achieved checkboxes', () => {
+  it('renders read-only graduated marks and evidence, with checkboxes only for historical binary results', () => {
     const checklistSource = readFileSync(rubricChecklistPath, 'utf8');
 
-    expect(checklistSource).toMatch(/accessibilityRole="checkbox"/);
-    expect(checklistSource).toMatch(/accessibilityState=\{\{ checked: criterion\.achieved \}\}/);
+    expect(checklistSource).toContain("const graduated = 'performanceLevel' in criterion");
+    expect(checklistSource).toContain("accessibilityRole={graduated ? undefined : 'checkbox'}");
+    expect(checklistSource).toContain('accessibilityState={graduated ? undefined : { checked: level === 4 }}');
     expect(checklistSource).toMatch(/criterion\.bulletText/);
     expect(checklistSource).toMatch(/criterion\.weightPct/);
-    expect(checklistSource).not.toMatch(/transcript|evidence/i);
+    expect(checklistSource).toContain('criterionMarks(criterion)');
+    expect(checklistSource).toContain('MMI_PERFORMANCE_LABELS[level]');
+    expect(checklistSource).toContain('From your answer:');
+    expect(checklistSource).toContain('criterion.evidenceQuote');
+    expect(checklistSource).toContain('criterion.justification');
+    expect(checklistSource).toContain('No supporting evidence identified in your answer.');
+    expect(checklistSource).not.toMatch(/draftTranscript|finalizedTranscript|rawResponse|evidenceReference|TextInput|onPress|Touchable/);
   });
 
   it('contains no browser media capture or audio persistence surface and supports terminal leave behavior', () => {

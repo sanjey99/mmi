@@ -1,6 +1,6 @@
 # Interview Station
 
-Interview Station is an Expo Router web application for UK medical-school interview practice. The current release target is a private founding-team preview of the legacy written-practice loop, question authoring, and structured product feedback.
+Interview Station is an Expo Router web application for UK medical-school interview practice. The live invitation-only preview provides an 11-minute MMI station, five-level evidence-based scoring, practice history, content administration, and tester reports. A small outside-user pilot is being prepared; its operational and human review checks remain explicit.
 
 ## Status
 
@@ -8,10 +8,13 @@ Interview Station is an Expo Router web application for UK medical-school interv
 - Hosting: Vercel.
 - Backend: Supabase Auth, Postgres, and Edge Functions.
 - Render is not required.
-- Phase 4 MMI Tasks 1–6 are merged, but the Phase 4 student experience and hosted deployment remain intentionally unavailable.
+- Live candidate app: [mmi-hazel.vercel.app](https://mmi-hazel.vercel.app).
+- The product owner explicitly selected shared Supabase project `tliwifhnsytxpcynuwsy`; this supersedes historical isolated-backend deployment instructions.
+- Five-level scoring is deployed from source `3c78e89`. The GPT-5.5 comparison frontend now uses the same compatible source and backend; its model profile remains administrator-only.
 
 Authoritative runbooks:
 
+- [External Beta Readiness and Operations](docs/EXTERNAL-BETA-READINESS.md) — current release evidence, remaining decisions, invitation/support procedure, and pilot test matrix.
 - [Before Cofounder Viewing](docs/BEFORE-COFOUNDER-VIEWING.md)
 - [Pre-Closed-Round Deployment](docs/PRE-CLOSED-ROUND-DEPLOYMENT.md)
 
@@ -59,6 +62,8 @@ The Playwright suite uses a synthetic intercepted Supabase endpoint. Credential-
 
 ## Deployment safety
 
-Do not paste or apply migrations from this repository directly to hosted Supabase. The hosted migration history and schema are currently divergent. Every migration, function deployment, secret/configuration change, role change, or row mutation requires an exact reviewed operation and explicit approval.
+The hosted migration history and repository have diverged. Do not blindly apply all repository migrations to hosted Supabase; review the exact operation, target, prerequisites, and current user authorization. The scoring rollout to the shared live project was explicitly authorized and completed. That rollout alone does not authorize unrelated role/configuration changes, test fixtures, or destructive account deletion; carry out later work within the user's current scope.
+
+Keep automated credential-gated integration tests on disposable local/isolated databases. Testers receive ordinary invited application accounts, not Supabase/Vercel team membership or administrator access. Before outside invitations, follow the current readiness checklist; deployment alone does not establish working email onboarding, legal review, physical-device QA, or human signoff.
 
 Do not use `npm audit fix --force`.

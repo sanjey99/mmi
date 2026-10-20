@@ -1,5 +1,6 @@
 import type { CandidateMmiPracticeScope, CandidateMmiPromptOrder } from './types';
 import { isMmiSourceId } from '../mmi/sourceId';
+import type { MmiPerformanceLevel } from '../mmi/rubricPerformance';
 
 export type CandidateMmiApiErrorKind =
   | 'access_denied'
@@ -86,17 +87,27 @@ type CandidateMmiLegacyAssessment = Readonly<{
   overallPct: number;
   rubricVersion: number;
 }>;
-export type CandidateMmiCriterionResult = Readonly<{
+type CandidateMmiCriterionBase = Readonly<{
   criterionId: string;
-  achieved: boolean;
   weightPct: number;
   bulletText: string;
   domain: string | null;
 }>;
+export type CandidateMmiBinaryCriterionResult = CandidateMmiCriterionBase & Readonly<{ achieved: boolean }>;
+export type CandidateMmiLevelCriterionResult = CandidateMmiCriterionBase & Readonly<{
+  performanceLevel: MmiPerformanceLevel;
+  evidenceQuote: string | null;
+  justification: string;
+}>;
+export type CandidateMmiCriterionResult = CandidateMmiBinaryCriterionResult | CandidateMmiLevelCriterionResult;
 export type CandidateMmiPublicAssessment = Readonly<{
   schemaVersion: 3;
   questionScorePct: number;
-  criteria: readonly CandidateMmiCriterionResult[];
+  criteria: readonly CandidateMmiBinaryCriterionResult[];
+}> | Readonly<{
+  schemaVersion: 4;
+  questionScorePct: number;
+  criteria: readonly CandidateMmiLevelCriterionResult[];
 }>;
 export type CandidateMmiFeedbackAssessment =
   | CandidateMmiLegacyAssessment
@@ -198,6 +209,7 @@ const finalizationKeys = [
 const feedbackKeys = ['assessment', 'legacy', 'promptOrder', 'status'] as const;
 const rubricAssessmentKeys = ['criteria', 'questionScorePct', 'schemaVersion'] as const;
 const rubricCriterionKeys = ['achieved', 'bulletText', 'criterionId', 'domain', 'weightPct'] as const;
+const levelRubricCriterionKeys = ['bulletText', 'criterionId', 'domain', 'evidenceQuote', 'justification', 'performanceLevel', 'weightPct'] as const;
 const legacyAssessmentKeys = ['overallPct', 'rubricVersion'] as const;
 const practiceOptionKeys = ['allCount', 'targetCount', 'targetTag', 'targetUniversity'] as const;
 const resultKeys = ['feedback', 'overallPct', 'sessionId', 'stationId', 'status'] as const;
@@ -454,7 +466,7 @@ export function parseCandidateAssessment(value: unknown): CandidateMmiPublicAsse
   const result = record(value);
   if (
     result === null || !hasExactKeys(result, rubricAssessmentKeys) ||
-    result.schemaVersion !== 3 || typeof result.questionScorePct !== 'number' ||
+    (result.schemaVersion !== 3 && result.schemaVersion !== 4) || typeof result.questionScorePct !== 'number' ||
     !Number.isFinite(result.questionScorePct) || result.questionScorePct < 0 ||
     result.questionScorePct > 100 || !Array.isArray(result.criteria) ||
     result.criteria.length < 1 || result.criteria.length > 20
@@ -462,22 +474,40 @@ export function parseCandidateAssessment(value: unknown): CandidateMmiPublicAsse
   const criteria = result.criteria.map((value) => {
     const criterion = record(value);
     if (
-      criterion === null || !hasExactKeys(criterion, rubricCriterionKeys) ||
-      !isPublicText(criterion.criterionId, 100) || typeof criterion.achieved !== 'boolean' ||
+      criterion === null ||
+      !hasExactKeys(criterion, result.schemaVersion === 4 ? levelRubricCriterionKeys : rubricCriterionKeys) ||
+      !isPublicText(criterion.criterionId, 100) ||
       typeof criterion.weightPct !== 'number' || !Number.isFinite(criterion.weightPct) ||
       criterion.weightPct <= 0 || criterion.weightPct > 100 ||
       !isPublicText(criterion.bulletText, 2_000) ||
       (criterion.domain !== null && !isPublicText(criterion.domain, 100))
     ) return invalidResponse();
+    const base = {
+      criterionId: criterion.criterionId, weightPct: criterion.weightPct,
+      bulletText: criterion.bulletText, domain: criterion.domain,
+    };
+    if (result.schemaVersion === 4) {
+      if (
+        !isBoundedWhole(criterion.performanceLevel, 4) ||
+        !isPublicText(criterion.justification, 600) ||
+        (criterion.evidenceQuote !== null && !isPublicText(criterion.evidenceQuote, 300)) ||
+        (criterion.performanceLevel > 0 && criterion.evidenceQuote === null)
+      ) return invalidResponse();
+      return Object.freeze({
+        ...base, performanceLevel: criterion.performanceLevel as MmiPerformanceLevel,
+        evidenceQuote: criterion.evidenceQuote, justification: criterion.justification,
+      });
+    }
+    if (typeof criterion.achieved !== 'boolean') return invalidResponse();
     return Object.freeze({
-      criterionId: criterion.criterionId, achieved: criterion.achieved,
-      weightPct: criterion.weightPct, bulletText: criterion.bulletText,
-      domain: criterion.domain,
+      ...base, achieved: criterion.achieved,
     });
   });
   const totalWeight = criteria.reduce((total, criterion) => total + criterion.weightPct, 0);
   const achievedWeight = criteria.reduce(
-    (total, criterion) => total + (criterion.achieved ? criterion.weightPct : 0),
+    (total, criterion) => total + criterion.weightPct * (
+      'performanceLevel' in criterion ? criterion.performanceLevel / 4 : criterion.achieved ? 1 : 0
+    ),
     0,
   );
   if (
@@ -486,10 +516,10 @@ export function parseCandidateAssessment(value: unknown): CandidateMmiPublicAsse
     Math.abs(achievedWeight - result.questionScorePct) > 0.01
   ) return invalidResponse();
   return Object.freeze({
-    schemaVersion: 3,
+    schemaVersion: result.schemaVersion,
     questionScorePct: result.questionScorePct,
     criteria: Object.freeze(criteria),
-  });
+  }) as CandidateMmiPublicAssessment;
 }
 function parseFeedback(value: unknown): readonly CandidateMmiFeedback[] {
   if (!Array.isArray(value) || value.length !== 5) return invalidResponse();
@@ -560,9 +590,9 @@ function parseStationResult(
   if (
     result.status === 'completed' && feedback.some((item) =>
       item.status === 'scored'
-        ? item.legacy || item.assessment?.schemaVersion !== 3
+        ? item.legacy || (item.assessment?.schemaVersion !== 3 && item.assessment?.schemaVersion !== 4)
         : item.status === 'no_response'
-          ? item.assessment?.schemaVersion !== 3
+          ? item.assessment?.schemaVersion !== 3 && item.assessment?.schemaVersion !== 4
           : true,
     )
   ) return invalidResponse();
@@ -595,7 +625,7 @@ function parseHistory(value: unknown): readonly CandidateMmiHistoryItem[] {
       const attainment = record(value);
       if (
         attainment === null || !hasExactKeys(attainment, attainmentKeys) ||
-        !isPublicText(attainment.domain, 100) || !isBoundedWhole(attainment.achieved, 100) ||
+        !isPublicText(attainment.domain, 100) || !isScore(attainment.achieved) ||
         !isBoundedWhole(attainment.total, 100) || attainment.total < 1 ||
         attainment.achieved > attainment.total || !isScore(attainment.pct) ||
         Math.abs(attainment.pct - (attainment.achieved / attainment.total) * 100) > 0.01

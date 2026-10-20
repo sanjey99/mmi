@@ -12,6 +12,9 @@ const {
   parseRubricExcerptProviderAssessment,
   RubricAssessmentValidationError,
   toPublicRubricAssessment,
+  createGradedRubricResponseSchema,
+  parseGradedRubricAssessment,
+  toPublicGradedRubricAssessment,
 } = await import(rubricModulePath);
 
 const criteria = [
@@ -41,6 +44,99 @@ const excerptDecisions = [
 
 if (process.env.VITEST) {
   const { describe, expect, it } = await import('vitest');
+
+  describe('five-level rubric scoring', () => {
+    const answer = "😀 I acknowledged the patient's frustration, but did not explore their concerns.";
+    const graded = (levels: readonly number[]) => levels.map((performanceLevel, index) => ({
+      criterionId: criteria[index].criterionId, performanceLevel,
+      evidenceId: performanceLevel === 0 ? null : 'E1',
+      justification: performanceLevel === 0 ? 'The answer does not demonstrate this criterion.'
+        : 'The candidate acknowledged frustration but did not explore the reason for the concern.',
+    }));
+
+    it.each([0, 1, 2, 3, 4])('awards exactly %i quarters of the criterion weight', (level) => {
+      const values = graded([level, 0, 0, 0]);
+      const parsed = parseGradedRubricAssessment(JSON.stringify({ decisions: values }), criteria, answer);
+      const result = toPublicGradedRubricAssessment(parsed, criteria, answer);
+      expect(result.schemaVersion).toBe(4);
+      expect(result.questionScorePct).toBe(level * 6.25);
+      expect(result.criteria[0]).toEqual({
+        criterionId: 'C1', performanceLevel: level, weightPct: 25,
+        evidenceQuote: level === 0 ? null : answer, justification: values[0].justification,
+      });
+      expect(Object.isFrozen(result.criteria[0])).toBe(true);
+      expect(JSON.stringify(result)).not.toContain('evidenceReference');
+      expect(JSON.stringify(result)).not.toContain('evidenceId');
+    });
+
+    it('scores a basic demonstration as 12.5/25 and sums mixed levels to 43.75%', () => {
+      const result = toPublicGradedRubricAssessment(
+        parseGradedRubricAssessment(JSON.stringify({ decisions: graded([0, 1, 2, 4]) }), criteria, answer), criteria, answer,
+      );
+      expect(result.criteria[2].weightPct * result.criteria[2].performanceLevel / 4).toBe(12.5);
+      expect(result.questionScorePct).toBe(43.75);
+    });
+
+    it.each(Array.from({ length: 20 }, (_, index) => index + 1))('uses database-compatible arithmetic for %i criteria', (count) => {
+      const snapshot = Array.from({ length: count }, (_, index) => ({ criterionId: `C${index}`, bulletText: 'Criterion', domain: null }));
+      const decisions = snapshot.map(({ criterionId }, index) => ({
+        criterionId, performanceLevel: index % 5, evidenceId: index % 5 === 0 ? null : 'E1',
+        justification: 'Specific answer evidence supports this performance level.',
+      }));
+      const result = toPublicGradedRubricAssessment(parseGradedRubricAssessment(JSON.stringify({ decisions }), snapshot, answer), snapshot, answer);
+      const levelSum = decisions.reduce((sum, decision) => sum + decision.performanceLevel, 0);
+      expect(result.questionScorePct).toBe(Math.round(levelSum * 2_500 / count) / 100);
+      expect(result.criteria.every((criterion: { weightPct: number }) => criterion.weightPct === Math.round(100 / count * 1e8) / 1e8)).toBe(true);
+    });
+
+    it('requests exactly five levels, bounded justification, and server-issued evidence IDs', () => {
+      expect(createGradedRubricResponseSchema(criteria, answer)).toMatchObject({
+        additionalProperties: false, properties: { decisions: { minItems: 4, maxItems: 4, items: {
+          additionalProperties: false,
+          required: ['criterionId', 'performanceLevel', 'evidenceId', 'justification'],
+          properties: {
+            performanceLevel: { type: 'integer', enum: [0, 1, 2, 3, 4] },
+            evidenceId: { anyOf: [{ type: 'string', enum: ['E1'] }, { type: 'null' }] },
+            justification: { type: 'string', minLength: 1, maxLength: 600 },
+          },
+        } } },
+      });
+    });
+
+    it.each([
+      { performanceLevel: -1 }, { performanceLevel: 5 }, { performanceLevel: 1.5 },
+      { performanceLevel: '2' }, { performanceLevel: true }, { evidenceId: null },
+      { evidenceId: 'E999' }, { evidenceId: '__proto__' }, { evidenceId: { start: 0, end: 1 } },
+      { justification: '' }, { justification: ' \n\t' }, { justification: 'a'.repeat(601) },
+      { justification: null }, { criterionId: 'unknown' }, { score: 100 },
+    ])('rejects malformed or fabricated decisions %j', (override) => {
+      const decisions = graded([2, 1, 0, 4]);
+      expect(() => parseGradedRubricAssessment(JSON.stringify({ decisions: [{ ...decisions[0], ...override }, ...decisions.slice(1)] }), criteria, answer)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+    });
+
+    it('requires each ordered criterion exactly once, with no provider-created totals', () => {
+      const decisions = graded([0, 1, 2, 4]);
+      for (const invalid of [decisions.slice(1), [...decisions, decisions[0]], [decisions[1], decisions[0], ...decisions.slice(2)], [decisions[0], decisions[0], ...decisions.slice(2)]]) {
+        expect(() => parseGradedRubricAssessment(JSON.stringify({ decisions: invalid }), criteria, answer)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+      }
+      for (const raw of ['null', '[]', '{', JSON.stringify({ decisions, questionScorePct: 100 })]) {
+        expect(() => parseGradedRubricAssessment(raw, criteria, answer)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+      }
+    });
+
+    it('allows verified counter-evidence at level zero and retains Unicode-safe bounded excerpts', () => {
+      const longAnswer = `😀${'a'.repeat(299)}${answer}`;
+      const decisions = graded([0, 1, 2, 4]).map((decision) => ({ ...decision, evidenceId: 'E2' }));
+      const parsed = parseGradedRubricAssessment(JSON.stringify({ decisions }), criteria, longAnswer);
+      const result = toPublicGradedRubricAssessment(parsed, criteria, longAnswer);
+      expect(result.criteria[0].performanceLevel).toBe(0);
+      expect(result.criteria[0].evidenceQuote).toBe(Array.from(longAnswer).slice(150, 450).join(''));
+      expect(Array.from(result.criteria[0].evidenceQuote ?? '').length).toBeLessThanOrEqual(300);
+      expect(JSON.stringify(result)).not.toContain(longAnswer);
+      expect(() => toPublicGradedRubricAssessment([{ ...parsed[0], evidenceReference: { start: 0, end: 1 } }, ...parsed.slice(1)], criteria, longAnswer)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+      expect(() => toPublicGradedRubricAssessment([{ ...parsed[0], justification: '' }, ...parsed.slice(1)], criteria, longAnswer)).toThrow('AI_PROVIDER_RESPONSE_INVALID');
+    });
+  });
 
   describe('strict rubric assessment domain', () => {
   it('owns equal weighting and omits private evidence and transcript text', () => {

@@ -114,6 +114,16 @@ const noResponseRubricAssessment = Object.freeze({
   questionScorePct: 0,
   criteria: rubricAssessment.criteria.map((criterion) => ({ ...criterion, achieved: false })),
 });
+const levelRubricAssessment = Object.freeze({
+  schemaVersion: 4 as const,
+  questionScorePct: 43.75,
+  criteria: rubricAssessment.criteria.map(({ achieved: _achieved, ...criterion }, index) => ({
+    ...criterion,
+    performanceLevel: [0, 1, 2, 4][index],
+    evidenceQuote: index === 0 ? null : 'I would clarify the concern.',
+    justification: index === 0 ? 'The answer did not address immediate risk.' : 'The answer identifies the action with detail appropriate to this level.',
+  })),
+});
 
 function feedbackRows(firstAssessment: unknown, firstLegacy: boolean) {
   return [
@@ -301,6 +311,61 @@ describe('candidate MMI API transcript boundary', () => {
       ...rubricAssessment,
       criteria: rubricAssessment.criteria.map((criterion, index) => index === 0 ? { ...criterion, bulletText: 'x'.repeat(2_000) } : criterion),
     }).criteria[0]?.bulletText).toHaveLength(2_000);
+  });
+
+  it('accepts five-level weighted scoring and bounded evidence while preserving historical results', async () => {
+    expect(parseCandidateAssessment(levelRubricAssessment)).toEqual(levelRubricAssessment);
+    const mixedHistoryResult = {
+      sessionId, stationId, status: 'completed', overallPct: 13.75,
+      feedback: feedbackRows(levelRubricAssessment, false).map((row, index) => index === 1
+        ? { ...row, status: 'scored', assessment: rubricAssessment }
+        : row),
+    };
+    await expect(createCandidateMmiApi(rpcClient([{ data: mixedHistoryResult, error: null }])).result(sessionId))
+      .resolves.toEqual(mixedHistoryResult);
+    const bounded = {
+      ...levelRubricAssessment,
+      criteria: levelRubricAssessment.criteria.map((criterion, index) => index === 1
+        ? { ...criterion, evidenceQuote: '😀'.repeat(300), justification: '😀'.repeat(600) }
+        : criterion),
+    };
+    expect(parseCandidateAssessment(bounded)).toEqual(bounded);
+  });
+
+  it('rejects malformed five-level scores, missing evidence, and widened candidate feedback', () => {
+    const changeFirst = (fields: Record<string, unknown>) => ({
+      ...levelRubricAssessment,
+      criteria: levelRubricAssessment.criteria.map((criterion, index) => index === 1 ? { ...criterion, ...fields } : criterion),
+    });
+    for (const malformed of [
+      ...[-1, 0.5, 5, Number.NaN, Number.POSITIVE_INFINITY, '2', null].map((performanceLevel) => changeFirst({ performanceLevel })),
+      changeFirst({ evidenceQuote: null }), changeFirst({ evidenceQuote: '' }),
+      changeFirst({ evidenceQuote: '😀'.repeat(301) }),
+      changeFirst({ justification: '' }), changeFirst({ justification: '  ' }),
+      changeFirst({ justification: '😀'.repeat(601) }), changeFirst({ justification: null }),
+      changeFirst({ achieved: true }), changeFirst({ evidenceReference: { start: 0, end: 1 } }),
+      changeFirst({ weightPct: 20 }),
+      { ...levelRubricAssessment, questionScorePct: 100 },
+      { ...levelRubricAssessment, transcript: 'The full answer' },
+    ]) expect(() => parseCandidateAssessment(malformed)).toThrow('Candidate MMI response is invalid.');
+  });
+
+  it('accepts fractional domain attainment and rejects inconsistent or non-finite totals', async () => {
+    const history = [{
+      sessionId, stationId, scope: 'all', targetUniversity: null,
+      startedAt: '2026-08-26T00:00:00.000Z', completedAt: '2026-08-26T00:11:00.000Z',
+      status: 'completed', overallPct: 43.75,
+      domainAttainment: [{ domain: 'safety', achieved: 1.75, total: 4, pct: 43.75 }],
+    }];
+    await expect(createCandidateMmiApi(rpcClient([{ data: history, error: null }])).history()).resolves.toEqual(history);
+    for (const fields of [
+      { achieved: -0.25 }, { achieved: 4.25 }, { achieved: Number.NaN },
+      { achieved: Number.POSITIVE_INFINITY }, { total: 4.5 }, { pct: 50 },
+    ]) {
+      const malformed = [{ ...history[0], domainAttainment: [{ ...history[0].domainAttainment[0], ...fields }] }];
+      await expect(createCandidateMmiApi(rpcClient([{ data: malformed, error: null }])).history())
+        .rejects.toMatchObject({ kind: 'invalid_response' });
+    }
   });
 
   it('accepts exact scenario and terminal projections, including PostgreSQL ISO offsets', async () => {

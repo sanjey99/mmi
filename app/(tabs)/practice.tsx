@@ -39,7 +39,7 @@ export default function PracticeScreen() {
         <Button label="Practise" small disabled={unavailable || options === null || value.allCount === 0} onPress={() => open('all')} />
       </View>
       {unavailable ? <Text style={styles.notice}>Practice options are unavailable right now. Please try again.</Text> : null}
-      <View style={styles.detailCard}><Text style={styles.detailTitle}>How it works</Text><Text style={styles.detailText}>1. Read the scenario for 60 seconds.</Text><Text style={styles.detailText}>2. Answer five questions in order.</Text><Text style={styles.detailText}>3. Review equal-weight rubric checkboxes after the station.</Text></View>
+      <View style={styles.detailCard}><Text style={styles.detailTitle}>How it works</Text><Text style={styles.detailText}>1. Read the scenario for 60 seconds.</Text><Text style={styles.detailText}>2. Answer five questions in order.</Text><Text style={styles.detailText}>3. Review five-level criterion scores, weighted marks, and evidence from your answer after the station.</Text></View>
     </ScreenWrapper>
   );
 }
