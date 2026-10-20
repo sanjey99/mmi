@@ -16,7 +16,7 @@ The product owner explicitly selected the existing live app and shared backend. 
 | Backend | Supabase project `tliwifhnsytxpcynuwsy` |
 | Application source | Implementation `13c86e10580060b71daabe5312e6fea2bb6c0667`, merged in [release PR #16](https://github.com/sanjey99/mmi/pull/16); main merge `cf15987decc027aee2a69c425f76fceb19fc6864` |
 | Main deployment | `dpl_8snnxuW2FphhCTZ27agL8xjvQ2G3`, READY on 20 October 2026; production aliases include `mmi-hazel.vercel.app`, where the new signup UI was verified; [immutable build](https://mmi-kcxhp7sws-sanjey99s-projects.vercel.app) |
-| Scorer | `score-candidate-mmi-response`, ACTIVE version 21, JWT verification enabled |
+| Scorer | `score-candidate-mmi-response`, ACTIVE revision 23 at the final 20 October metadata check, JWT verification enabled; all eight hosted source files exactly matched the tested repository |
 | Scoring migration | `20261017000000_mmi_five_level_scoring.sql`; SHA-256 `b45e0c89c8dfc9588bd61d62563e3df28433eb4ae56e7f3ac5b3ec7b1ceb622d` |
 | Operations migration | `20261020000000_operations_monitoring.sql`; installed SHA-256 `277d4e7121ddd835ab4d71dddaa5d87cc12b5063bcc0d6d598bbfd57250bf33b` |
 | Allowance migration | `20261020001000_public_scoring_allowances.sql`; installed SHA-256 `536a7c151f6827dc9370708961f868b26a0bfbe10b448f74ab773f73c69a0817` |
@@ -34,7 +34,7 @@ CI, the protected aggregate operations dashboard, and the health monitor are ins
 | Item | Result and evidence | Limit |
 | --- | --- | --- |
 | Five-level scoring | Migration and scorer deployed. Eight migration function bodies were verified against the reviewed source. Levels award 0%, 25%, 50%, 75%, or 100% of each criterion's existing weight, with bounded answer evidence and justification. | Historical results stay compatible; existing answers were not regraded. |
-| Main app and scorer compatibility | The READY main release contains implementation `13c86e1`, merged as `cf15987`; the canonical production page shows the new signup UI. Candidate scorer remains version 21. | A complete genuine received-email onboarding journey has not been verified. |
+| Main app and scorer compatibility | The READY main release contains implementation `13c86e1`, merged as `cf15987`; the canonical production page shows the new signup UI. The hosted candidate scorer source exactly matches the tested repository; deployment revision numbers can advance without source changes. | A complete genuine received-email onboarding journey has not been verified. |
 | Comparison app compatibility | The approved `experiment/gpt-5-5` build from `13c86e1` is READY; the comparison alias points to it and displays the new signup UI. | Ordinary testers use the main app; the comparison profile remains server-enforced as administrator-only. |
 | Recent hosted results | Metadata for two existing-account attempts on 20 October showed four scored schema-v4 responses and one no-response outcome each. | This is not evidence that a new invitation, email delivery, or password setup works. |
 | Focused regression checks | 61 unit checks and two browser checks passed for the comparison correction. | Automated checks do not establish physical microphone, screen-reader, or human scoring-quality approval. |
