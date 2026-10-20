@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Button } from '../../src/components/ui/Button';
+import { ScoringAllowanceNotice } from '../../src/components/mmi/ScoringAllowanceNotice';
 import { createCandidateMmiApi, type CandidateMmiPracticeOptions } from '../../src/features/candidateMmi/api';
 import { supabase } from '../../src/lib/supabase';
 import { colors, text } from '../../src/theme';
@@ -28,6 +29,7 @@ export default function PracticeScreen() {
       <Text style={styles.routeLabel}>02 / PRACTISE</Text>
       <Text style={styles.title}>MMI practice</Text>
       <Text style={styles.sub}>Choose a complete 11-minute MMI station. Every station has a one-minute brief and five two-minute answers.</Text>
+      <ScoringAllowanceNotice />
       <View style={styles.stationCard}>
         <Text style={styles.stationNumber}>01</Text>
         <View style={styles.stationCopy}><Text style={styles.stationTitle}>{value.targetUniversity ?? 'Your university'} practice</Text><Text style={styles.stationDescription}>{value.targetCount} complete 11-minute stations</Text>{value.targetUniversity === null ? <Text style={styles.notice}>Add a university target in your profile to unlock this pool.</Text> : null}</View>

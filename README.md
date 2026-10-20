@@ -1,6 +1,6 @@
 # Interview Station
 
-Interview Station is an Expo Router web application for UK medical-school interview practice. The live invitation-only preview provides an 11-minute MMI station, five-level evidence-based scoring, practice history, content administration, and tester reports. A small outside-user pilot is being prepared; its operational and human review checks remain explicit.
+Interview Station is an Expo Router web application for UK medical-school interview practice. It provides an 11-minute MMI station, five-level evidence-based scoring, practice history, content administration, and tester reports. Registration is being prepared for UK pre-university applicants, including students under 18; broad email delivery and the operational and human review checks remain explicit.
 
 ## Status
 
@@ -10,11 +10,12 @@ Interview Station is an Expo Router web application for UK medical-school interv
 - Render is not required.
 - Live candidate app: [mmi-hazel.vercel.app](https://mmi-hazel.vercel.app).
 - The product owner explicitly selected shared Supabase project `tliwifhnsytxpcynuwsy`; this supersedes historical isolated-backend deployment instructions.
-- Five-level scoring is deployed from source `3c78e89`. The GPT-5.5 comparison frontend now uses the same compatible source and backend; its model profile remains administrator-only.
+- Five-level scoring and invited-account onboarding are deployed. The current immutable builds and source revisions are recorded in the external-beta readiness runbook; the comparison model profile remains administrator-only.
 
 Authoritative runbooks:
 
 - [External Beta Readiness and Operations](docs/EXTERNAL-BETA-READINESS.md) — current release evidence, remaining decisions, invitation/support procedure, and pilot test matrix.
+- [CI and Monitoring](docs/CI-AND-MONITORING.md) — automated verification, production release gates, aggregate operations dashboard, and failure-email setup.
 - [Before Cofounder Viewing](docs/BEFORE-COFOUNDER-VIEWING.md)
 - [Pre-Closed-Round Deployment](docs/PRE-CLOSED-ROUND-DEPLOYMENT.md)
 

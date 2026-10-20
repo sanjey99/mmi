@@ -27,7 +27,7 @@ export default function OnboardingScreen() {
       return;
     }
     if (!acknowledged) {
-      setErrorMessage('Confirm that you are 18 or older and have read the beta Terms and Privacy Notice.');
+      setErrorMessage('Please read the Terms and Privacy Notice before continuing.');
       return;
     }
     setErrorMessage(null);
@@ -54,7 +54,7 @@ export default function OnboardingScreen() {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.station}>01 / ORIENT</Text>
         <Text style={styles.title}>Set your candidate brief</Text>
-        <Text style={styles.sub}>Tell us about your application so we can personalise your practice. This invitation-only beta is for adults aged 18 or older.</Text>
+        <Text style={styles.sub}>Choose your target university and entry year to personalise your practice. Interview Station supports pre-university applicants, including students under 18.</Text>
 
         {errorMessage ? <InlineNotice title="Orientation incomplete" message={errorMessage} tone="error" /> : null}
 
@@ -84,11 +84,11 @@ export default function OnboardingScreen() {
           ))}
         </View>
 
-        <Text style={styles.betaNote}>AI feedback is practice guidance and can be wrong. Use fictional examples and avoid real patient or other sensitive personal information. Supporting excerpts from your answers remain with your feedback.</Text>
+        <Text style={styles.betaNote}>AI feedback is practice guidance and can be wrong. Your answers go to an AI provider for feedback; short excerpts remain with your results. Use made-up examples and leave out real patient details or anything sensitive. You can type instead of using the microphone. If anything is unclear, ask a parent, teacher, or another trusted adult before continuing.</Text>
         <LegalFooter />
-        <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: acknowledged }} accessibilityLabel="I am 18 or older and have read the beta Terms and Privacy Notice" onPress={() => setAcknowledged(value => !value)} style={styles.acknowledgement}>
+        <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: acknowledged }} accessibilityLabel="I have read the Terms and Privacy Notice" onPress={() => setAcknowledged(value => !value)} style={styles.acknowledgement}>
           <Text style={styles.check}>{acknowledged ? '☑' : '☐'}</Text>
-          <Text style={styles.acknowledgementText}>I am 18 or older and have read the beta Terms and Privacy Notice.</Text>
+          <Text style={styles.acknowledgementText}>I have read the Terms and Privacy Notice.</Text>
         </TouchableOpacity>
         <Button label="Enter the circuit" onPress={handleContinue} loading={loading} style={{ marginTop: 24 }} />
       </ScrollView>

@@ -1,5 +1,5 @@
 /**
- * score-answer — authenticated, server-owned legacy scoring.
+ * score-answer — administrator-only, server-owned legacy scoring.
  *
  * POST body: { sessionId: UUID, questionId: UUID, answerText: string }
  * The verified JWT supplies user identity. The database supplies the prompt.
@@ -88,27 +88,26 @@ Deno.serve(async (request) => {
     return http.json({ code: 'unauthorized' }, 401);
   }
 
+  // The retired legacy path must not bypass the candidate scoring quotas.
+  // Verify the stored administrator flag before reading config or claiming work.
+  const serviceClient = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  );
+  const { data: profile, error: profileError } = await serviceClient
+    .from('profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (profileError) return http.json({ code: 'persistence_failed' }, 500);
+  if (profile?.is_admin !== true) return http.json({ code: 'legacy_scoring_forbidden' }, 403);
+
   let input;
   try {
     input = parseLegacyScoringRequest(await readBoundedJson(request, 4_096));
   } catch (error) {
     const status = error instanceof EdgeRequestError ? error.status : 400;
     return http.json({ code: 'invalid_request' }, status);
-  }
-
-  const serviceClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  );
-
-  if (input.modelProfile === 'gpt-5.5') {
-    const { data: profile, error: profileError } = await serviceClient
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', user.id)
-      .maybeSingle();
-    if (profileError) return http.json({ code: 'persistence_failed' }, 500);
-    if (profile?.is_admin !== true) return http.json({ code: 'model_profile_forbidden' }, 403);
   }
 
   // Configuration failures happen before a durable provider-attempt claim, so

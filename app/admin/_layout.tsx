@@ -30,6 +30,7 @@ export default function AdminLayout() {
       }}
     >
       <Stack.Screen name="index" />
+      <Stack.Screen name="operations" />
       <Stack.Screen name="stations" />
       <Stack.Screen name="station-editor" />
       <Stack.Screen name="panels" />

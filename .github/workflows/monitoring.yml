@@ -1,0 +1,77 @@
+name: Public health monitor
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: Send an expected failed-workflow email test without contacting the application
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-health-monitor
+  cancel-in-progress: false
+
+jobs:
+  alert_test:
+    name: Alert delivery test
+    if: github.event_name == 'workflow_dispatch' && inputs.test_alert == true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Produce an expected notification test failure
+        run: |
+          echo 'ALERT_DELIVERY_TEST'
+          exit 1
+
+  configuration:
+    name: Monitoring configuration
+    if: vars.MMI_MONITORING_ENABLED != 'true' && inputs.test_alert != true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Explain the disabled monitor
+        run: echo 'MONITOR_DISABLED — monitoring is not configured or enabled.'
+
+  health:
+    name: Public health
+    if: vars.MMI_MONITORING_ENABLED == 'true' && inputs.test_alert != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source without retaining Git credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked monitor dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify monitor credential boundaries
+        run: node --test tests/operationsMonitor.test.mjs
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify public probe browser isolation against local servers
+        run: node --test tests/operationsMonitor.browser.test.mjs
+
+      - name: Check read-only backend health and the public login screen
+        run: node scripts/check-operations.mjs
+        env:
+          MMI_HEALTH_URL: ${{ vars.MMI_HEALTH_URL }}
+          MMI_MONITOR_TOKEN: ${{ secrets.MMI_MONITOR_TOKEN }}
+
+      # GitHub's native failed-workflow email is the notification destination.
+      # Never upload browser state, traces, screenshots, response bodies, or logs.

@@ -18,3 +18,8 @@ verify_jwt = true
 
 [functions.abandon-mmi-attempt]
 verify_jwt = true
+
+# Independent GitHub monitoring uses a scoped secret checked by this handler.
+# It returns only four health states, never the administrator analytics payload.
+[functions.operations-health]
+verify_jwt = false

@@ -197,7 +197,7 @@ export default function ProfileScreen() {
         )}
 
         <LegalFooter />
-        <Text style={styles.version}>Interview Station · v1.0.0 · Closed preview</Text>
+        <Text style={styles.version}>Interview Station · v1.0.0 · Beta</Text>
       </ScrollView>
     </SafeAreaView>
   );

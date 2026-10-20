@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { scoringAllowanceFixture } from '../tests/fixtures/scoringAllowance';
 
 const userId = '77777777-7777-4777-8777-777777777777';
 const providerDetail = 'PRIVATE_PROVIDER_DIAGNOSTIC';
@@ -30,6 +31,8 @@ async function installAuthMocks(page: Page, options: Readonly<{
   resetUnknownAccount?: boolean;
   verifiedUserMismatch?: boolean;
   holdUserLookup?: boolean;
+  signupUnavailable?: boolean;
+  existingSignupAccount?: boolean;
 }> = {}) {
   const requests: AuthRequest[] = [];
   const unexpectedHosts: string[] = [];
@@ -85,6 +88,12 @@ async function installAuthMocks(page: Page, options: Readonly<{
     if (url.pathname === '/auth/v1/recover') return options.resetUnknownAccount
       ? json({ code: 422, error_code: 'user_not_found', msg: providerDetail }, 422)
       : json({});
+    if (url.pathname === '/auth/v1/signup') return options.signupUnavailable
+      ? json({ code: 400, error_code: 'signup_disabled', msg: providerDetail }, 400)
+      : options.existingSignupAccount
+        ? json({ code: 422, error_code: 'user_already_exists', msg: providerDetail }, 422)
+        : json({ ...user, email_confirmed_at: null });
+    if (url.pathname === '/auth/v1/resend') return json({});
     if (url.pathname === '/auth/v1/logout') return json({});
     if (url.pathname === '/auth/v1/token') return json(session);
     if (url.pathname === '/rest/v1/profiles') {
@@ -92,6 +101,7 @@ async function installAuthMocks(page: Page, options: Readonly<{
       return json(profile);
     }
     if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_practice_options') return json({ targetUniversity: 'Oxford', targetTag: 'oxford', targetCount: 1, allCount: 1 });
+    if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_scoring_allowance') return json(scoringAllowanceFixture());
     if (url.pathname === '/rest/v1/rpc/list_candidate_mmi_history') return json([]);
     return json({ message: `Unhandled synthetic path ${url.pathname}` }, 500);
   });
@@ -120,7 +130,7 @@ async function installAuthMocks(page: Page, options: Readonly<{
   };
 }
 
-test('an invitation requires a matching password and completed orientation before entering the app', async ({ page }) => {
+test('an invitation requires a matching password and completed orientation before entering the app', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const mock = await installAuthMocks(page, { holdVerification: true });
   await page.goto(`/auth/callback#token_hash=${tokenHash}&type=invite`);
@@ -131,7 +141,7 @@ test('an invitation requires a matching password and completed orientation befor
   mock.releaseVerification();
 
   await expect(page.getByRole('heading', { name: 'Set your password', exact: true })).toBeVisible();
-  await page.screenshot({ path: '/private/tmp/mmi-auth-password-mobile.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('mmi-auth-password-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Save password and continue', exact: true }).click();
   await expect(page.getByText('Use at least 12 characters.', { exact: true })).toBeVisible();
   await page.getByLabel('New password', { exact: true }).fill('A unique beta password!');
@@ -147,9 +157,9 @@ test('an invitation requires a matching password and completed orientation befor
   expect(await page.evaluate(() => sessionStorage.getItem('interview-station:email-action:v1'))).toBeNull();
   await page.getByText('Oxford', { exact: true }).click();
   await page.getByRole('button', { name: 'Enter the circuit', exact: true }).click();
-  await expect(page.getByText('Confirm that you are 18 or older and have read the beta Terms and Privacy Notice.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Please read the Terms and Privacy Notice before continuing.', { exact: true })).toBeVisible();
   expect(mock.requests.filter((request) => request.path === '/rest/v1/profiles' && request.method === 'PATCH')).toHaveLength(0);
-  await page.getByRole('checkbox', { name: 'I am 18 or older and have read the beta Terms and Privacy Notice', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'I have read the Terms and Privacy Notice', exact: true }).click();
   await page.getByRole('button', { name: 'Enter the circuit', exact: true }).click();
   await expect(page.getByText('Choose an interview station', { exact: true })).toBeVisible();
   await mock.assertIsolated();
@@ -366,7 +376,7 @@ for (const label of ['expired', 'already used']) {
 
 test('an invalid link is cleaned and rejected before verification', async ({ page }) => {
   const mock = await installAuthMocks(page);
-  await page.goto(`/auth/callback#token_hash=${tokenHash}&type=signup`);
+  await page.goto(`/auth/callback#token_hash=${tokenHash}&type=magiclink`);
   await expect(page.getByRole('heading', { name: 'Email link unavailable', exact: true })).toBeVisible();
   expect(mock.verifyCalls()).toHaveLength(0);
   expect(new URL(page.url()).hash).toBe('');
@@ -392,13 +402,106 @@ for (const unknownAccount of [false, true]) {
   });
 }
 
-test('public signup stays closed and a direct password page needs a verified link', async ({ page }) => {
+test('a direct password page still needs an invitation or recovery link', async ({ page }) => {
   const mock = await installAuthMocks(page);
-  await page.goto('/signup');
-  await expect(page.getByText('Accounts are issued by invitation', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /create account|sign up/i })).toHaveCount(0);
   await page.goto('/set-password');
   await expect(page.getByText('Password link required', { exact: true })).toBeVisible();
   expect(mock.passwordUpdates()).toHaveLength(0);
+  await mock.assertIsolated();
+});
+
+test('registration validates credentials, requests confirmation, and stays signed out', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mock = await installAuthMocks(page);
+  await page.goto('/login');
+  await page.getByRole('link', { name: 'Create an account', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Create your account', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('mmi-public-registration-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await page.screenshot({ path: testInfo.outputPath('mmi-public-registration-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByText('Enter a valid email address.', { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Email address', exact: true }).fill('student@example.test');
+  await page.getByRole('textbox', { name: 'Password', exact: true }).fill('A unique student password!');
+  await page.getByLabel('Confirm password', { exact: true }).fill('A different student password!');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByText('The passwords do not match.', { exact: true })).toBeVisible();
+  expect(mock.requests.filter(request => request.path === '/auth/v1/signup')).toHaveLength(0);
+  await page.getByRole('textbox', { name: 'Password', exact: true }).fill('A unique student password!');
+  await page.getByLabel('Confirm password', { exact: true }).fill('A unique student password!');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send another confirmation', exact: true })).toBeDisabled();
+  const registration = mock.requests.filter(request => request.path === '/auth/v1/signup');
+  expect(registration).toHaveLength(1);
+  expect(registration[0]?.body).toMatchObject({ email: 'student@example.test', password: 'A unique student password!' });
+  expect(registration[0]?.body).not.toHaveProperty('data.is_admin');
+  expect(await page.evaluate(() => sessionStorage.getItem('sb-e2e-auth-token'))).toBeNull();
+  expect(mock.requests.filter(request => request.path.startsWith('/rest/v1/'))).toHaveLength(0);
+  await mock.assertIsolated();
+});
+
+test('signup confirmation permits orientation without granting password replacement', async ({ page }) => {
+  const mock = await installAuthMocks(page);
+  await page.goto(`/auth/callback#token_hash=${tokenHash}&type=signup`);
+  await expect(page.getByRole('heading', { name: 'Email confirmed', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue to the circuit', exact: true })).toBeEnabled();
+  expect(mock.verifyCalls()).toHaveLength(1);
+  expect(mock.verifyCalls()[0]?.body).toMatchObject({ type: 'signup', token_hash: tokenHash });
+  expect(await page.evaluate(() => sessionStorage.getItem('interview-station:email-action:v1'))).toBeNull();
+  expect(mock.passwordUpdates()).toHaveLength(0);
+  await page.getByRole('button', { name: 'Continue to the circuit', exact: true }).click();
+  await expect(page.getByText('Set your candidate brief', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'I have read the Terms and Privacy Notice', exact: true })).toBeVisible();
+  await expect(page.getByText(/adults aged 18|I am 18 or older/)).toHaveCount(0);
+  await page.goto('/set-password');
+  await expect(page.getByText('Password link required', { exact: true })).toBeVisible();
+  expect(mock.passwordUpdates()).toHaveLength(0);
+  await mock.assertIsolated();
+});
+
+test('disabled registration gives an honest retry message without claiming delivery', async ({ page }) => {
+  const mock = await installAuthMocks(page, { signupUnavailable: true });
+  await page.goto('/signup');
+  await page.getByRole('textbox', { name: 'Email address', exact: true }).fill('student@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('A unique student password!');
+  await page.getByLabel('Confirm password', { exact: true }).fill('A unique student password!');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByText('Registration emails are unavailable right now. Please try again later. Existing accounts can still sign in.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Check your email', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('Confirm password', { exact: true })).toHaveValue('');
+  await mock.assertIsolated();
+});
+
+test('existing-address registration has the same public confirmation', async ({ page }) => {
+  const mock = await installAuthMocks(page, { existingSignupAccount: true });
+  await page.goto('/signup');
+  await page.getByRole('textbox', { name: 'Email address', exact: true }).fill('student@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('A unique student password!');
+  await page.getByLabel('Confirm password', { exact: true }).fill('A unique student password!');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email', exact: true })).toBeVisible();
+  await expect(page.getByText('If this address can be registered, a confirmation email will arrive shortly. Check your inbox and spam folder. If you already have an account, sign in or reset your password.', { exact: true })).toBeVisible();
+  await mock.assertIsolated();
+});
+
+test('confirmation resend needs an explicit request and observes its cooldown', async ({ page }) => {
+  await page.clock.install();
+  const mock = await installAuthMocks(page);
+  await page.goto('/signup');
+  await page.getByRole('button', { name: 'Already waiting for a confirmation?', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Email address', exact: true }).fill('student@example.test');
+  await page.getByRole('button', { name: 'Send confirmation email', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email', exact: true })).toBeVisible();
+  expect(mock.requests.filter(request => request.path === '/auth/v1/resend')).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Send another confirmation', exact: true })).toBeDisabled();
+  await page.clock.fastForward(61_000);
+  await expect(page.getByRole('button', { name: 'Send another confirmation', exact: true })).toBeEnabled();
+  expect(mock.requests.filter(request => request.path === '/auth/v1/resend')).toHaveLength(1);
+  await page.getByRole('button', { name: 'Send another confirmation', exact: true }).click();
+  await expect.poll(() => mock.requests.filter(request => request.path === '/auth/v1/resend').length).toBe(2);
   await mock.assertIsolated();
 });

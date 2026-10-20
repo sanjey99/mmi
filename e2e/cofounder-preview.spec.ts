@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { scoringAllowanceFixture } from '../tests/fixtures/scoringAllowance';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const questionId = '22222222-2222-4222-8222-222222222222';
@@ -266,6 +267,7 @@ async function installSupabaseMocks(page: Page) {
     if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_practice_options') {
       return json({ targetUniversity: 'Oxford', targetTag: 'oxford', targetCount: 115, allCount: 155 });
     }
+    if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_scoring_allowance') return json(scoringAllowanceFixture());
 
     if (url.pathname === '/rest/v1/rpc/get_legacy_question_counts') {
       return json([
@@ -587,7 +589,7 @@ test('MMI station follows only the current trusted prompt across timer expiry an
   await expect(page).toHaveURL(/\/practice\/mmi-station\?sessionId=/);
   await expect(page.getByText('60-second brief', { exact: true })).toBeVisible();
   await expect(page.getByText('Synthetic candidate scenario.', { exact: true })).toBeVisible();
-  await expect(page.getByText(/0:0[01]/)).toBeVisible();
+  await expect(page.getByText(/^0:0[01]$/)).toBeVisible();
 
   controller.selectResponse(1);
   await expect(page.getByText('Synthetic prompt 1.', { exact: true })).toBeVisible({ timeout: 5_000 });
@@ -839,7 +841,7 @@ test('MMI completion renders retained strict rubric-only feedback without re-sco
 });
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-  test(`five-level feedback shows weighted marks and answer evidence at ${viewport.width}px`, async ({ page }) => {
+  test(`five-level feedback shows weighted marks and answer evidence at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const controller = await installCandidateMmiController(page);
     controller.selectCompleted();
@@ -874,7 +876,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     }
     await expect(page.getByRole('checkbox')).toHaveCount(0);
     expect(controller.scoringRequests()).toHaveLength(0);
-    await page.screenshot({ path: `/private/tmp/mmi-five-level-${viewport.width}.png`, fullPage: false });
+    await page.screenshot({ path: testInfo.outputPath(`mmi-five-level-${viewport.width}.png`), fullPage: false });
   });
 }
 
@@ -889,7 +891,7 @@ test('MMI completion explains when AI scoring is not configured', async ({ page 
     .toHaveCount(0);
 });
 
-test('MMI partial feedback recovers transient failures and retries only unscored answers', async ({ page }) => {
+test('MMI partial feedback recovers transient failures and retries only unscored answers', async ({ page }, testInfo) => {
   const controller = await installCandidateMmiController(page);
   controller.selectPartialFeedback();
   controller.selectCompleted();
@@ -911,7 +913,7 @@ test('MMI partial feedback recovers transient failures and retries only unscored
   expect(controller.scoringRequests().filter(request => request.promptOrder === 4)).toHaveLength(3);
   expect(controller.scoringRequests().filter(request => request.promptOrder === 2)).toHaveLength(2);
   await page.getByText('Question 2 · 25%', { exact: true }).evaluate((element) => element.scrollIntoView({ block: 'start' }));
-  await page.screenshot({ path: '/private/tmp/mmi-feedback-recovery.jpg', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('mmi-feedback-recovery.jpg'), fullPage: true });
 });
 
 test('MMI leave abandons exactly once from a current response and returns to practice', async ({ page }) => {
