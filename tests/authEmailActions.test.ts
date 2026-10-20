@@ -3,6 +3,7 @@ import {
   createEmailActionService, EMAIL_ACTION_CALLBACK_PATH, EMAIL_ACTION_STORAGE_KEY,
   EmailActionError, PASSWORD_RESET_SENT_MESSAGE, type EmailActionAuth, type UpdatePasswordForSession,
 } from '../src/features/auth/emailActions';
+import { createPublicSignupService, SignupError, SIGNUP_CONFIRMATION_MESSAGE, type SignupAuth } from '../src/features/auth/publicSignup';
 
 const origin = 'https://preview.example.test';
 const userId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -13,6 +14,107 @@ const password = 'a twelve character password';
 const session = { access_token: 'synthetic-access-A', refresh_token: 'synthetic-refresh-A', user: { id: userId } };
 const authData = { user: { id: userId }, session };
 type AuthOverrides = Partial<EmailActionAuth> & { updateUser?: UpdatePasswordForSession };
+
+describe('public registration and confirmation requests', () => {
+  function signupSetup(overrides: Partial<SignupAuth> = {}, callbackOrigin: string | undefined = origin) {
+    let clock = 1_000;
+    const client = {
+      signUp: vi.fn<SignupAuth['signUp']>(async () => ({ data: { session: null }, error: null })),
+      resend: vi.fn<SignupAuth['resend']>(async () => ({ error: null })),
+      ...overrides,
+    };
+    return { client, service: createPublicSignupService({ auth: client, callbackOrigin, now: () => clock }), advance: () => { clock += 60_000; } };
+  }
+
+  it('sends credentials with a fixed local confirmation path and no age, name, or role metadata', async () => {
+    const { client, service } = signupSetup();
+    await service.register({ email: ' Student@Example.Test ', password, confirmPassword: password });
+    expect(client.signUp).toHaveBeenCalledExactlyOnceWith({ email: 'student@example.test', password, options: { emailRedirectTo: `${origin}/auth/callback?type=signup` } });
+    expect(client.resend).not.toHaveBeenCalled();
+    expect(service.getCooldownSeconds()).toBe(60);
+  });
+
+  it.each([
+    ['invalid', password, password, 'invalid_email'],
+    ['student@example.test', 'short', 'short', 'password_too_short'],
+    ['student@example.test', '😀'.repeat(11), '😀'.repeat(11), 'password_too_short'],
+    ['student@example.test', 'x'.repeat(129), 'x'.repeat(129), 'password_too_long'],
+    ['student@example.test', password, `${password}!`, 'password_mismatch'],
+  ])('validates registration before sending mail (%s)', async (email, chosen, confirmation, code) => {
+    const { client, service } = signupSetup();
+    await expect(service.register({ email, password: chosen, confirmPassword: confirmation })).rejects.toMatchObject({ code });
+    expect(client.signUp).not.toHaveBeenCalled();
+    expect(service.getCooldownSeconds()).toBe(0);
+  });
+
+  it('counts Unicode password characters without blocking a valid twelve-character password', async () => {
+    const { client, service } = signupSetup();
+    const chosen = '😀'.repeat(12);
+    await service.register({ email: 'student@example.test', password: chosen, confirmPassword: chosen });
+    expect(client.signUp).toHaveBeenCalledOnce();
+  });
+
+  it.each(['https://evil.test/path', 'https://user:pass@preview.example.test', 'https://preview.example.test?next=evil', 'https://preview.example.test#token', 'http://preview.example.test'])('refuses an unsafe callback origin %s', async (callbackOrigin) => {
+    const { client, service } = signupSetup({}, callbackOrigin);
+    await expect(service.register({ email: 'student@example.test', password, confirmPassword: password })).rejects.toMatchObject({ code: 'unavailable' });
+    expect(client.signUp).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation instead of accepting an immediate session', async () => {
+    const { service } = signupSetup({ signUp: vi.fn(async () => ({ data: { session }, error: null })) });
+    await expect(service.register({ email: 'student@example.test', password, confirmPassword: password })).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it.each(['user_already_exists', 'email_exists', 'user_not_found'])('uses the same public confirmation for an existing or unknown address (%s)', async (code) => {
+    const { service } = signupSetup({ signUp: vi.fn(async () => ({ data: { session: null }, error: { code, message: 'PRIVATE_ACCOUNT_DETAIL' } })), resend: vi.fn(async () => ({ error: { code, message: 'PRIVATE_ACCOUNT_DETAIL' } })) });
+    await expect(service.register({ email: 'student@example.test', password, confirmPassword: password })).resolves.toBeUndefined();
+    expect(SIGNUP_CONFIRMATION_MESSAGE).toContain('If this address can be registered');
+  });
+
+  it.each([
+    ['signup_disabled', 'unavailable'], ['email_address_not_authorized', 'unavailable'], ['unexpected_failure', 'unavailable'],
+    ['weak_password', 'password_rejected'], ['over_email_send_rate_limit', 'cooldown'], ['over_request_rate_limit', 'cooldown'],
+  ])('shows a safe actionable failure for %s', async (providerCode, code) => {
+    const { service } = signupSetup({ signUp: vi.fn(async () => ({ data: { session: null }, error: { code: providerCode, message: 'PRIVATE_PROVIDER_DETAIL' } })) });
+    const error = await service.register({ email: 'student@example.test', password, confirmPassword: password }).catch((reason: unknown) => reason) as SignupError;
+    expect(error).toBeInstanceOf(SignupError);
+    expect(error.code).toBe(code);
+    expect(error.message).not.toContain('PRIVATE');
+  });
+
+  it('limits repeated creation and resend attempts across the same service instance', async () => {
+    const { client, service, advance } = signupSetup();
+    await service.register({ email: 'student@example.test', password, confirmPassword: password });
+    await expect(service.register({ email: 'other@example.test', password, confirmPassword: password })).rejects.toMatchObject({ code: 'cooldown' });
+    await expect(service.resendConfirmation('student@example.test')).rejects.toMatchObject({ code: 'cooldown' });
+    expect(client.signUp).toHaveBeenCalledOnce();
+    expect(client.resend).not.toHaveBeenCalled();
+    advance();
+    await service.resendConfirmation(' Student@Example.Test ');
+    expect(client.resend).toHaveBeenCalledExactlyOnceWith({ type: 'signup', email: 'student@example.test', options: { emailRedirectTo: `${origin}/auth/callback?type=signup` } });
+  });
+
+  it('rejects concurrent email requests even when the clock advances', async () => {
+    let resolve!: (value: { data: { session: null }; error: null }) => void;
+    const { service, client, advance } = signupSetup({ signUp: vi.fn(() => new Promise<{ data: { session: null }; error: null }>((done) => { resolve = done; })) });
+    const first = service.register({ email: 'student@example.test', password, confirmPassword: password });
+    advance();
+    await expect(service.resendConfirmation('student@example.test')).rejects.toMatchObject({ code: 'cooldown' });
+    resolve({ data: { session: null }, error: null });
+    await first;
+    expect(client.resend).not.toHaveBeenCalled();
+  });
+
+  it('does not expose exceptions or treat transport failure as successful delivery', async () => {
+    const { service } = signupSetup({ signUp: vi.fn(async () => { throw new Error('PRIVATE_TRANSPORT_DETAIL'); }) });
+    await expect(service.register({ email: 'student@example.test', password, confirmPassword: password })).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it('resends an unknown-account confirmation without exposing account existence', async () => {
+    const { service } = signupSetup({ resend: vi.fn(async () => ({ error: { code: 'user_not_found' } })) });
+    await expect(service.resendConfirmation('unknown@example.test')).resolves.toBeUndefined();
+  });
+});
 
 function storage() {
   const values = new Map<string, string>();
@@ -44,6 +146,41 @@ function setup(overrides: AuthOverrides = {}) {
 }
 
 describe('email invitation and recovery callbacks', () => {
+  it.each(['?', '#'])('confirms a signup from %s without authorizing password replacement', async (separator) => {
+    const { client, service, sessionStorage, replaceUrl } = setup();
+    await expect(service.handleCallback(`${origin}/auth/callback${separator}token_hash=${tokenHash}&type=signup`, replaceUrl))
+      .resolves.toEqual({ mode: 'signup', userId });
+    expect(client.verifyOtp).toHaveBeenCalledExactlyOnceWith({ token_hash: tokenHash, type: 'signup' });
+    expect(client.getUser).toHaveBeenCalledOnce();
+    expect(sessionStorage.setItem).not.toHaveBeenCalled();
+    expect(service.peekPendingAction()).toBeNull();
+    await expect(service.getPendingAction()).resolves.toBeNull();
+    await expect(service.updatePassword({ password, confirmPassword: password })).rejects.toMatchObject({ code: 'session_required' });
+    expect(client.updateUser).not.toHaveBeenCalled();
+  });
+
+  it('exchanges a signup PKCE code with a fixed mode and no password action', async () => {
+    const { client, service, replaceUrl } = setup();
+    await expect(service.handleCallback(`${origin}/auth/callback?type=signup&code=synthetic-signup-code`, replaceUrl))
+      .resolves.toEqual({ mode: 'signup', userId });
+    expect(client.exchangeCodeForSession).toHaveBeenCalledExactlyOnceWith('synthetic-signup-code');
+    expect(service.peekPendingAction()).toBeNull();
+  });
+
+  it('rejects a signup callback if the verified account changes', async () => {
+    const { service, replaceUrl, sessionStorage } = setup({ getUser: vi.fn(async () => ({ data: { user: { id: otherUserId } }, error: null })) });
+    await expect(service.handleCallback(`${origin}/auth/callback#token_hash=${tokenHash}&type=signup`, replaceUrl))
+      .rejects.toMatchObject({ code: 'session_required' });
+    expect(sessionStorage.values.size).toBe(0);
+  });
+
+  it('cannot turn a signup confirmation into a recovery action with conflicting types', async () => {
+    const { client, service, replaceUrl } = setup();
+    await expect(service.handleCallback(`${origin}/auth/callback?type=recovery#token_hash=${tokenHash}&type=signup`, replaceUrl))
+      .rejects.toMatchObject({ code: 'invalid_link' });
+    expect(client.verifyOtp).not.toHaveBeenCalled();
+  });
+
   it.each(['invite', 'recovery'] as const)('verifies %s token hashes from either query or fragment', async (mode) => {
     for (const separator of ['?', '#']) {
       const { client, sessionStorage, service, replaceUrl } = setup();
@@ -107,7 +244,7 @@ describe('email invitation and recovery callbacks', () => {
 
   it.each([
     'not a URL',
-    `${origin}/auth/callback?token_hash=secret&type=signup`,
+    `${origin}/auth/callback?token_hash=secret&type=magiclink`,
     `${origin}/auth/callback?token_hash=secret&type=recovery&type=recovery`,
     `${origin}/auth/callback?token_hash=secret&type=invite#type=recovery`,
     `${origin}/auth/callback?token_hash=secret&type=invite#token_hash=secret`,

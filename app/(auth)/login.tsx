@@ -57,7 +57,7 @@ export default function LoginScreen() {
           <View style={styles.logoWrap}>
             <Text style={styles.stationNumber}>00</Text>
             <Text style={styles.logoText}>INTERVIEW STATION</Text>
-            <Text style={styles.logoSub}>Private beta · candidate circuit</Text>
+            <Text style={styles.logoSub}>Interview practice · candidate circuit</Text>
           </View>
 
           {authError ? (
@@ -65,7 +65,7 @@ export default function LoginScreen() {
           ) : null}
 
           <Text style={styles.formTitle}>Enter the circuit</Text>
-          <Text style={styles.formIntro}>Use your invited beta account. New here? Open your invitation email to set your password first.</Text>
+          <Text style={styles.formIntro}>Sign in with your account. If you were invited, open your invitation email to set your password first.</Text>
           <FloatingInput
             label="Email address"
             value={email}
@@ -84,7 +84,8 @@ export default function LoginScreen() {
 
           <Button label="Enter circuit" onPress={handleLogin} loading={loading} style={styles.btn} />
           <TouchableOpacity accessibilityRole="link" onPress={() => router.push('/forgot-password' as never)} disabled={loading} style={styles.resetLink}><Text style={styles.resetLinkText}>Forgot password?</Text></TouchableOpacity>
-          <Text style={styles.accessNote}>Beta access is invitation-only. Public registration is closed.</Text>
+          <TouchableOpacity accessibilityRole="link" onPress={() => router.push('/signup')} disabled={loading} style={styles.resetLink}><Text style={styles.resetLinkText}>Create an account</Text></TouchableOpacity>
+          <Text style={styles.accessNote}>New accounts need email confirmation before sign in.</Text>
           <LegalFooter />
         </View>
       </KeyboardAvoidingView>

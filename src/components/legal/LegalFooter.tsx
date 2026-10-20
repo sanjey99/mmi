@@ -6,7 +6,7 @@ import { colors, text } from '../../theme';
 export function LegalFooter() {
   return (
     <View style={styles.footer}>
-      <Text style={styles.notice}>CLOSED PREVIEW · DOCUMENTS REQUIRE LEGAL REVIEW BEFORE AN EXTERNAL ROUND</Text>
+      <Text style={styles.notice}>BETA · TERMS AND PRIVACY REVIEW IS STILL IN PROGRESS</Text>
       <View style={styles.links}>
         <TouchableOpacity onPress={() => router.push('/terms')} accessibilityRole="link">
           <Text style={styles.link}>Terms</Text>

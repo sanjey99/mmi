@@ -3,6 +3,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      'tests/operationsApi.test.ts',
+      'tests/runtimeReporter.test.ts',
+      'tests/operationsHealth.test.ts',
       'tests/aiConfig.test.ts',
       'tests/aiProviderSecurity.test.ts',
       'tests/aiKeyWriteOnlyPolicy.test.ts',
@@ -33,6 +36,7 @@ export default defineConfig({
       'tests/medInterviewQuestionBankImport.test.ts',
       'tests/candidateMmiImportPolicy.test.ts',
       'tests/candidateMmiApi.test.ts',
+      'tests/candidateMmiAllowance.test.ts',
       'tests/candidateMmiScoring.test.ts',
       'tests/candidateMmiWeightPersistence.test.ts',
       'tests/candidateMmiRateBounds.test.ts',
@@ -56,6 +60,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: [
+        'src/features/operations/api.ts',
+        'src/features/operations/runtimeReporter.ts',
+        'supabase/functions/operations-health/handler.ts',
         'supabase/functions/_shared/**/*.ts',
         'supabase/functions/manage-ai-key/handler.ts',
         'src/theme/designTokens.ts',
@@ -73,6 +80,7 @@ export default defineConfig({
         'src/features/questions/csv.ts',
         'src/features/questions/api.ts',
         'src/features/candidateMmi/api.ts',
+        'src/features/candidateMmi/scoringAllowance.ts',
         'src/features/candidateMmi/featureFlag.ts',
         'src/features/candidateMmi/runner.ts',
         'src/features/candidateMmi/scoringApi.ts',

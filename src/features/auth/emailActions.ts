@@ -1,5 +1,7 @@
 export type EmailActionMode = 'invite' | 'recovery';
 export type EmailActionMarker = Readonly<{ mode: EmailActionMode; userId: string }>;
+export type EmailCallbackMode = EmailActionMode | 'signup';
+export type EmailCallbackResult = Readonly<{ mode: EmailCallbackMode; userId: string }>;
 
 export const EMAIL_ACTION_CALLBACK_PATH = '/auth/callback';
 export const EMAIL_ACTION_STORAGE_KEY = 'interview-station:email-action:v1';
@@ -34,7 +36,7 @@ export type EmailActionUserResult = Readonly<{ data: Readonly<{ user: EmailActio
 type AuthResult = Readonly<{ data: Readonly<{ user: EmailActionUser | null; session: EmailActionSession | null }>; error: unknown }>;
 export type UpdatePasswordForSession = (args: Readonly<{ session: EmailActionSession; expectedUserId: string; password: string }>) => PromiseLike<EmailActionUserResult>;
 export interface EmailActionAuth {
-  verifyOtp: (params: Readonly<{ token_hash: string; type: EmailActionMode }>) => PromiseLike<AuthResult>;
+  verifyOtp: (params: Readonly<{ token_hash: string; type: EmailCallbackMode }>) => PromiseLike<AuthResult>;
   setSession: (params: Readonly<{ access_token: string; refresh_token: string }>) => PromiseLike<AuthResult>;
   exchangeCodeForSession: (code: string) => PromiseLike<AuthResult>;
   getUser: () => PromiseLike<EmailActionUserResult>;
@@ -47,7 +49,7 @@ export interface EmailActionStorage {
   removeItem: (key: string) => void | PromiseLike<void>;
 }
 
-type ParsedAction = Readonly<{ mode: EmailActionMode }> & (
+type ParsedAction = Readonly<{ mode: EmailCallbackMode }> & (
   | Readonly<{ kind: 'otp'; tokenHash: string }>
   | Readonly<{ kind: 'implicit'; accessToken: string; refreshToken: string }>
   | Readonly<{ kind: 'pkce'; code: string }>
@@ -92,7 +94,7 @@ function parseAction(rawUrl: string, origin: string): ParsedAction {
     return fail(values.get('error_code') === 'otp_expired' ? 'expired_link' : 'invalid_link');
   }
   const mode = values.get('type');
-  if (!isMode(mode)) return fail('invalid_link');
+  if (!isMode(mode) && mode !== 'signup') return fail('invalid_link');
   for (const key of ['expires_in', 'expires_at']) {
     if (values.has(key) && !/^\d{1,12}$/.test(values.get(key)!)) return fail('invalid_link');
   }
@@ -135,7 +137,7 @@ export function createEmailActionService({ auth, storage, callbackOrigin, update
 }>) {
   let marker: EmailActionMarker | null | undefined;
   let markerVersion = 0;
-  let callbackPromise: Promise<EmailActionMarker> | null = null;
+  let callbackPromise: Promise<EmailCallbackResult> | null = null;
   let callbackInFlight = false;
   let operationEpoch = 0;
   let callbackEpoch = -1;
@@ -186,18 +188,18 @@ export function createEmailActionService({ auth, storage, callbackOrigin, update
   return Object.freeze({
     clearPendingAction,
     getPendingAction,
-    getCallbackPromise: (): Promise<EmailActionMarker> | null => callbackPromise,
+    getCallbackPromise: (): Promise<EmailCallbackResult> | null => callbackPromise,
     peekPendingAction: (): EmailActionMarker | null => marker ?? null,
     subscribe(listener: (pending: EmailActionMarker | null) => void): () => void {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    handleCallback(rawUrl: string, replaceUrl: (cleanPath: string) => void): Promise<EmailActionMarker> {
+    handleCallback(rawUrl: string, replaceUrl: (cleanPath: string) => void): Promise<EmailCallbackResult> {
       // Strip the entire query and fragment before parsing, storage, or any async work.
       try {
         replaceUrl(EMAIL_ACTION_CALLBACK_PATH);
       } catch {
-        const rejected = Promise.reject<EmailActionMarker>(new EmailActionError('unavailable'));
+        const rejected = Promise.reject<EmailCallbackResult>(new EmailActionError('unavailable'));
         if (!callbackInFlight) callbackPromise = rejected;
         return rejected;
       }
@@ -214,7 +216,7 @@ export function createEmailActionService({ auth, storage, callbackOrigin, update
       const currentEpoch = operationEpoch;
       callbackEpoch = currentEpoch;
       callbackInFlight = true;
-      callbackPromise = (async (): Promise<EmailActionMarker> => {
+      callbackPromise = (async (): Promise<EmailCallbackResult> => {
         await cleared;
         if (operationEpoch !== currentEpoch) return fail('session_required');
         let result: AuthResult;
@@ -236,6 +238,9 @@ export function createEmailActionService({ auth, storage, callbackOrigin, update
         if (operationEpoch !== currentEpoch) return fail('session_required');
         if (user.error) return fail(temporaryFailure(user.error) ? 'unavailable' : 'session_required');
         if (user.data.user?.id !== expectedUserId) return fail('session_required');
+        // Registration already collected a password. Confirmation must never
+        // create the privileged marker used to authorize password replacement.
+        if (action.mode === 'signup') return Object.freeze({ mode: 'signup', userId: expectedUserId });
         const pending = Object.freeze({ mode: action.mode, userId: expectedUserId });
         await saveMarker(pending);
         return pending;

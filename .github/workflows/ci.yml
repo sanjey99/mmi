@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Application verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_DOTENV: '1'
+      EXPO_PUBLIC_SUPABASE_URL: https://e2e.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: synthetic-publishable-key
+      EXPO_PUBLIC_AI_MODEL_PROFILE: default
+    steps:
+      - name: Check out source without retaining Git credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run unit and contract tests
+        run: npm test
+
+      - name: Check monitoring safety and failure handling
+        run: node --test tests/operationsMonitor.test.mjs
+
+      - name: Check application and Edge Function types
+        run: npm run typecheck
+
+      - name: Verify migration security in a private PostgreSQL cluster
+        run: node scripts/test-operations-sql.mjs
+        env:
+          # ubuntu-24.04 includes PostgreSQL 16. Do not start its system service.
+          PG_BIN: /usr/lib/postgresql/16/bin
+
+      - name: Verify public scoring allowances in a private PostgreSQL cluster
+        run: node scripts/test-public-scoring-sql.mjs
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+
+      - name: Export the browser application with synthetic configuration
+        run: npm run build
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify public probe browser isolation against local servers
+        run: node --test tests/operationsMonitor.browser.test.mjs
+
+      - name: Run isolated browser checks against the exported application
+        run: npm run test:e2e -- --config=playwright.ci.config.ts
+
+      # Do not upload traces, browser state, screenshots, or bundles. Even a
+      # synthetic test report can contain authentication fields and answer text.

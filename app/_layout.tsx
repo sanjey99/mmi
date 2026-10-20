@@ -117,3 +117,4 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+export { AppErrorBoundary as ErrorBoundary } from '../src/components/feedback/AppErrorBoundary';

@@ -39,7 +39,7 @@ export function LegalDocument({
         <View style={styles.headerSpacer} />
       </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.eyebrow}>INTERVIEW STATION · CLOSED PREVIEW</Text>
+        <Text style={styles.eyebrow}>INTERVIEW STATION · BETA</Text>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.effective}>EFFECTIVE {effectiveDate.toUpperCase()}</Text>
         <View style={styles.reviewNotice}>

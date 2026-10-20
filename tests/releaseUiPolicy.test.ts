@@ -10,7 +10,7 @@ describe('final release UI policy', () => {
     const privacy = read('app/privacy.tsx');
     const legalFooter = read('src/components/legal/LegalFooter.tsx');
 
-    expect(terms).toContain('Closed-preview terms');
+    expect(terms).toContain('Beta terms');
     expect(terms).toContain('Medical and admissions disclaimer');
     expect(terms).toContain('Acceptable use');
     expect(privacy).toContain('Information we collect');
@@ -52,14 +52,19 @@ describe('final release UI policy', () => {
     expect(read('src/components/ui/StatCard.tsx')).not.toMatch(/borderLeft(Color|Width)/);
   });
 
-  it('keeps the closed preview invitation-only at the legacy signup route', () => {
+  it('offers public registration without privileged account metadata or an adult-only gate', () => {
     const signup = read('app/(auth)/signup.tsx');
     const authStore = read('src/stores/authStore.ts');
 
-    expect(signup).toContain('Accounts are issued by invitation');
+    expect(signup).toContain('Create your account');
     expect(signup).toContain('Return to sign in');
     expect(signup).not.toMatch(/auth\.signUp\s*\(/);
     expect(authStore).not.toMatch(/\bsignUp\s*:/);
+    expect(read('src/features/auth/publicSignup.ts')).toContain('emailRedirectTo');
+    for (const path of ['app/onboarding.tsx', 'app/terms.tsx', 'app/privacy.tsx', 'supabase/templates/invite.html']) {
+      expect(read(path)).not.toMatch(/adults aged 18|18 or older|18 or over|I am 18/);
+    }
+    expect(read('supabase/templates/confirmation.html')).toContain('type=signup');
   });
 
   it('keeps the synthetic browser suite on a local intercepted deployment', () => {

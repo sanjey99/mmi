@@ -10,6 +10,8 @@
     "target": "ES2022"
   },
   "include": [
+    "supabase/functions/operations-health/index.ts",
+    "supabase/functions/operations-health/handler.ts",
     "supabase/functions/_shared/rubricAssessment.ts",
     "supabase/functions/score-answer/index.ts",
     "supabase/functions/score-candidate-mmi-response/index.ts",

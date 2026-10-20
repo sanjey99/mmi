@@ -3,9 +3,17 @@ import { LegalDocument, type LegalSection } from '../src/components/legal/LegalD
 
 const SECTIONS: readonly LegalSection[] = [
   {
+    title: 'Your privacy at a glance',
+    paragraphs: [
+      'Interview Station is for university applicants, including students under 18. We use the same private account settings for everyone and do not ask for your date of birth. Other candidates cannot see your answers or progress. We do not use advertising trackers, sell your data, or publish a public candidate profile.',
+      'We need your email to protect your account. You can practise with made-up examples and type instead of using the microphone. Your submitted answer goes to an AI provider for feedback. We keep your scores, explanations, and short answer excerpts; the full transcript is deleted after scoring or within 24 hours if scoring is unresolved. Never include real patient information or anything sensitive.',
+      'AI feedback can be wrong and does not decide your university admission. If you are unsure about sharing something, leave it out and ask a parent, teacher, or trusted adult. You can ask the founding team for help with your information or to close your account.',
+    ],
+  },
+  {
     title: 'Who operates this preview',
     paragraphs: [
-      'The Interview Station founding team is preparing this invitation-only web test for adults aged 18 or over and decides how preview data is used. The legal operating person or company has not yet been finalized in this draft. Contact the team through the working email or messaging channel used for your invitation to ask a privacy question or exercise a data right; a separate support mailbox has not yet been verified.',
+      'The Interview Station founding team operates this interview-practice beta and decides how beta data is used. Accounts may be invited or created through public registration when it is available. The legal operating person or company has not yet been finalized in this draft. Contact the team through the working email or messaging channel used to introduce you to the service to ask a privacy question or exercise a data right; a separate support mailbox has not yet been verified.',
       'This draft notice describes the current preview data flows. The operator identity, working contact, and external-test scope require confirmation and qualified review before outside testing; preparing the notice does not complete that review.',
     ],
   },
@@ -13,18 +21,20 @@ const SECTIONS: readonly LegalSection[] = [
     title: 'Information we collect',
     paragraphs: ['We collect only information used to operate, secure, and evaluate the preview.'],
     points: [
-      'Account and profile data: email address, name, target university, entry year, onboarding status, role, and account timestamps.',
+      'Account and profile data: email address, an optional profile name, target university, entry year, onboarding status, role, and account timestamps. Registration does not request your date of birth or a real name.',
       'Practice data: selected question and category, session timing and status, AI-generated rubric scores, per-criterion justifications, supporting answer excerpts of up to 300 characters per criterion, and progress summaries. Our application and database never store raw MMI audio; we delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved. Supporting excerpts remain with your feedback.',
       'Content operations: questions, guidance notes, tags, draft or published status, and configuration actions submitted by authorized administrators.',
       'Tester reports: category, severity, screen, message, app version, reply permission, and account ID. The review API hides the account ID when reply permission is off.',
       'Technical records: security, authentication, delivery, and error metadata processed by our hosting and backend providers. The app does not intentionally attach screenshots, browser logs, access tokens, answers, or transcripts to tester reports.',
+      'Runtime monitoring: for signed-in accounts, we count unexpected app errors using the account ID, hour, fixed error category, and broad screen area. These counters do not contain error messages, stack traces, URLs, query strings, invitation links, answers, or recordings. Administrators see aggregate counts. Independent GitHub health checks receive service health states only, without candidate data.',
+      'Feedback allowances: private records count each account’s daily feedback use and keep response IDs with the time each answer first entered scoring. No answer text is added to these records. The allowance screen receives only your own remaining counts, reset time, and availability; it cannot request another account’s counts.',
     ],
   },
   {
     title: 'How and why we use information',
     paragraphs: [
-      'We use account and practice information to provide the requested preview, authenticate invited users, restore sessions, produce feedback, show progress, operate the question desk, prevent abuse, diagnose failures, and improve the product.',
-      'For this invited evaluation, the provisional legal bases are performance of the preview arrangement where applicable and the founding team’s legitimate interests in operating, securing, and evaluating the product. Reply permission controls whether an administrator receives your account ID with a tester report. These bases require legal confirmation before an external round.',
+      'We use account and practice information to provide interview practice, authenticate users, restore sessions, produce feedback, show progress, operate the question desk, prevent abuse, diagnose failures, and improve the product.',
+      'The provisional legal bases are providing the requested service where applicable and the founding team’s legitimate interests in operating, securing, and evaluating the product. These bases and how they apply to younger users require qualified review. Reading this notice is not consent to optional marketing or tracking. Reply permission controls whether an administrator receives your account ID with a tester report.',
       'AI scores are formative and do not produce legal or similarly significant decisions about you. They are not used to decide medical treatment, employment, education admission, credit, or access to a public service.',
     ],
   },
@@ -46,14 +56,16 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Retention and your choices',
     paragraphs: [
-      'Structured practice outcomes, bounded supporting answer excerpts, and scoring justifications are kept while needed to operate the invited test, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved; raw MMI audio is never stored by us. Supporting excerpts remain with your feedback and may include a complete short answer. External speech and AI providers may retain or process data under their own terms. Exact production retention periods for other records must be approved before the approximately 100-person round.',
-      'Ask the founding team to access, correct, export, restrict, object to use of, or delete information associated with your invited account. The available rights depend on the applicable law and legal basis. You may also raise a concern with the relevant data-protection authority; UK participants can contact the Information Commissioner’s Office.',
+      'The runtime-error counters are retained for seven full UTC days plus the current day, up to eight days while the daily cleanup is healthy. Aggregate activity and cost views use existing account and practice records; we do not add advertising trackers or session replay.',
+      'Daily feedback-use records and first-admission response IDs and timestamps are kept for seven full UTC days plus the current day, up to eight days while the daily cleanup is healthy. They enforce fair-use limits and protect the shared service from excess spending. They do not add answer text or make your records public.',
+      'Structured practice outcomes, bounded supporting answer excerpts, and scoring justifications are kept while needed to provide your practice history, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved; raw MMI audio is never stored by us. Supporting excerpts remain with your feedback and may include a complete short answer. External speech and AI providers may retain or process data under their own terms. Exact retention periods for other records still require approval before wider public access.',
+      'Ask the founding team to access, correct, export, restrict, object to use of, or delete information associated with your account. The available rights depend on the applicable law and legal basis. You may also raise a concern with the relevant data-protection authority; UK participants can contact the Information Commissioner’s Office.',
     ],
   },
   {
     title: 'Scope and changes',
     paragraphs: [
-      'This preview is being prepared for invited adult testers aged 18 or over, not children or public signup. We will update this notice when the product, providers, purposes, or retention decisions change and communicate material preview changes through the invitation channel.',
+      'This beta is being prepared for UK pre-university applicants, including students under 18, with public registration as well as invitations. We apply the same privacy defaults to all accounts rather than collect age information. A children’s data protection impact assessment and review of the operator, contact, providers, legal bases, and retention decisions remain launch tasks. We will explain material changes in the app or through the working contact channel.',
     ],
   },
 ];
@@ -64,7 +76,7 @@ export default function PrivacyScreen() {
       code="PRIVACY / 03"
       title="Privacy notice"
       effectiveDate="20 October 2026"
-      reviewNotice="Reviewable preview draft for invited adults aged 18 or over, based on current data flows. The controller identity, working contact, legal bases, international-transfer safeguards, and exact retention periods require qualified legal review before external testing. That review remains pending."
+      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The controller identity, working contact, legal bases, international-transfer safeguards, retention periods, and children's data protection assessment still require qualified review. That review remains pending."
       sections={SECTIONS}
     />
   );

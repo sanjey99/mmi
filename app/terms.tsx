@@ -3,17 +3,17 @@ import { LegalDocument, type LegalSection } from '../src/components/legal/LegalD
 
 const SECTIONS: readonly LegalSection[] = [
   {
-    title: 'Closed-preview terms',
+    title: 'Beta terms',
     paragraphs: [
-      'These draft terms cover the invitation-only Interview Station preview for invited adult testers aged 18 or over. By using the preview, you agree to follow these terms and the linked Privacy Notice. If you do not agree, do not use the preview.',
+      'These draft terms cover Interview Station, an interview-practice beta for university applicants, including pre-university students under 18. You may join through an invitation or public registration when it is available. By using the service, you agree to follow these terms and the linked Privacy Notice. If you do not agree, do not use the service. Ask a parent, teacher, or trusted adult if anything is unclear.',
       'The Interview Station founding team is preparing this test for product evaluation. The legal operating person or company has not yet been finalized in these draft terms. Contact the team through the working email or messaging channel used for your invitation; a separate support mailbox has not yet been verified.',
     ],
   },
   {
     title: 'Access and account security',
     paragraphs: [
-      'You may use only the account assigned to you. Keep the credentials private, sign out on shared devices, and notify the founding team if you believe the account has been accessed by someone else.',
-      'Tester access is for adults aged 18 or over and uses ordinary application accounts. An invitation does not grant administration access or permission to use an administrator-only model comparison.',
+      'Use your own account. Confirm your email, keep your password private, sign out on shared devices, and notify the founding team if you believe someone else has accessed your account.',
+      'Registration and invitations create ordinary practice accounts. They do not grant administration access or access to an administrator-only model comparison. Registration needs an email address and a chosen password; your date of birth is not requested.',
       'The founding team may suspend access to protect the preview, investigate misuse, contain a security issue, or end the testing period.',
     ],
   },
@@ -38,7 +38,7 @@ const SECTIONS: readonly LegalSection[] = [
     paragraphs: [
       'When scoring is enabled, the selected prompt and the answer you submit are sent through the Interview Station server to the configured AI provider. The server validates the response, but automation cannot make the feedback fully reliable. The main app and administrator-only model comparison use the same account and practice-data backend.',
       'Five-level feedback retains scores, per-criterion justifications, and supporting answer excerpts of up to 300 characters per criterion. The full MMI transcript is deleted after successful scoring and within 24 hours when unresolved; the retained excerpts may include a complete short answer. See the Privacy Notice for browser speech, AI processing, and remaining retention decisions.',
-      'The preview interface, authored question bank, scoring format, and related materials belong to their respective rights holders. Your invitation does not grant a right to copy, redistribute, resell, or publicly publish them.',
+      'The beta interface, authored question bank, scoring format, and related materials belong to their respective rights holders. Your account does not grant a right to copy, redistribute, resell, or publicly publish them.',
     ],
   },
   {
@@ -51,7 +51,7 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Ending access and raising concerns',
     paragraphs: [
-      'You may stop using the preview at any time and ask the founding team to close your access or address a data request. These closed-preview terms may be updated when the scope or data handling changes; material changes will be communicated through the invitation channel.',
+      'You may stop using the service at any time and ask the founding team to close your account or address a data request. These beta terms may be updated when the scope or data handling changes; material changes will be explained in the app or through the working contact channel.',
     ],
   },
 ];
@@ -62,7 +62,7 @@ export default function TermsScreen() {
       code="TERMS / 02"
       title="Terms of use"
       effectiveDate="20 October 2026"
-      reviewNotice="Reviewable draft for an invitation-only test with adults aged 18 or over. The legal operator identity and working contact need confirmation, and qualified legal review remains pending before outside testing. Preparing this draft does not complete that review."
+      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The operator identity and working support contact still need confirmation. Qualified review of these terms and children's data protection remains pending; this draft does not complete it."
       sections={SECTIONS}
     />
   );

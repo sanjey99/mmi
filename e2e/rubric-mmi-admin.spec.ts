@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { scoringAllowanceFixture } from '../tests/fixtures/scoringAllowance';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const responseId = '22222222-2222-4222-8222-222222222222';
@@ -69,6 +70,7 @@ async function installSyntheticMmiApi(page: Page) {
     if (path === '/rest/v1/rpc/get_candidate_mmi_practice_options') {
       return route.fulfill(json({ targetUniversity: 'Oxford', targetTag: 'oxford', targetCount: 115, allCount: 155 }));
     }
+    if (path === '/rest/v1/rpc/get_candidate_mmi_scoring_allowance') return route.fulfill(json(scoringAllowanceFixture()));
     if (path === '/rest/v1/rpc/get_admin_mmi_dashboard') {
       return route.fulfill(json({
         stationCounts: { draft: 1, published: 155, archived: 0 },
