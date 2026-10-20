@@ -4,7 +4,21 @@ Updated 20 October 2026 (Singapore time).
 
 The product owner approved public registration and UK pre-university applicants, including students under 18. The former adult-only restriction has been removed from the application, onboarding acknowledgement, Terms, Privacy Notice, and tracked invitation template. No substitute age threshold, date-of-birth question, identity document, or parental-contact collection has been added.
 
-This document records implemented source behavior and the remaining rollout dependencies. It does not establish that hosted signup is enabled, that arbitrary outside addresses receive email, or that the service has completed legal review. Historical production receipts remain in [External beta readiness](EXTERNAL-BETA-READINESS.md). Quota settings and proofs are documented separately in [Public access limits](PUBLIC-ACCESS.md); CI, health monitoring, and failure-email setup are in [CI and monitoring](CI-AND-MONITORING.md).
+The application changes are deployed to main and the approved comparison site. Hosted public signup remains disabled, arbitrary outside-address delivery is unverified, and legal review is incomplete. Current and historical production receipts are in [External beta readiness](EXTERNAL-BETA-READINESS.md). Quota settings and proofs are documented separately in [Public access limits](PUBLIC-ACCESS.md); active CI, health monitoring, and the pending failure-email receipt are in [CI and monitoring](CI-AND-MONITORING.md).
+
+## Verified release receipts
+
+| Check | Verified outcome on 20 October 2026 | Remaining limit |
+| --- | --- | --- |
+| Reviewed source and CI | [PR #16](https://github.com/sanjey99/mmi/pull/16) merged implementation `13c86e10580060b71daabe5312e6fea2bb6c0667` as main `cf15987decc027aee2a69c425f76fceb19fc6864`. Both PR CI runs and [main CI](https://github.com/sanjey99/mmi/actions/runs/39440640343) passed. | Automated tests do not establish a genuine received-email journey or human/legal approval. |
+| Main app | READY deployment `dpl_8snnxuW2FphhCTZ27agL8xjvQ2G3`, [immutable build](https://mmi-kcxhp7sws-sanjey99s-projects.vercel.app), with `mmi-hazel.vercel.app` assigned and the new signup UI verified. | UI deployment does not enable the Auth signup API. |
+| Comparison app | READY deployment `dpl_Efw8AE3A3tYGfcCTnSm8ZHrb1UeR`, [immutable build](https://mmi-88tmska66-sanjey99s-projects.vercel.app), source `13c86e1` on `experiment/gpt-5-5`; `mmi-gpt55.vercel.app` assigned and the new signup UI verified. | Ordinary candidates use the main app; the comparison model profile remains administrator-only. |
+| Auth destination and templates | Canonical Site URL `https://mmi-hazel.vercel.app` reread after saving; exact `/auth/callback?type=signup` redirect added alongside invitation/recovery callbacks. Updated invitation and confirmation templates plus confirmation subject saved without adult-only copy. | Actual confirmation receipt, valid-link completion, later sign-in, resend, and recovery still need the authorized recipient journey. |
+| Server policy | Minimum password length 12 saved; public signup OFF, anonymous signup OFF, email confirmation ON. | Public activation awaits sender and rollout requirements below. Built-in SMTP remains unsuitable for broad outside delivery. |
+| Server scoring controls | Exact quota migration, ledger/source, private ACLs, conservative defaults, self-only allowance RPC, and cleanup job verified. Operations migration and deployed health endpoint also verified. | No dollar budget is configured; allowance estimates reserve no capacity and do not guarantee total platform spending. |
+| Current automated validation | 817 unit/contract checks (54 Node and 763 Vitest), 64 browser cases, 10 monitor checks, both disposable SQL proofs, type checking, and production build passed. | No new live account, paid AI probe, or received-email journey is implied by these tests. |
+
+Domain/mailbox work remains paused at the owner's request. The earlier single invitation receipt is historical evidence only; no broader delivery result or working planned support address is claimed.
 
 ## Implemented account flow
 
@@ -21,14 +35,14 @@ The application does not use an Auth administration key in the browser. Registra
 
 ## Hosted rollout prerequisites
 
-The last recorded hosted configuration has public signup **OFF**, anonymous signup **OFF**, and email confirmation **ON**. Source changes do not alter those hosted settings.
+The verified hosted configuration has public signup **OFF**, anonymous signup **OFF**, and email confirmation **ON**. The deployed registration form does not alter those hosted settings.
 
 Before declaring public registration active:
 
-- Deploy the reviewed application source to the approved main app and verify its sign-in, signup, recovery, and safe empty-callback screens. Preserve the comparison app's existing administrator-only model behavior.
-- Keep the canonical Auth Site URL at `https://mmi-hazel.vercel.app`, without a trailing slash. Add the exact supported main callback `https://mmi-hazel.vercel.app/auth/callback?type=signup` alongside the existing exact invitation/recovery callbacks. Do not add broad wildcard redirects as a shortcut. The comparison app's registration links must use a deliberately approved callback destination; ordinary candidates should use the main app.
-- Save the tracked confirmation template and a clear confirmation subject in hosted Auth. Apply the updated invitation template so new invitation messages no longer claim an adult-only audience. Preserve the recovery template and callback behavior.
-- Keep email confirmation **ON** and anonymous signup **OFF**. Configure the server's minimum password length consistently with the app's 12-character requirement; frontend validation alone cannot enforce API policy.
+- Completed: deploy the reviewed main and comparison application builds and verify the new signup UI at both assigned aliases. Existing recovery and safe empty-callback browser coverage passed; the earlier hosted smoke receipts remain in the readiness record. Preserve the comparison app's administrator-only model behavior.
+- Completed: save and reread the canonical Auth Site URL `https://mmi-hazel.vercel.app`, without a trailing slash, and the exact supported main callback `https://mmi-hazel.vercel.app/auth/callback?type=signup` alongside existing invitation/recovery callbacks. Preserve these exact destinations without wildcard redirects; ordinary candidates should use the main app.
+- Completed: save the tracked confirmation template and confirmation subject in hosted Auth, plus the invitation template without adult-only copy. Preserve the recovery template and callback behavior.
+- Completed: keep email confirmation **ON**, anonymous signup **OFF**, and save server minimum password length 12. Keep public signup **OFF** until its remaining activation requirements are complete.
 - Verify an approved sender that can deliver to arbitrary authorized external recipients. Supabase's default SMTP service is documented as restricted to project-team addresses, with a current limit of two emails per hour. One received invitation does not prove broad deliverability. Do not add testers to the project team to bypass the mailer's restriction.
 - Check hosted signup/resend rate limits and an appropriate anti-bot configuration. Do not weaken email confirmation or expose a service-role key to work around sender or bot-protection problems. Account quotas are separately server-enforced and are not a substitute for signup protection.
 - Verify new users receive exactly one ordinary profile and cannot set administrator status through Auth metadata or profile updates. Test normal candidate practice, denied admin/comparison access, sign-out, and cross-account isolation.
@@ -54,7 +68,7 @@ The implementation uses the same private defaults for all accounts, rather than 
 | Independent health probes | Receive a fixed service-health response, not candidate analytics or personal records. They do not call a paid model, submit a practice answer, or send account email. |
 | Rights and support | The notices describe requesting access, correction, export, restriction, objection, or deletion. A real operator identity and working contact still need to be supplied. There is no claim that an unverified mailbox is monitored or that a new automated deletion workflow exists. |
 
-Provider-side retention is separate from application/database deletion. Precise retention periods for records other than full transcripts and runtime counters still require an approved decision. Do not describe this update as a completed Children's Code assessment or legal approval.
+Provider-side retention is separate from application/database deletion. Precise retention periods for records other than full transcripts and the disclosed runtime/allowance metadata still require an approved decision. Do not describe this update as a completed Children's Code assessment or legal approval.
 
 ## Children's privacy and legal review
 
@@ -74,7 +88,7 @@ These items are unresolved factual/legal decisions. Removing the old 18+ checkbo
 
 ## Verification and rollback
 
-Local checks cover safe signup payloads and callback origin, password validation, no automatic session installation, no account-existence disclosure, fixed errors, concurrent request pacing, explicit resend, and the absence of signup password-reset authority. Browser cases include invitation and recovery regressions, signup confirmation to orientation, honest failure while signup is disabled, ordinary signed-out registration, and the absence of the adult-only checkbox. All tests use a synthetic backend and local export; no live accounts or email are created by these tests.
+Passed local and CI checks cover safe signup payloads and callback origin, password validation, no automatic session installation, no account-existence disclosure, fixed errors, concurrent request pacing, explicit resend, and the absence of signup password-reset authority. Browser cases include invitation and recovery regressions, signup confirmation to orientation, honest failure while signup is disabled, ordinary signed-out registration, and the absence of the adult-only checkbox. These tests use a synthetic backend and local export; they create no live accounts or email. Separate live checks verified the deployed signup UI and saved hosted settings, not a completed real-email confirmation journey.
 
 To pause new public registrations, disable hosted public signup and keep invitation/recovery, email confirmation, and candidate record ownership checks intact. This is different from removing existing accounts or deleting their records. Existing invitations and confirmed accounts should continue to use the supported flows. If a frontend needs rollback, use a schema-v4-compatible release and preserve completed attempts and migration history. Record the exact hosted setting and app deployment used rather than assuming a UI-only change closes the Auth API.
 
