@@ -5,14 +5,15 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Closed-preview terms',
     paragraphs: [
-      'These terms govern the invitation-only Interview Station cofounder preview. By using the preview, you agree to follow these terms and the linked Privacy Notice. If you do not agree, do not use the preview.',
-      'Access is provided by the Interview Station founding team for product evaluation. Contact the team through the same email or messaging channel used for your invitation if you have a question about these terms.',
+      'These draft terms cover the invitation-only Interview Station preview for invited adult testers aged 18 or over. By using the preview, you agree to follow these terms and the linked Privacy Notice. If you do not agree, do not use the preview.',
+      'The Interview Station founding team is preparing this test for product evaluation. The legal operating person or company has not yet been finalized in these draft terms. Contact the team through the working email or messaging channel used for your invitation; a separate support mailbox has not yet been verified.',
     ],
   },
   {
     title: 'Access and account security',
     paragraphs: [
       'You may use only the account assigned to you. Keep the credentials private, sign out on shared devices, and notify the founding team if you believe the account has been accessed by someone else.',
+      'Tester access is for adults aged 18 or over and uses ordinary application accounts. An invitation does not grant administration access or permission to use an administrator-only model comparison.',
       'The founding team may suspend access to protect the preview, investigate misuse, contain a security issue, or end the testing period.',
     ],
   },
@@ -35,7 +36,8 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'AI scoring and preview content',
     paragraphs: [
-      'When scoring is enabled, the selected prompt and the answer you submit are sent through the Interview Station server to the configured AI provider. The server validates the response, but automation cannot make the feedback fully reliable.',
+      'When scoring is enabled, the selected prompt and the answer you submit are sent through the Interview Station server to the configured AI provider. The server validates the response, but automation cannot make the feedback fully reliable. The main app and administrator-only model comparison use the same account and practice-data backend.',
+      'Five-level feedback retains scores, per-criterion justifications, and supporting answer excerpts of up to 300 characters per criterion. The full MMI transcript is deleted after successful scoring and within 24 hours when unresolved; the retained excerpts may include a complete short answer. See the Privacy Notice for browser speech, AI processing, and remaining retention decisions.',
       'The preview interface, authored question bank, scoring format, and related materials belong to their respective rights holders. Your invitation does not grant a right to copy, redistribute, resell, or publicly publish them.',
     ],
   },
@@ -57,10 +59,10 @@ const SECTIONS: readonly LegalSection[] = [
 export default function TermsScreen() {
   return (
     <LegalDocument
-      code="TERMS / 01"
+      code="TERMS / 02"
       title="Terms of use"
-      effectiveDate="25 August 2026"
-      reviewNotice="Operational draft for invited cofounders and partners. It describes the current preview but is not a substitute for review by qualified counsel before an external testing round."
+      effectiveDate="20 October 2026"
+      reviewNotice="Reviewable draft for an invitation-only test with adults aged 18 or over. The legal operator identity and working contact need confirmation, and qualified legal review remains pending before outside testing. Preparing this draft does not complete that review."
       sections={SECTIONS}
     />
   );

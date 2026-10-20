@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, KeyboardAvoidingView,
-  Platform,
+  Platform, TouchableOpacity,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,7 +37,7 @@ export default function LoginScreen() {
       await signIn(email.trim().toLowerCase(), password);
       router.replace('/');
     } catch {
-      setAuthError('Email or password was not accepted. Check the details or contact the founding team for access.');
+      setAuthError('Email or password was not accepted. Check the details or request a password reset.');
     } finally {
       setLoading(false);
     }
@@ -57,7 +57,7 @@ export default function LoginScreen() {
           <View style={styles.logoWrap}>
             <Text style={styles.stationNumber}>00</Text>
             <Text style={styles.logoText}>INTERVIEW STATION</Text>
-            <Text style={styles.logoSub}>Cofounder preview · candidate circuit</Text>
+            <Text style={styles.logoSub}>Private beta · candidate circuit</Text>
           </View>
 
           {authError ? (
@@ -65,7 +65,7 @@ export default function LoginScreen() {
           ) : null}
 
           <Text style={styles.formTitle}>Enter the circuit</Text>
-          <Text style={styles.formIntro}>Use the invited account supplied by the founding team.</Text>
+          <Text style={styles.formIntro}>Use your invited beta account. New here? Open your invitation email to set your password first.</Text>
           <FloatingInput
             label="Email address"
             value={email}
@@ -83,7 +83,8 @@ export default function LoginScreen() {
           />
 
           <Button label="Enter circuit" onPress={handleLogin} loading={loading} style={styles.btn} />
-          <Text style={styles.accessNote}>Access is invitation-only. Password resets are handled by the founding team during this preview.</Text>
+          <TouchableOpacity accessibilityRole="link" onPress={() => router.push('/forgot-password' as never)} disabled={loading} style={styles.resetLink}><Text style={styles.resetLinkText}>Forgot password?</Text></TouchableOpacity>
+          <Text style={styles.accessNote}>Beta access is invitation-only. Public registration is closed.</Text>
           <LegalFooter />
         </View>
       </KeyboardAvoidingView>
@@ -116,4 +117,6 @@ const styles = StyleSheet.create({
   formIntro: { ...text.bodyMd, color: colors.neutral[600], marginTop: 4, marginBottom: 20 },
   btn: { marginTop: 8, marginBottom: 16 },
   accessNote: { ...text.caption, color: colors.neutral[600], maxWidth: 420 },
+  resetLink: { alignSelf: 'flex-start', paddingVertical: 10, marginBottom: 12 },
+  resetLinkText: { ...text.bodyMd, color: colors.teal[600], textDecorationLine: 'underline' },
 });
