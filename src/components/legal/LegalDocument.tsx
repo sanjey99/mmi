@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { navigateBackOr } from '../../lib/navigation';
 import { colors, layout, text } from '../../theme';
@@ -38,7 +38,10 @@ export function LegalDocument({
         <Text style={styles.headerTitle}>{code}</Text>
         <View style={styles.headerSpacer} />
       </View>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        {...(Platform.OS === 'web' ? { tabIndex: 0, role: 'region' as const, accessibilityLabel: title } : {})}
+      >
         <Text style={styles.eyebrow}>INTERVIEW STATION · BETA</Text>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.effective}>EFFECTIVE {effectiveDate.toUpperCase()}</Text>

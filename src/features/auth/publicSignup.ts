@@ -1,4 +1,5 @@
 import { EMAIL_ACTION_CALLBACK_PATH, MIN_PASSWORD_CODE_POINTS } from './emailActions';
+import { captchaOptions, isCaptchaRejection } from './captcha';
 
 export const SIGNUP_CONFIRMATION_MESSAGE = 'If this address can be registered, a confirmation email will arrive shortly. Check your inbox and spam folder. If you already have an account, sign in or reset your password.';
 export const SIGNUP_EMAIL_COOLDOWN_MS = 60_000;
@@ -10,6 +11,7 @@ const messages = Object.freeze({
   password_mismatch: 'The passwords do not match.',
   password_rejected: 'This password was not accepted. Choose another unique password with at least 12 characters.',
   cooldown: 'Please wait a minute before requesting another account email.',
+  captcha_failed: 'The security check failed or expired. Please complete a new check and try again.',
   unavailable: 'Registration emails are unavailable right now. Please try again later. Existing accounts can still sign in.',
 });
 export type SignupErrorCode = keyof typeof messages;
@@ -25,8 +27,8 @@ export class SignupError extends Error {
 
 type SignupResult = Readonly<{ data: Readonly<{ session: unknown }>; error: unknown }>;
 export interface SignupAuth {
-  signUp: (args: Readonly<{ email: string; password: string; options: Readonly<{ emailRedirectTo: string }> }>) => PromiseLike<SignupResult>;
-  resend: (args: Readonly<{ type: 'signup'; email: string; options: Readonly<{ emailRedirectTo: string }> }>) => PromiseLike<Readonly<{ error: unknown }>>;
+  signUp: (args: Readonly<{ email: string; password: string; options: Readonly<{ emailRedirectTo: string; captchaToken?: string }> }>) => PromiseLike<SignupResult>;
+  resend: (args: Readonly<{ type: 'signup'; email: string; options: Readonly<{ emailRedirectTo: string; captchaToken?: string }> }>) => PromiseLike<Readonly<{ error: unknown }>>;
 }
 
 function normalizeEmail(value: string): string {
@@ -46,6 +48,7 @@ function confirmationRedirect(origin: string | undefined): string {
 
 function publicError(error: unknown): void {
   if (!error) return;
+  if (isCaptchaRejection(error)) throw new SignupError('captcha_failed');
   const code = typeof error === 'object' ? (error as { code?: unknown }).code : null;
   // The response must not disclose whether an address already has an account.
   if (code === 'user_already_exists' || code === 'email_exists' || code === 'user_not_found') return;
@@ -74,24 +77,26 @@ export function createPublicSignupService({ auth, callbackOrigin, now = Date.now
   }
 
   return Object.freeze({
-    async register({ email, password, confirmPassword }: Readonly<{ email: string; password: string; confirmPassword: string }>): Promise<void> {
+    async register({ email, password, confirmPassword, captchaToken }: Readonly<{ email: string; password: string; confirmPassword: string; captchaToken?: string }>): Promise<void> {
       const address = normalizeEmail(email);
       if (typeof password !== 'string' || Array.from(password).length < MIN_PASSWORD_CODE_POINTS) throw new SignupError('password_too_short');
       if (Array.from(password).length > 128) throw new SignupError('password_too_long');
       if (password !== confirmPassword) throw new SignupError('password_mismatch');
       const emailRedirectTo = confirmationRedirect(callbackOrigin);
+      const security = captchaOptions(captchaToken);
       await send(async () => {
-        const result = await auth.signUp({ email: address, password, options: { emailRedirectTo } });
+        const result = await auth.signUp({ email: address, password, options: { emailRedirectTo, ...security } });
         // The isolated client never installs this session in the app. Require
         // confirmation to be enabled instead of silently signing the user in.
         if (result.data?.session) throw new SignupError('unavailable');
         return result;
       });
     },
-    async resendConfirmation(email: string): Promise<void> {
+    async resendConfirmation(email: string, captchaToken?: string): Promise<void> {
       const address = normalizeEmail(email);
       const emailRedirectTo = confirmationRedirect(callbackOrigin);
-      await send(() => auth.resend({ type: 'signup', email: address, options: { emailRedirectTo } }));
+      const security = captchaOptions(captchaToken);
+      await send(() => auth.resend({ type: 'signup', email: address, options: { emailRedirectTo, ...security } }));
     },
     getCooldownSeconds(): number {
       return Math.max(0, Math.ceil((nextRequestAt - now()) / 1_000));

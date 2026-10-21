@@ -1,3 +1,5 @@
+import { captchaOptions, isCaptchaRejection } from './captcha';
+
 export type EmailActionMode = 'invite' | 'recovery';
 export type EmailActionMarker = Readonly<{ mode: EmailActionMode; userId: string }>;
 export type EmailCallbackMode = EmailActionMode | 'signup';
@@ -16,6 +18,7 @@ const messages = Object.freeze({
   password_mismatch: 'The passwords do not match.',
   password_rejected: 'This password was not accepted. Choose a different password and try again.',
   invalid_email: 'Enter a valid email address.',
+  captcha_failed: 'The security check failed or expired. Please complete a new check and try again.',
   unavailable: 'Account setup is unavailable right now. Please try again.',
 });
 export type EmailActionErrorCode = keyof typeof messages;
@@ -41,7 +44,7 @@ export interface EmailActionAuth {
   exchangeCodeForSession: (code: string) => PromiseLike<AuthResult>;
   getUser: () => PromiseLike<EmailActionUserResult>;
   getSession: () => PromiseLike<Readonly<{ data: Readonly<{ session: EmailActionSession | null }>; error: unknown }>>;
-  resetPasswordForEmail: (email: string, options: Readonly<{ redirectTo: string }>) => PromiseLike<Readonly<{ data?: unknown; error: unknown }>>;
+  resetPasswordForEmail: (email: string, options: Readonly<{ redirectTo: string; captchaToken?: string }>) => PromiseLike<Readonly<{ data?: unknown; error: unknown }>>;
 }
 export interface EmailActionStorage {
   getItem: (key: string) => string | null | PromiseLike<string | null>;
@@ -290,11 +293,13 @@ export function createEmailActionService({ auth, storage, callbackOrigin, update
       }
       await clearPendingAction();
     },
-    async requestPasswordReset(email: string): Promise<void> {
+    async requestPasswordReset(email: string, captchaToken?: string): Promise<void> {
       if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return fail('invalid_email');
       const redirectTo = `${trustedOrigin(callbackOrigin)}${EMAIL_ACTION_CALLBACK_PATH}?type=recovery`;
+      const security = captchaOptions(captchaToken);
       let result: Readonly<{ data?: unknown; error: unknown }>;
-      try { result = await auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo }); } catch { return fail('unavailable'); }
+      try { result = await auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo, ...security }); } catch { return fail('unavailable'); }
+      if (isCaptchaRejection(result.error)) return fail('captcha_failed');
       // Unknown accounts and rate-limited addresses share the same public confirmation.
       if (result.error && temporaryFailure(result.error)) return fail('unavailable');
     },

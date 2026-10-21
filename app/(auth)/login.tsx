@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, KeyboardAvoidingView,
   Platform, TouchableOpacity,
@@ -10,6 +10,8 @@ import { FloatingInput } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { LegalFooter } from '../../src/components/legal/LegalFooter';
+import { AuthCaptcha, useAuthCaptcha } from '../../src/components/auth/AuthCaptcha';
+import { AuthCaptchaError, isCaptchaRejection } from '../../src/features/auth/captcha';
 import { colors, text } from '../../src/theme';
 
 export default function LoginScreen() {
@@ -19,6 +21,8 @@ export default function LoginScreen() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const signIn = useAuthStore(s => s.signIn);
+  const captcha = useAuthCaptcha();
+  const inFlight = useRef(false);
 
   const validate = () => {
     const e: typeof errors = {};
@@ -30,15 +34,18 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    if (inFlight.current) return;
     if (!validate()) return;
+    inFlight.current = true;
     setAuthError(null);
     setLoading(true);
     try {
-      await signIn(email.trim().toLowerCase(), password);
+      await captcha.controller.run(token => signIn(email.trim().toLowerCase(), password, token));
       router.replace('/');
-    } catch {
-      setAuthError('Email or password was not accepted. Check the details or request a password reset.');
+    } catch (reason) {
+      setAuthError(reason instanceof AuthCaptchaError ? reason.message : isCaptchaRejection(reason) ? new AuthCaptchaError('rejected').message : 'Email or password was not accepted. Check the details or request a password reset.');
     } finally {
+      inFlight.current = false;
       setLoading(false);
     }
   };
@@ -82,7 +89,8 @@ export default function LoginScreen() {
             error={errors.password}
           />
 
-          <Button label="Enter circuit" onPress={handleLogin} loading={loading} style={styles.btn} />
+          <AuthCaptcha controller={captcha.controller} action="login" />
+          <Button label="Enter circuit" onPress={handleLogin} loading={loading} disabled={!captcha.state.canSubmit} style={styles.btn} />
           <TouchableOpacity accessibilityRole="link" onPress={() => router.push('/forgot-password' as never)} disabled={loading} style={styles.resetLink}><Text style={styles.resetLinkText}>Forgot password?</Text></TouchableOpacity>
           <TouchableOpacity accessibilityRole="link" onPress={() => router.push('/signup')} disabled={loading} style={styles.resetLink}><Text style={styles.resetLinkText}>Create an account</Text></TouchableOpacity>
           <Text style={styles.accessNote}>New accounts need email confirmation before sign in.</Text>

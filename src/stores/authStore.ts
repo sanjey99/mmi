@@ -9,7 +9,7 @@ interface AuthState {
   profile: Profile | null;
   loading: boolean;
   init: () => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -69,8 +69,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
       });
     },
 
-    signIn: async (email, password) => {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+    signIn: async (email, password, captchaToken) => {
+      const { error } = await supabase.auth.signInWithPassword({ email, password, ...(captchaToken === undefined ? {} : { options: { captchaToken } }) });
       if (error) throw error;
     },
 

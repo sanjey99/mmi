@@ -7,6 +7,8 @@ import { Button } from '../../src/components/ui/Button';
 import { InlineNotice } from '../../src/components/feedback/InlineNotice';
 import { SignupError, SIGNUP_CONFIRMATION_MESSAGE } from '../../src/features/auth/publicSignup';
 import { publicSignupService } from '../../src/features/auth/publicSignupService';
+import { AuthCaptcha, useAuthCaptcha } from '../../src/components/auth/AuthCaptcha';
+import { AuthCaptchaError } from '../../src/features/auth/captcha';
 
 export default function SignupScreen() {
   const [email, setEmail] = useState('');
@@ -18,6 +20,8 @@ export default function SignupScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(publicSignupService.getCooldownSeconds);
   const active = useRef(true);
+  const inFlight = useRef(false);
+  const captcha = useAuthCaptcha();
 
   useEffect(() => {
     active.current = true;
@@ -26,16 +30,19 @@ export default function SignupScreen() {
   }, []);
 
   const requestEmail = async () => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setErrorMessage(null);
     try {
-      if (resending || sent) await publicSignupService.resendConfirmation(email);
-      else await publicSignupService.register({ email, password, confirmPassword });
+      await captcha.controller.run(token => resending || sent
+        ? publicSignupService.resendConfirmation(email, token)
+        : publicSignupService.register({ email, password, confirmPassword, captchaToken: token }));
       if (active.current) setSent(true);
     } catch (error) {
-      if (active.current) setErrorMessage(error instanceof SignupError ? error.message : 'Registration emails are unavailable right now. Please try again later.');
+      if (active.current) setErrorMessage(error instanceof SignupError || error instanceof AuthCaptchaError ? error.message : 'Registration emails are unavailable right now. Please try again later.');
     } finally {
+      inFlight.current = false;
       if (active.current) {
         setPassword('');
         setConfirmPassword('');
@@ -58,11 +65,12 @@ export default function SignupScreen() {
         </> : null}
       </> : null}
       <Text accessibilityLiveRegion="polite" style={authActionStyles.helper}>{cooldown > 0 ? `You can request another email in ${cooldown} seconds.` : 'Email delivery may take a few minutes. Open the newest link only.'}</Text>
-      <Button label={sent ? 'Send another confirmation' : resending ? 'Send confirmation email' : 'Create account'} onPress={() => { void requestEmail(); }} loading={busy} disabled={cooldown > 0} />
-      {!sent ? <Button label={resending ? 'Back to registration' : 'Already waiting for a confirmation?'} variant="secondary" disabled={busy} onPress={() => { setResending(value => !value); setErrorMessage(null); setPassword(''); setConfirmPassword(''); }} /> : null}
+      <AuthCaptcha controller={captcha.controller} action={resending || sent ? 'resend' : 'signup'} />
+      <Button label={sent ? 'Send another confirmation' : resending ? 'Send confirmation email' : 'Create account'} onPress={() => { void requestEmail(); }} loading={busy} disabled={cooldown > 0 || !captcha.state.canSubmit} />
+      {!sent ? <Button label={resending ? 'Back to registration' : 'Already waiting for a confirmation?'} variant="secondary" disabled={busy} onPress={() => { captcha.controller.refresh(); setResending(value => !value); setErrorMessage(null); setPassword(''); setConfirmPassword(''); }} /> : null}
       <View style={authActionStyles.actions}>
         <Button label="Return to sign in" variant="secondary" disabled={busy} onPress={() => router.replace('/(auth)/login')} />
-        {sent ? <Button label="Use a different email" variant="secondary" disabled={busy} onPress={() => { setSent(false); setResending(false); setEmail(''); setErrorMessage(null); }} /> : null}
+        {sent ? <Button label="Use a different email" variant="secondary" disabled={busy} onPress={() => { captcha.controller.refresh(); setSent(false); setResending(false); setEmail(''); setErrorMessage(null); }} /> : null}
       </View>
     </AuthActionShell>
   );

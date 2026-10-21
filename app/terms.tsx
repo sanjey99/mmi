@@ -6,7 +6,7 @@ const SECTIONS: readonly LegalSection[] = [
     title: 'Beta terms',
     paragraphs: [
       'These draft terms cover Interview Station, an interview-practice beta for university applicants, including pre-university students under 18. You may join through an invitation or public registration when it is available. By using the service, you agree to follow these terms and the linked Privacy Notice. If you do not agree, do not use the service. Ask a parent, teacher, or trusted adult if anything is unclear.',
-      'The Interview Station founding team is preparing this test for product evaluation. The legal operating person or company has not yet been finalized in these draft terms. Contact the team through the working email or messaging channel used for your invitation; a separate support mailbox has not yet been verified.',
+      'The Interview Station founding team is preparing this test for product evaluation. The legal operating person or company has not yet been finalized in these draft terms. For support, account help, or privacy requests, contact interviewstation.admin@gmail.com.',
     ],
   },
   {
@@ -61,8 +61,8 @@ export default function TermsScreen() {
     <LegalDocument
       code="TERMS / 02"
       title="Terms of use"
-      effectiveDate="20 October 2026"
-      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The operator identity and working support contact still need confirmation. Qualified review of these terms and children's data protection remains pending; this draft does not complete it."
+      effectiveDate="21 October 2026"
+      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The support contact is interviewstation.admin@gmail.com. Operator identity and qualified review of these terms and children's data protection remain pending."
       sections={SECTIONS}
     />
   );

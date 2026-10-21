@@ -13,8 +13,8 @@ const SECTIONS: readonly LegalSection[] = [
   {
     title: 'Who operates this preview',
     paragraphs: [
-      'The Interview Station founding team operates this interview-practice beta and decides how beta data is used. Accounts may be invited or created through public registration when it is available. The legal operating person or company has not yet been finalized in this draft. Contact the team through the working email or messaging channel used to introduce you to the service to ask a privacy question or exercise a data right; a separate support mailbox has not yet been verified.',
-      'This draft notice describes the current preview data flows. The operator identity, working contact, and external-test scope require confirmation and qualified review before outside testing; preparing the notice does not complete that review.',
+      'The Interview Station founding team operates this interview-practice beta and decides how beta data is used. Accounts may be invited or created through public registration when it is available. The legal operating person or company has not yet been finalized in this draft. Contact interviewstation.admin@gmail.com for support, privacy questions, or requests about your information.',
+      'This draft notice describes the current preview data flows. The operator identity and external-test scope require confirmation and qualified review before outside testing; preparing the notice does not complete that review.',
     ],
   },
   {
@@ -42,6 +42,7 @@ const SECTIONS: readonly LegalSection[] = [
     title: 'Service providers and AI processing',
     paragraphs: [
       'Vercel serves the static web application. Supabase provides authentication, database, and Edge Function services. When scoring is enabled, the server sends the selected prompt and submitted answer to the AI provider configured by the founding team. Browser speech and AI providers may process data under their own terms and retention practices. Authorized founders may review product feedback and support records.',
+      'Google Gmail delivers account invitations, confirmation messages, and password-reset emails through the dedicated Interview Station mailbox. Google processes the recipient email address, message content, account-action link, and delivery metadata. Sent-mail copies may remain in that mailbox. If you email support, your message and any information you include are also handled by Gmail and the team members with access to the mailbox. Do not send passwords, sign-in links, or real patient details to support.',
       'The main app and administrator-only GPT-5.5 comparison app use the same Supabase project, accounts, and practice-history data. Tester accounts do not gain administrator privileges or access to another account’s private practice records. The configured scoring provider and its handling settings must be confirmed for the external test.',
       'These providers may process data in countries outside your own. Contractual safeguards, project regions, provider settings, and current subprocessor lists must be confirmed before a wider round. We do not sell preview personal data or use it for advertising.',
     ],
@@ -50,7 +51,7 @@ const SECTIONS: readonly LegalSection[] = [
     title: 'Browser storage and security',
     paragraphs: [
       'On the web, the authentication session is stored in browser session storage so it can survive a refresh in the same tab and is not intentionally kept as a long-lived local-storage login. Explicit sign-out removes the session.',
-      'We use authorization checks, row-level security, fixed server response shapes, rate limits, and server-owned scoring controls. No internet service is risk-free; report suspected unauthorized access through the invitation channel and avoid entering real patient data.',
+      'We use authorization checks, row-level security, fixed server response shapes, rate limits, and server-owned scoring controls. No internet service is risk-free; report suspected unauthorized access to interviewstation.admin@gmail.com and avoid entering real patient data.',
     ],
   },
   {
@@ -58,6 +59,7 @@ const SECTIONS: readonly LegalSection[] = [
     paragraphs: [
       'The runtime-error counters are retained for seven full UTC days plus the current day, up to eight days while the daily cleanup is healthy. Aggregate activity and cost views use existing account and practice records; we do not add advertising trackers or session replay.',
       'Daily feedback-use records and first-admission response IDs and timestamps are kept for seven full UTC days plus the current day, up to eight days while the daily cleanup is healthy. They enforce fair-use limits and protect the shared service from excess spending. They do not add answer text or make your records public.',
+      'Account-email copies and support correspondence in Gmail have a separate retention policy from practice transcripts. That mailbox retention period and who may access it still require approval before wider public access. Expiry of an account-action link does not delete the email copy.',
       'Structured practice outcomes, bounded supporting answer excerpts, and scoring justifications are kept while needed to provide your practice history, investigate issues, evaluate the product, and meet applicable obligations. Our application and database delete the full MMI transcript immediately after successful scoring and within 24 hours when unresolved; raw MMI audio is never stored by us. Supporting excerpts remain with your feedback and may include a complete short answer. External speech and AI providers may retain or process data under their own terms. Exact retention periods for other records still require approval before wider public access.',
       'Ask the founding team to access, correct, export, restrict, object to use of, or delete information associated with your account. The available rights depend on the applicable law and legal basis. You may also raise a concern with the relevant data-protection authority; UK participants can contact the Information Commissioner’s Office.',
     ],
@@ -75,8 +77,8 @@ export default function PrivacyScreen() {
     <LegalDocument
       code="PRIVACY / 03"
       title="Privacy notice"
-      effectiveDate="20 October 2026"
-      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The controller identity, working contact, legal bases, international-transfer safeguards, retention periods, and children's data protection assessment still require qualified review. That review remains pending."
+      effectiveDate="21 October 2026"
+      reviewNotice="Draft updated for UK pre-university applicants, including students under 18, and public registration. The support/privacy contact is interviewstation.admin@gmail.com. Controller identity, legal bases, international-transfer safeguards, retention periods, and children's data protection assessment still require qualified review."
       sections={SECTIONS}
     />
   );
