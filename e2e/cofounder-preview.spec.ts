@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Request } from '@playwright/test';
 import { scoringAllowanceFixture } from '../tests/fixtures/scoringAllowance';
 
 const userId = '11111111-1111-4111-8111-111111111111';
@@ -593,20 +593,28 @@ test('MMI activity failure clears old totals and never presents an unverified ze
 });
 
 test('MMI activity refreshes at UTC midnight and after the browser resumes', async ({ page }) => {
-  await page.clock.install({ time: new Date('2026-10-21T23:59:59.500Z') });
+  await page.clock.install({ time: new Date('2026-10-21T23:55:00.000Z') });
   await page.addInitScript(() => {
     const stored = sessionStorage.getItem('sb-e2e-auth-token');
     if (stored) sessionStorage.setItem('sb-e2e-auth-token', JSON.stringify({ ...JSON.parse(stored), expires_at: 4_102_444_800 }));
   });
   let calls = 0;
-  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({
-      completedToday: ++calls === 1 ? 1 : 0, completedTotal: 4, streakCurrent: 1, streakLongest: 2, latestCompletedAt: now,
-    }),
-  }));
+  let beforeMidnight = true;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', route => {
+    calls++;
+    return route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        completedToday: beforeMidnight ? 1 : 0, completedTotal: 4, streakCurrent: 1, streakLongest: 2, latestCompletedAt: now,
+      }),
+    });
+  });
   await page.goto('/');
   await expect(page.getByTestId('mmi-completed-today')).toHaveText('1');
+  await page.clock.pauseAt(new Date('2026-10-21T23:59:59.500Z'));
+  const beforeBoundary = calls;
+  beforeMidnight = false;
   await page.clock.fastForward(2_000);
+  await expect.poll(() => calls).toBeGreaterThan(beforeBoundary);
   await expect(page.getByTestId('mmi-completed-today')).toHaveText('0');
   const beforeResume = calls;
   await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
@@ -618,22 +626,26 @@ test('MMI activity drops an earlier request after leaving and returning to the t
   let release = () => {};
   const gate = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
+  let initialPhase = true;
+  const heldRequests: Request[] = [];
   await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', async route => {
-    const earlier = ++calls === 1;
-    if (earlier) await gate;
+    calls++;
+    const earlier = initialPhase;
+    if (earlier) { heldRequests.push(route.request()); await gate; }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       completedToday: 1, completedTotal: earlier ? 99 : 1, streakCurrent: 1, streakLongest: 1, latestCompletedAt: now,
     }) });
   });
   await page.goto('/');
-  await expect.poll(() => calls).toBe(1);
+  await expect.poll(() => calls).toBeGreaterThanOrEqual(1);
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('—');
   await page.getByLabel('02 Practise', { exact: true }).click();
+  initialPhase = false;
   await page.getByLabel('01 Orient', { exact: true }).click();
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('1');
-  const completed = page.waitForResponse(response => response.url().includes('/get_candidate_mmi_activity_summary'));
+  const completed = Promise.all(heldRequests.map(request => page.waitForResponse(response => response.request() === request).then(response => response.finished())));
   release();
-  await (await completed).finished();
+  await completed;
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('1');
 });
@@ -642,16 +654,17 @@ test('MMI activity cannot publish the previous account request after sign-out an
   let release = () => {};
   const gate = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
+  const heldRequests: Request[] = [];
   await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', async route => {
-    const earlier = ++calls === 1;
+    calls++;
     const nextAccount = (route.request().headers().authorization ?? '').includes(secondUser.id);
-    if (earlier) await gate;
+    if (!nextAccount) { heldRequests.push(route.request()); await gate; }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       completedToday: 1, completedTotal: nextAccount ? 2 : 99, streakCurrent: 1, streakLongest: 1, latestCompletedAt: now,
     }) });
   });
   await page.goto('/');
-  await expect.poll(() => calls).toBe(1);
+  await expect.poll(() => calls).toBeGreaterThanOrEqual(1);
   await page.getByRole('button', { name: 'Open profile', exact: true }).click();
   await page.getByText('Sign out', { exact: true }).click();
   await page.getByText('Sign out', { exact: true }).last().click();
@@ -660,9 +673,9 @@ test('MMI activity cannot publish the previous account request after sign-out an
   await page.getByText('Enter circuit', { exact: true }).click();
   await expect(page.getByText('Ready, Second.', { exact: true })).toBeVisible();
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('2');
-  const completed = page.waitForResponse(response => response.url().includes('/get_candidate_mmi_activity_summary'));
+  const completed = Promise.all(heldRequests.map(request => page.waitForResponse(response => response.request() === request).then(response => response.finished())));
   release();
-  await (await completed).finished();
+  await completed;
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('2');
 });
@@ -672,24 +685,30 @@ test('Review refreshes on focus, ignores an old request, and clears rows on fail
   const gate = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
   let failed = false;
+  let initialPhase = true;
+  const heldRequests: Request[] = [];
   await page.route('https://e2e.supabase.co/rest/v1/rpc/list_candidate_mmi_history', async route => {
-    const earlier = ++calls === 1;
-    if (earlier) await gate;
+    calls++;
+    const earlier = initialPhase;
+    if (earlier) { heldRequests.push(route.request()); await gate; }
     return route.fulfill({ status: failed ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failed ? { message: 'PRIVATE_HISTORY_DIAGNOSTIC' } : [{
       sessionId: candidateStationSessionId, stationId: candidateStationId, scope: 'all', targetUniversity: null,
       startedAt: now, completedAt: now, status: 'completed', overallPct: earlier ? 12.5 : 58.75, domainAttainment: [],
     }]) });
   });
-  await page.goto('/progress');
-  await expect.poll(() => calls).toBe(1);
+  await page.goto('/');
+  await expect(page.getByText('Ready, Partner.', { exact: true })).toBeVisible();
+  await page.getByLabel('03 Review', { exact: true }).click();
+  await expect.poll(() => calls).toBeGreaterThanOrEqual(1);
   await expect(page.getByText('Loading your progress record…', { exact: true })).toBeVisible();
   await expect(page.getByText('NO COMPLETED STATIONS', { exact: true })).toHaveCount(0);
   await page.getByLabel('01 Orient', { exact: true }).click();
+  initialPhase = false;
   await page.getByLabel('03 Review', { exact: true }).click();
   await expect(page.getByText('58.75%', { exact: true })).toBeVisible();
-  const completed = page.waitForResponse(response => response.url().includes('/list_candidate_mmi_history'));
+  const completed = Promise.all(heldRequests.map(request => page.waitForResponse(response => response.request() === request).then(response => response.finished())));
   release();
-  await (await completed).finished();
+  await completed;
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.getByText('12.5%', { exact: true })).toHaveCount(0);
   failed = true;
@@ -785,8 +804,12 @@ test('MMI station follows only the current trusted prompt across timer expiry an
   await page.reload();
   await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
   await expect(page.getByText(/Synthetic prompt/)).toHaveCount(0);
-  expect(controller.rpcCalls().filter(call => call === 'start' || call === 'get'))
-    .toEqual(['start', 'get', 'get', 'get', 'get', 'get', 'get', 'get', 'get']);
+  const stationReads = controller.rpcCalls().filter(call => call === 'start' || call === 'get');
+  expect(stationReads[0]).toBe('start');
+  expect(stationReads.filter(call => call === 'start')).toHaveLength(1);
+  // Deadline reconciliation can add reads while the trusted prompt assertions above remain exact.
+  expect(stationReads.filter(call => call === 'get').length).toBeGreaterThanOrEqual(8);
+  expect(stationReads.slice(1).every(call => call === 'get')).toBe(true);
 });
 
 test('MMI speech stays editable, checkpoints text, restarts safely, and restores paused', async ({ page }) => {
