@@ -24,6 +24,8 @@ jobs:
       EXPO_PUBLIC_SUPABASE_URL: https://e2e.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: synthetic-publishable-key
       EXPO_PUBLIC_AI_MODEL_PROFILE: default
+      EXPO_PUBLIC_AUTH_CAPTCHA_ENABLED: 'false'
+      EXPO_PUBLIC_TURNSTILE_SITE_KEY: ''
     steps:
       - name: Check out source without retaining Git credentials
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -65,6 +67,11 @@ jobs:
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
 
+      - name: Verify station creation limits in a private PostgreSQL cluster
+        run: node scripts/test-candidate-mmi-start-limits-sql.mjs
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+
       - name: Export the browser application with synthetic configuration
         run: npm run build
 
@@ -76,6 +83,21 @@ jobs:
 
       - name: Run isolated browser checks against the exported application
         run: npm run test:e2e -- --config=playwright.ci.config.ts
+
+      - name: Verify disabled CAPTCHA makes no provider requests
+        run: npx playwright test --config=playwright.captcha.config.ts
+
+      - name: Export enabled CAPTCHA with a public synthetic site key
+        run: npx expo export --platform web --clear
+        env:
+          EXPO_PUBLIC_AUTH_CAPTCHA_ENABLED: 'true'
+          EXPO_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+
+      - name: Verify enabled CAPTCHA against local provider stubs
+        run: npx playwright test --config=playwright.captcha.config.ts
+        env:
+          EXPO_PUBLIC_AUTH_CAPTCHA_ENABLED: 'true'
+          EXPO_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
 
       # Do not upload traces, browser state, screenshots, or bundles. Even a
       # synthetic test report can contain authentication fields and answer text.

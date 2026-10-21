@@ -12,9 +12,11 @@ On the approved shared Supabase backend, the operations migration is installed w
 
 Monitoring repository variables and a new restricted token in both Actions and Supabase secrets are configured. The [manual health run](https://github.com/sanjey99/mmi/actions/runs/39440812953) reported `MONITOR_OK` at 22:37:32 Singapore (14:37:32 UTC). The [intentional alert-delivery test](https://github.com/sanjey99/mmi/actions/runs/39440938938) reported `ALERT_DELIVERY_TEST` and failed as designed at 22:37:47 Singapore (14:37:47 UTC), with health probes skipped. **The user confirmed actual receipt of the GitHub alert email in this chat on 20 October 2026.** This verifies the tested notification route. The [scheduled health run](https://github.com/sanjey99/mmi/actions/runs/39521871236), triggered at 08:31:50 Singapore (00:31:50 UTC) on 21 October from main `794754c`, completed successfully with **Public health** passed; the intentional alert test was skipped. No failed scheduled run or its email is implied.
 
+Current launch gates and pending human/provider decisions are in [Public launch checklist](PUBLIC-LAUNCH-CHECKLIST.md).
+
 ## Application verification
 
-`.github/workflows/ci.yml` runs on pull requests, every push (including `main`), and manual dispatch. Its stable check name is **Application verification** in the **CI** workflow. The job installs the lockfile, runs unit and contract tests, checks application and Edge Function types, proves migration permissions, allowance concurrency controls, and own-account activity aggregates in disposable PostgreSQL clusters, exports the web application, and runs Chromium checks against that exported application.
+`.github/workflows/ci.yml` runs on pull requests, every push (including `main`), and manual dispatch. Its stable check name is **Application verification** in the **CI** workflow. The job installs the lockfile, runs unit and contract tests, checks application and Edge Function types, proves migration permissions, allowance concurrency controls, own-account activity aggregates and station-start admission in disposable PostgreSQL clusters, exports the web application, and runs Chromium checks against that exported application.
 
 CI uses only `https://e2e.supabase.co` and a synthetic publishable key. The CI browser configuration requires that exact configuration, uses a fixed localhost server, and runs the existing mocked browser scenarios. Database writes occur only in the disposable local SQL proof. The workflow has read-only repository permissions and no production secrets; it makes no hosted deployments. Browser traces, screenshots, state, and bundles are not uploaded as artifacts.
 
@@ -23,6 +25,12 @@ CI uses only `https://e2e.supabase.co` and a synthetic publishable key. The CI b
 The next CI step runs `node scripts/test-public-scoring-sql.mjs` with the same PostgreSQL 16 binary directory. It creates a separate marked local cluster, applies the reviewed allowance migration over the exact prior claim body, and verifies private grants, own-account access, retained terminal/retry behavior, daily resets, pause/cost controls, cleanup, and simultaneous admission bounds. It also accepts no hosted connection configuration. See [Public access limits](PUBLIC-ACCESS.md) for the limits and proof assumptions.
 
 `node scripts/test-candidate-mmi-activity-sql.mjs` uses another private marked cluster to apply the exact activity-summary migration. Its proof covers self-only access, real role denials, five-finalization completion, provider-independent counts, abandoned/partial exclusions, uncapped totals, and UTC current/longest streaks. The runner accepts no hosted connection and creates no live accounts or practice records.
+
+`node scripts/test-candidate-mmi-start-limits-sql.mjs` adds a fourth isolated SQL proof for new station creation: 5/minute and 30/account/UTC day, active-session reuse, real role denials, transaction rollback and parallel writers. It never calls the shared backend.
+
+The default browser export also runs full-page axe WCAG 2/2.1/2.2 A/AA checks on login, signup, recovery, Terms and Privacy at desktop/mobile widths, with every external request blocked and no excluded rules. Keyboard assertions verify legal-document focus and scrolling. This does not replace human assistive-technology or physical-device testing.
+
+A separate synthetic CAPTCHA export and browser configuration verify enabled challenges using a local stub, never a real Cloudflare challenge or production Auth endpoint. No provider secret is supplied. The default export keeps CAPTCHA disabled. The configured export clears Metro's transform cache so the changed public build flags actually take effect; local restoration to the default configuration also requires `--clear`. These are sequential builds of the same tested source; neither changes hosted configuration.
 
 To reproduce the browser portion locally after installing dependencies:
 
