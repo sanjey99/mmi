@@ -268,6 +268,10 @@ async function installSupabaseMocks(page: Page) {
       return json({ targetUniversity: 'Oxford', targetTag: 'oxford', targetCount: 115, allCount: 155 });
     }
     if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_scoring_allowance') return json(scoringAllowanceFixture());
+    if (url.pathname === '/rest/v1/rpc/get_candidate_mmi_activity_summary') return json({
+      completedToday: 1, completedTotal: 1, streakCurrent: 1, streakLongest: 1, latestCompletedAt: now,
+    });
+    if (url.pathname === '/rest/v1/rpc/list_candidate_mmi_history') return json([]);
 
     if (url.pathname === '/rest/v1/rpc/get_legacy_question_counts') {
       return json([
@@ -540,6 +544,159 @@ test('orientation keeps the next-station plate above its heading', async ({ page
   expect(stationPlateBox).not.toBeNull();
   expect(headingBox).not.toBeNull();
   expect(stationPlateBox!.y + stationPlateBox!.height).toBeLessThanOrEqual(headingBox!.y);
+});
+
+test('MMI activity uses server totals and refreshes on focus, request, and profile', async ({ page }) => {
+  let summary = { completedToday: 1, completedTotal: 37, streakCurrent: 3, streakLongest: 7, latestCompletedAt: now };
+  const requests: unknown[] = [];
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', route => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(summary) });
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('mmi-completed-today')).toHaveText('1');
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('37');
+  await expect(page.getByTestId('mmi-current-streak')).toHaveText('3');
+  await expect(page.getByText('TODAY (UTC)', { exact: true })).toBeVisible();
+  await expect(page.getByText('COMPLETED STATIONS', { exact: true })).toBeVisible();
+  await page.getByLabel('02 Practise', { exact: true }).click();
+  summary = { ...summary, completedToday: 2, completedTotal: 38 };
+  await page.getByLabel('01 Orient', { exact: true }).click();
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('38');
+  summary = { ...summary, completedToday: 3, completedTotal: 39 };
+  await page.getByRole('button', { name: 'Refresh activity', exact: true }).click();
+  await expect(page.getByTestId('mmi-completed-today')).toHaveText('3');
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('39');
+  await page.getByRole('button', { name: 'Open profile', exact: true }).click();
+  await expect(page.getByTestId('profile-current-streak')).toHaveText('3');
+  await expect(page.getByTestId('profile-longest-streak')).toHaveText('7');
+  expect(requests.length).toBeGreaterThanOrEqual(4);
+  expect(requests.every(body => JSON.stringify(body) === '{}')).toBe(true);
+});
+
+test('MMI activity failure clears old totals and never presents an unverified zero', async ({ page }) => {
+  let failed = false;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', route => route.fulfill({
+    status: failed ? 500 : 200, contentType: 'application/json',
+    body: JSON.stringify(failed ? { message: 'PRIVATE_ACTIVITY_DIAGNOSTIC' } : { completedToday: 2, completedTotal: 27, streakCurrent: 2, streakLongest: 6, latestCompletedAt: now }),
+  }));
+  await page.goto('/');
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('27');
+  failed = true;
+  await page.getByRole('button', { name: 'Refresh activity', exact: true }).click();
+  await expect(page.getByText('Your practice activity is unavailable. Refresh to try again.', { exact: true })).toBeVisible();
+  for (const id of ['mmi-completed-today', 'mmi-completed-total', 'mmi-current-streak']) await expect(page.getByTestId(id)).toHaveText('—');
+  expect(await page.locator('body').innerText()).not.toContain('PRIVATE_ACTIVITY_DIAGNOSTIC');
+  failed = false;
+  await page.getByRole('button', { name: 'Refresh activity', exact: true }).click();
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('27');
+});
+
+test('MMI activity refreshes at UTC midnight and after the browser resumes', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-21T23:59:59.500Z') });
+  await page.addInitScript(() => {
+    const stored = sessionStorage.getItem('sb-e2e-auth-token');
+    if (stored) sessionStorage.setItem('sb-e2e-auth-token', JSON.stringify({ ...JSON.parse(stored), expires_at: 4_102_444_800 }));
+  });
+  let calls = 0;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      completedToday: ++calls === 1 ? 1 : 0, completedTotal: 4, streakCurrent: 1, streakLongest: 2, latestCompletedAt: now,
+    }),
+  }));
+  await page.goto('/');
+  await expect(page.getByTestId('mmi-completed-today')).toHaveText('1');
+  await page.clock.fastForward(2_000);
+  await expect(page.getByTestId('mmi-completed-today')).toHaveText('0');
+  const beforeResume = calls;
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+  await expect.poll(() => calls).toBeGreaterThan(beforeResume);
+  await expect(page.getByTestId('mmi-completed-today')).toHaveText('0');
+});
+
+test('MMI activity drops an earlier request after leaving and returning to the tab', async ({ page }) => {
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', async route => {
+    const earlier = ++calls === 1;
+    if (earlier) await gate;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      completedToday: 1, completedTotal: earlier ? 99 : 1, streakCurrent: 1, streakLongest: 1, latestCompletedAt: now,
+    }) });
+  });
+  await page.goto('/');
+  await expect.poll(() => calls).toBe(1);
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('—');
+  await page.getByLabel('02 Practise', { exact: true }).click();
+  await page.getByLabel('01 Orient', { exact: true }).click();
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('1');
+  const completed = page.waitForResponse(response => response.url().includes('/get_candidate_mmi_activity_summary'));
+  release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('1');
+});
+
+test('MMI activity cannot publish the previous account request after sign-out and sign-in', async ({ page }) => {
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/get_candidate_mmi_activity_summary', async route => {
+    const earlier = ++calls === 1;
+    const nextAccount = (route.request().headers().authorization ?? '').includes(secondUser.id);
+    if (earlier) await gate;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      completedToday: 1, completedTotal: nextAccount ? 2 : 99, streakCurrent: 1, streakLongest: 1, latestCompletedAt: now,
+    }) });
+  });
+  await page.goto('/');
+  await expect.poll(() => calls).toBe(1);
+  await page.getByRole('button', { name: 'Open profile', exact: true }).click();
+  await page.getByText('Sign out', { exact: true }).click();
+  await page.getByText('Sign out', { exact: true }).last().click();
+  await page.getByLabel('Email address').fill(secondUser.email);
+  await page.getByLabel('Password').fill('synthetic-password');
+  await page.getByText('Enter circuit', { exact: true }).click();
+  await expect(page.getByText('Ready, Second.', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('2');
+  const completed = page.waitForResponse(response => response.url().includes('/get_candidate_mmi_activity_summary'));
+  release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByTestId('mmi-completed-total')).toHaveText('2');
+});
+
+test('Review refreshes on focus, ignores an old request, and clears rows on failure', async ({ page }) => {
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  let failed = false;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/list_candidate_mmi_history', async route => {
+    const earlier = ++calls === 1;
+    if (earlier) await gate;
+    return route.fulfill({ status: failed ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failed ? { message: 'PRIVATE_HISTORY_DIAGNOSTIC' } : [{
+      sessionId: candidateStationSessionId, stationId: candidateStationId, scope: 'all', targetUniversity: null,
+      startedAt: now, completedAt: now, status: 'completed', overallPct: earlier ? 12.5 : 58.75, domainAttainment: [],
+    }]) });
+  });
+  await page.goto('/progress');
+  await expect.poll(() => calls).toBe(1);
+  await expect(page.getByText('Loading your progress record…', { exact: true })).toBeVisible();
+  await expect(page.getByText('NO COMPLETED STATIONS', { exact: true })).toHaveCount(0);
+  await page.getByLabel('01 Orient', { exact: true }).click();
+  await page.getByLabel('03 Review', { exact: true }).click();
+  await expect(page.getByText('58.75%', { exact: true })).toBeVisible();
+  const completed = page.waitForResponse(response => response.url().includes('/list_candidate_mmi_history'));
+  release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByText('12.5%', { exact: true })).toHaveCount(0);
+  failed = true;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByText('Your progress record is unavailable right now.', { exact: true })).toBeVisible();
+  await expect(page.getByText('58.75%', { exact: true })).toHaveCount(0);
+  expect(await page.locator('body').innerText()).not.toContain('PRIVATE_HISTORY_DIAGNOSTIC');
 });
 
 test('practice presents distinct Oxford and all-repository 11-minute station pools', async ({ page }) => {
@@ -834,7 +991,15 @@ test('MMI completion renders retained strict rubric-only feedback without re-sco
 
   await expect(page.getByText('Station complete', { exact: true })).toBeVisible();
   await expect(page.getByText('Question 1 · 25%', { exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox')).toHaveCount(20);
+  await expect(page.getByRole('checkbox')).toHaveCount(4);
+  await expect(page.getByText('Covered', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Identifies the immediate priority.', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Question 4 · 0%', { exact: true })).toBeVisible();
+  await expect(page.getByText('Identifies the immediate priority.: 0/25', { exact: true })).toHaveCount(4);
+  await expect(page.getByText('Demonstrated well', { exact: true })).toHaveCount(4);
+  await expect(page.getByText(/Not demonstrated · 0% of criterion marks/)).toHaveCount(16);
+  await expect(page.getByText('No supporting evidence identified in your answer.', { exact: true })).toHaveCount(16);
+  await expect(page.getByText('No answer was recorded for this question, so this criterion was not demonstrated.', { exact: true })).toHaveCount(16);
   await expect(page.getByText('No response was saved. A compatible rubric result is unavailable for this question.')).toHaveCount(0);
   expect(controller.rpcCalls()).toContain('feedback');
   await expect.poll(() => controller.scoringRequests().length).toBe(0);

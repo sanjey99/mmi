@@ -21,6 +21,7 @@ import {
   type CandidateMmiStationResult,
 } from '../../src/features/candidateMmi/api';
 import { createCandidateMmiRunner } from '../../src/features/candidateMmi/runner';
+import { getCandidateMmiFeedbackDisplayAssessment } from '../../src/features/candidateMmi/feedbackDisplay';
 import { createCandidateMmiScoringApi } from '../../src/features/candidateMmi/scoringApi';
 import { scoreCandidateMmiResponses } from '../../src/features/candidateMmi/scoringQueue';
 import {
@@ -166,7 +167,7 @@ function retryablePromptOrders(feedback: readonly CandidateMmiFeedback[] | null)
 }
 
 function FeedbackCard({ item, scoringInProgress = false, retryAvailable = false }: Readonly<{ item: CandidateMmiFeedback; scoringInProgress?: boolean; retryAvailable?: boolean }>) {
-  const assessment = item.assessment;
+  const assessment = getCandidateMmiFeedbackDisplayAssessment(item);
   const rubricSummary = assessment?.schemaVersion === 3 || assessment?.schemaVersion === 4
     ? summarizeCandidateMmiAssessment(assessment)
     : null;
