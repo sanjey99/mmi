@@ -1,8 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '../../src/stores/authStore';
-import { usePracticeStore } from '../../src/stores/practiceStore';
+import { createCandidateMmiActivitySummaryApi } from '../../src/features/candidateMmi/activitySummary';
+import { useAccountFocusedResource } from '../../src/features/candidateMmi/useAccountFocusedResource';
+import { supabase } from '../../src/lib/supabase';
 import { Card } from '../../src/components/ui/Card';
 import { Button } from '../../src/components/ui/Button';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
@@ -15,31 +17,27 @@ const ROUTE = [
 ];
 
 export default function HomeScreen() {
-  const { profile, refreshProfile } = useAuthStore();
-  const { recentSessions, fetchRecentSessions } = usePracticeStore();
+  const { profile, session, loading } = useAuthStore();
+  const accountId = !loading && session && profile?.id === session.user.id ? session.user.id : null;
+  const api = useMemo(() => createCandidateMmiActivitySummaryApi(supabase), []);
+  const activity = useAccountFocusedResource(accountId, api.getSummary);
+  if (!accountId || !profile) return null;
 
-  useEffect(() => {
-    if (profile) fetchRecentSessions(profile.id);
-  }, [profile?.id]);
-
-  const firstName = profile?.full_name?.split(' ')[0] ?? 'candidate';
+  const nameParts = (profile?.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] || 'candidate';
   const today = new Date().toLocaleDateString('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   });
-  const todayPractised = recentSessions.filter(session => (
-    new Date(session.started_at).toDateString() === new Date().toDateString()
-  )).length;
-  const initials = profile?.full_name
-    ?.split(' ')
+  const initials = nameParts
     .map(name => name[0])
     .join('')
     .slice(0, 2)
-    .toUpperCase() ?? 'IS';
+    .toUpperCase() || 'IS';
 
   return (
-    <ScreenWrapper onRefresh={refreshProfile} refreshing={false}>
+    <ScreenWrapper onRefresh={activity.refresh} refreshing={activity.refreshing}>
       <View style={styles.header}>
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>CANDIDATE ORIENTATION · {today.toUpperCase()}</Text>
@@ -73,17 +71,21 @@ export default function HomeScreen() {
 
       <View style={styles.statusRail}>
         <View style={styles.statusCell}>
-          <Text style={styles.statusValue}>{todayPractised}</Text>
-          <Text style={styles.statusLabel}>TODAY</Text>
+          <Text testID="mmi-completed-today" style={styles.statusValue}>{activity.value?.completedToday ?? '—'}</Text>
+          <Text style={styles.statusLabel}>TODAY (UTC)</Text>
         </View>
         <View style={styles.statusCell}>
-          <Text style={styles.statusValue}>{profile?.streak_current ?? 0}</Text>
+          <Text testID="mmi-current-streak" style={styles.statusValue}>{activity.value?.streakCurrent ?? '—'}</Text>
           <Text style={styles.statusLabel}>DAY STREAK</Text>
         </View>
         <View style={styles.statusCell}>
-          <Text style={styles.statusValue}>{recentSessions.length}</Text>
-          <Text style={styles.statusLabel}>RECENT SESSIONS</Text>
+          <Text testID="mmi-completed-total" style={styles.statusValue}>{activity.value?.completedTotal ?? '—'}</Text>
+          <Text style={styles.statusLabel}>COMPLETED STATIONS</Text>
         </View>
+      </View>
+      <View style={styles.activityNote}>
+        <Text style={styles.activityText}>{activity.refreshing ? 'Checking your MMI practice activity…' : activity.unavailable ? 'Your practice activity is unavailable. Refresh to try again.' : 'Completed MMI stations and streaks use UTC days.'}</Text>
+        <Button label="Refresh activity" small variant="secondary" disabled={activity.refreshing} onPress={activity.refresh} />
       </View>
 
       <Text style={styles.sectionLabel}>YOUR ROUTE</Text>
@@ -186,11 +188,13 @@ const styles = StyleSheet.create({
     borderColor: colors.primary[800],
     backgroundColor: colors.primary[800],
     gap: 1,
-    marginBottom: 28,
+    marginBottom: 10,
   },
   statusCell: { flex: 1, backgroundColor: colors.bg.white, padding: 12 },
   statusValue: { ...text.headingLg, color: colors.primary[800] },
   statusLabel: { ...text.labelMd, color: colors.neutral[500], marginTop: 2 },
+  activityNote: { gap: 10, alignItems: 'flex-start', marginBottom: 28 },
+  activityText: { ...text.bodySm, color: colors.neutral[600] },
   sectionLabel: { ...text.labelMd, color: colors.neutral[500], marginBottom: 10 },
   routeBoard: { borderTopWidth: 1, borderTopColor: colors.primary[800], marginBottom: 24 },
   routeStop: {

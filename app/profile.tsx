@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput,
@@ -6,6 +6,9 @@ import {
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/stores/authStore';
+import { createCandidateMmiActivitySummaryApi } from '../src/features/candidateMmi/activitySummary';
+import { useAccountFocusedResource } from '../src/features/candidateMmi/useAccountFocusedResource';
+import { supabase } from '../src/lib/supabase';
 import { Card } from '../src/components/ui/Card';
 import { Button } from '../src/components/ui/Button';
 import { ConfirmAction } from '../src/components/feedback/ConfirmAction';
@@ -21,7 +24,10 @@ const UK_UNIVERSITIES = [
 ];
 
 export default function ProfileScreen() {
-  const { profile, updateProfile, signOut } = useAuthStore();
+  const { profile, session, loading, updateProfile, signOut } = useAuthStore();
+  const accountId = !loading && session && profile?.id === session.user.id ? session.user.id : null;
+  const activityApi = useMemo(() => createCandidateMmiActivitySummaryApi(supabase), []);
+  const activity = useAccountFocusedResource(accountId, activityApi.getSummary);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(profile?.full_name ?? '');
   const [university, setUniversity] = useState(profile?.university_target ?? '');
@@ -66,11 +72,11 @@ export default function ProfileScreen() {
     }
   };
 
-  if (!profile) return null;
+  if (!profile || !accountId) return null;
 
   // Generate avatar initials
-  const initials = profile.full_name
-    .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+  const nameParts = (profile.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+  const initials = nameParts.map(part => part[0]).slice(0, 2).join('').toUpperCase() || 'IS';
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -103,7 +109,7 @@ export default function ProfileScreen() {
               placeholderTextColor={colors.neutral[300]}
             />
           ) : (
-            <Text style={styles.profileName}>{profile.full_name}</Text>
+            <Text style={styles.profileName}>{nameParts.join(' ') || 'Candidate'}</Text>
           )}
           <Text style={styles.profileEmail}>
             {/* Email shown from auth — profile doesn't store email */}
@@ -114,12 +120,12 @@ export default function ProfileScreen() {
         {/* Stats */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statVal}>{profile.streak_current}</Text>
+            <Text testID="profile-current-streak" style={styles.statVal}>{activity.value?.streakCurrent ?? '—'}</Text>
             <Text style={styles.statLabel}>Day Streak</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
-            <Text style={styles.statVal}>{profile.streak_longest}</Text>
+            <Text testID="profile-longest-streak" style={styles.statVal}>{activity.value?.streakLongest ?? '—'}</Text>
             <Text style={styles.statLabel}>Best Streak</Text>
           </View>
           <View style={styles.statDivider} />
@@ -128,6 +134,8 @@ export default function ProfileScreen() {
             <Text style={styles.statLabel}>Daily Goal</Text>
           </View>
         </View>
+        <Text style={styles.activityNote}>{activity.refreshing ? 'Checking your MMI practice activity…' : activity.unavailable ? 'Your practice streak is unavailable. Refresh to try again.' : 'Practice streaks count completed MMI stations on consecutive UTC days.'}</Text>
+        <Button label="Refresh activity" small variant="secondary" disabled={activity.refreshing} onPress={activity.refresh} style={styles.activityRefresh} />
 
         {/* Target university */}
         <Text style={styles.sectionLabel}>TARGET UNIVERSITY</Text>
@@ -204,6 +212,8 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  activityNote: { ...text.bodySm, color: colors.neutral[600], marginBottom: 10 },
+  activityRefresh: { alignSelf: 'flex-start', marginBottom: 24 },
   safe: { flex: 1, backgroundColor: colors.bg.primary },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

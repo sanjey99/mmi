@@ -59,7 +59,8 @@ describe('single MMI station route contract', () => {
 
     expect(routeSource).toMatch(/result\(sessionId\)/);
     expect(routeSource).toMatch(/resultOnly/);
-    expect(progressSource).toMatch(/\.history\(\)/);
+    expect(progressSource).toMatch(/useAccountFocusedResource/);
+    expect(progressSource).toMatch(/accountId, api\.history/);
     expect(progressSource).toMatch(/domainAttainment/);
     expect(progressSource).not.toMatch(/mock_sessions|dimensionAverages|RadarChart|recentSessions/);
   });

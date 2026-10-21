@@ -60,6 +60,11 @@ jobs:
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
 
+      - name: Verify own-account MMI activity in a private PostgreSQL cluster
+        run: node scripts/test-candidate-mmi-activity-sql.mjs
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+
       - name: Export the browser application with synthetic configuration
         run: npm run build
 
