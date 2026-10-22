@@ -32,6 +32,38 @@ node_modules
 .env
 .env.local
 .env*.local
+.env*
+!.env.example
+
+# Personal tooling and local project instructions
+/.idea/
+/.vscode/
+/.claude/
+/.impeccable/
+/.superpowers/
+/AGENTS.md
+/CLAUDE.md
+
+# Private operating records and historical work plans stay on the maintainer's machine
+/.private/
+/docs/superpowers/
+/docs/BEFORE-COFOUNDER-VIEWING.md
+/docs/CI-AND-MONITORING.md
+/docs/EXTERNAL-BETA-READINESS.md
+/docs/PRE-CLOSED-ROUND-DEPLOYMENT.md
+/docs/PUBLIC-ACCESS.md
+/docs/PUBLIC-LAUNCH-CHECKLIST.md
+/docs/PUBLIC-REGISTRATION.md
+
+# Local reports, logs, and credentials
+/playwright-report/
+/blob-report/
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
 
 # Expo
 .expo/
