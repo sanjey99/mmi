@@ -1,70 +1,71 @@
 # Interview Station
 
-Interview Station is an Expo Router web application for UK medical-school interview practice. It provides an 11-minute MMI station, five-level evidence-based scoring, practice history, content administration, and tester reports. Registration is being prepared for UK pre-university applicants, including students under 18; broad email delivery and the operational and human review checks remain explicit.
+[![CI](https://github.com/sanjey99/mmi/actions/workflows/ci.yml/badge.svg)](https://github.com/sanjey99/mmi/actions/workflows/ci.yml)
 
-## Status
+A web application for UK medical-school applicants to practise Multiple Mini Interviews (MMIs), receive structured AI feedback, and review their progress.
 
-- Frontend: Expo Router / React Native Web static export.
-- Hosting: Vercel.
-- Backend: Supabase Auth, Postgres, and Edge Functions.
-- Render is not required.
-- Live candidate app: [mmi-hazel.vercel.app](https://mmi-hazel.vercel.app).
-- The product owner explicitly selected shared Supabase project `tliwifhnsytxpcynuwsy`; this supersedes historical isolated-backend deployment instructions.
-- Five-level scoring and invited-account onboarding are deployed. The current immutable builds and source revisions are recorded in the external-beta readiness runbook; the comparison model profile remains administrator-only.
+Each station combines a 60-second scenario brief with five two-minute responses. Candidates can type or use editable browser speech transcription, then review weighted rubric feedback with supporting evidence and practical next steps.
 
-Authoritative runbooks:
+**Status:** Working beta. Access remains controlled while onboarding and launch checks are completed. AI feedback supports practice; it does not predict admission or provide clinical advice.
 
-- [External Beta Readiness and Operations](docs/EXTERNAL-BETA-READINESS.md) — current release evidence, remaining decisions, invitation/support procedure, and pilot test matrix.
-- [CI and Monitoring](docs/CI-AND-MONITORING.md) — automated verification, production release gates, aggregate operations dashboard, and failure-email setup.
-- [Before Cofounder Viewing](docs/BEFORE-COFOUNDER-VIEWING.md)
-- [Pre-Closed-Round Deployment](docs/PRE-CLOSED-ROUND-DEPLOYMENT.md)
+## Features
 
-Product and visual contract:
+- Timed stations with all-published and target-university practice pools.
+- Speech input with typing fallback, transcript checkpoints, and practice restoration.
+- Five-level criterion scoring, weighted results, supporting excerpts, and saved feedback.
+- Clear submission, scoring, retry, and expiry states.
+- Practice history, progress summaries, and tester reports.
+- Administrator tools for station content, assessment review, AI configuration, and usage inspection.
 
-- [PRODUCT.md](PRODUCT.md)
+## Engineering highlights
 
-## Local setup
+- **Reliable practice flow:** timing, transcripts, and scoring are separated into focused, testable modules.
+- **Server-controlled AI calls:** scoring claims prevent concurrent duplicate work, reuse completed results, and bound paid retries and allowances.
+- **Account boundaries:** database authorization and row-level security protect candidate records and assessor content.
+- **Data minimization:** the app stores no raw MMI audio. Successful scoring deletes the full transcript; unresolved text expires within 24 hours. Bounded excerpts remain with feedback, and external providers have separate processing policies.
+- **Layered verification:** unit and contract tests, isolated PostgreSQL proofs, browser journeys, and automated accessibility checks run in CI.
 
-Requirements: Node.js 20+ and npm.
+## Stack
+
+TypeScript · React · Expo Router · React Native Web · Zustand · Supabase Auth, PostgreSQL and Edge Functions · Vercel
+
+## Run locally
+
+Use **Node.js 22.18+** and npm.
 
 ```bash
 npm ci
+cp .env.example .env
 ```
 
-Create an ignored `.env` in the project root:
-
-```env
-EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
-EXPO_PUBLIC_AI_MODEL_PROFILE=default
-```
-
-The `EXPO_PUBLIC_SUPABASE_ANON_KEY` name is retained for compatibility; its value is the current Supabase publishable key. Never place a secret or service-role key in an `EXPO_PUBLIC_*` variable.
-
-`EXPO_PUBLIC_AI_MODEL_PROFILE` accepts `default` or `gpt-5.5`. The GPT-5.5 profile is enforced server-side as admin-only; the browser value never selects a provider key or pricing directly. Model-comparison deployments can share the production Supabase URL and publishable key so accounts and practice history remain shared.
+Set the Supabase URL and publishable key for **your own disposable development project** in `.env`, then start the web application:
 
 ```bash
-npm start
-npm run build
+npm run web
 ```
 
-## Verification
+Frontend setup does not provision a backend. See the [development guide](docs/DEVELOPMENT.md) before configuring database schema or Edge Functions. `EXPO_PUBLIC_*` values are embedded in the browser bundle: use publishable values only and keep service-role keys and AI credentials server-side.
+
+## Validation
 
 ```bash
 npm test
-npm run test:coverage
 npm run typecheck
 npm run build
-npm run test:e2e
-npm audit --omit=dev
 ```
 
-The Playwright suite uses a synthetic intercepted Supabase endpoint. Credential-gated integration tests must run only against a disposable local/isolated project and must never target production or shared data.
+The [CI workflow](.github/workflows/ci.yml) adds browser, accessibility, CAPTCHA, and isolated SQL checks. Its synthetic Supabase configuration is for verification; a build made with those values cannot connect to a real backend. See [testing and safety](docs/DEVELOPMENT.md#testing) for reproducible browser commands and database-test boundaries.
 
-## Deployment safety
+## Code tour
 
-The hosted migration history and repository have diverged. Do not blindly apply all repository migrations to hosted Supabase; review the exact operation, target, prerequisites, and current user authorization. The scoring rollout to the shared live project was explicitly authorized and completed. That rollout alone does not authorize unrelated role/configuration changes, test fixtures, or destructive account deletion; carry out later work within the user's current scope.
+| Area | Where to look |
+| --- | --- |
+| Routes and screens | [`app/`](app/) |
+| Candidate practice, transcripts, and scoring | [`src/features/candidateMmi/`](src/features/candidateMmi/) |
+| Authentication and email actions | [`src/features/auth/`](src/features/auth/) |
+| Content administration | [`src/features/adminMmi/`](src/features/adminMmi/) |
+| Shared interface and design tokens | [`src/components/`](src/components/), [`src/theme/`](src/theme/) |
+| Server handlers and database changes | [`supabase/functions/`](supabase/functions/), [`supabase/migrations/`](supabase/migrations/) |
+| Automated checks | [`tests/`](tests/), [`e2e/`](e2e/), [`e2e-captcha/`](e2e-captcha/) |
 
-Keep automated credential-gated integration tests on disposable local/isolated databases. Testers receive ordinary invited application accounts, not Supabase/Vercel team membership or administrator access. Before outside invitations, follow the current readiness checklist; deployment alone does not establish working email onboarding, legal review, physical-device QA, or human signoff.
-
-Do not use `npm audit fix --force`.
+Read the [architecture overview](docs/ARCHITECTURE.md), [product scope](PRODUCT.md), or [development guide](docs/DEVELOPMENT.md) for more detail.
