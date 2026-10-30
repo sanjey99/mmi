@@ -72,6 +72,11 @@ jobs:
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
 
+      - name: Verify immutable admissions through actual early finalization
+        run: node scripts/test-candidate-mmi-immutable-admissions-sql.mjs
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+
       - name: Export the browser application with synthetic configuration
         run: npm run build
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { AuthActionShell, authActionStyles } from '../../src/components/auth/AuthActionShell';
@@ -13,6 +13,8 @@ import { colors } from '../../src/theme';
 export default function SetPasswordScreen() {
   const [mode, setMode] = useState<EmailActionMode | null>(null);
   const [checking, setChecking] = useState(true);
+  const [checkRevision, setCheckRevision] = useState(0);
+  const [verificationUnavailable, setVerificationUnavailable] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
@@ -21,16 +23,29 @@ export default function SetPasswordScreen() {
   const [errors, setErrors] = useState<{ password?: string; confirmPassword?: string }>({});
   const refreshProfile = useAuthStore((state) => state.refreshProfile);
   const signOut = useAuthStore((state) => state.signOut);
+  const exitInFlight = useRef(false);
 
   useEffect(() => {
     let active = true;
     void emailActionService.getPendingAction().then((pending) => {
       if (active) setMode(pending?.mode ?? null);
     }).catch(() => {
-      if (active) setErrorMessage('Your password link could not be verified. Request a new link and try again.');
+      if (active) {
+        setVerificationUnavailable(true);
+        setErrorMessage('We could not check your password link right now. Check your connection and try again.');
+      }
     }).finally(() => { if (active) setChecking(false); });
     return () => { active = false; };
-  }, []);
+  }, [checkRevision]);
+
+  const retryVerification = () => {
+    if (checking || leaving || exitInFlight.current) return;
+    setMode(null);
+    setChecking(true);
+    setVerificationUnavailable(false);
+    setErrorMessage(null);
+    setCheckRevision(value => value + 1);
+  };
 
   const savePassword = async () => {
     if (saving || leaving || mode === null) return;
@@ -55,17 +70,19 @@ export default function SetPasswordScreen() {
     }
   };
 
-  const backToSignIn = async () => {
-    if (saving || leaving) return;
+  const backToSignIn = async (destination: '/(auth)/login' | '/forgot-password' = '/(auth)/login') => {
+    if (saving || leaving || exitInFlight.current) return;
+    exitInFlight.current = true;
     setLeaving(true);
     setErrorMessage(null);
     try {
       await signOut();
       await emailActionService.clearPendingAction();
-      router.replace('/(auth)/login');
+      router.replace(destination);
     } catch {
       setErrorMessage('We could not sign you out. Please try again.');
     } finally {
+      exitInFlight.current = false;
       setLeaving(false);
     }
   };
@@ -73,8 +90,12 @@ export default function SetPasswordScreen() {
   return (
     <AuthActionShell eyebrow="BETA / ACCOUNT ACCESS" title={mode === 'invite' ? 'Set your password' : 'Choose a new password'} intro="Use a unique password with at least 12 characters to protect your Interview Station account.">
       {checking ? <View style={authActionStyles.loading} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.teal[600]} accessibilityLabel="Checking password access" /><Text style={authActionStyles.status}>Checking your verified link…</Text></View> : mode === null ? <>
-        <InlineNotice title="Password link required" message={errorMessage ?? 'Open a valid invitation or password reset email to choose your password. The link may have expired or already been used.'} tone="error" />
-        <View style={authActionStyles.actions}><Button label="Request a new reset link" onPress={() => router.replace('/forgot-password' as never)} /><Button label="Back to sign in" variant="secondary" onPress={() => router.replace('/(auth)/login')} /></View>
+        <InlineNotice title={verificationUnavailable ? 'Password check unavailable' : 'Password link required'} message={errorMessage ?? 'Open a valid invitation or password reset email to choose your password. The link may have expired or already been used.'} tone="error" />
+        <View style={authActionStyles.actions}>
+          {verificationUnavailable ? <Button label="Retry password link check" onPress={retryVerification} disabled={leaving} /> : null}
+          <Button label="Request a new reset link" onPress={() => { void backToSignIn('/forgot-password'); }} disabled={leaving} />
+          <Button label="Back to sign in" variant="secondary" onPress={() => { void backToSignIn(); }} loading={leaving} />
+        </View>
       </> : <>
         {errorMessage ? <InlineNotice title="Password not saved" message={errorMessage} tone="error" /> : null}
         <FloatingInput label="New password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" textContentType="newPassword" autoCorrect={false} editable={!saving && !leaving} error={errors.password} />

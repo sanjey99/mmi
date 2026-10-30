@@ -1,7 +1,10 @@
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
 import { colors } from '../../src/theme';
+import { useAuthStore } from '../../src/stores/authStore';
 
 export default function PracticeLayout() {
+  const session = useAuthStore(state => state.session);
+  if (!session) return <Redirect href="/(auth)/login" />;
   return (
     <Stack
       screenOptions={{

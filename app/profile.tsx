@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput,
 } from 'react-native';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../src/stores/authStore';
 import { createCandidateMmiActivitySummaryApi } from '../src/features/candidateMmi/activitySummary';
@@ -36,6 +36,14 @@ export default function ProfileScreen() {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [notice, setNotice] = useState<{ title: string; message: string; tone: 'success' | 'error' } | null>(null);
 
+  const toggleEditing = () => {
+    if (saving) return;
+    setName(profile?.full_name ?? '');
+    setUniversity(profile?.university_target ?? '');
+    setNotice(null);
+    setEditing(current => !current);
+  };
+
   const handleSave = async () => {
     setNotice(null);
     setSaving(true);
@@ -51,6 +59,7 @@ export default function ProfileScreen() {
   };
 
   const handleSignOut = () => {
+    if (confirmingSignOut || signingOut) return;
     setNotice(null);
     setConfirmingSignOut(true);
   };
@@ -72,6 +81,7 @@ export default function ProfileScreen() {
     }
   };
 
+  if (!loading && !session) return <Redirect href="/(auth)/login" />;
   if (!profile || !accountId) return null;
 
   // Generate avatar initials
@@ -86,7 +96,7 @@ export default function ProfileScreen() {
           <Text style={styles.backText}>Back to circuit</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>PROFILE</Text>
-        <TouchableOpacity onPress={() => setEditing(!editing)}>
+        <TouchableOpacity onPress={toggleEditing} accessibilityRole="button" accessibilityLabel={editing ? 'Cancel profile edits' : 'Edit profile'} disabled={saving} accessibilityState={{ disabled: saving }}>
           <Text style={styles.editText}>{editing ? 'Cancel' : 'Edit'}</Text>
         </TouchableOpacity>
       </View>
@@ -104,8 +114,10 @@ export default function ProfileScreen() {
             <TextInput
               style={styles.nameInput}
               value={name}
+              editable={!saving}
               onChangeText={setName}
               placeholder="Your full name"
+              accessibilityLabel="Full name (optional)"
               placeholderTextColor={colors.neutral[300]}
             />
           ) : (
@@ -141,14 +153,19 @@ export default function ProfileScreen() {
         <Text style={styles.sectionLabel}>TARGET UNIVERSITY</Text>
         {editing ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.uniScroll}>
-            <View style={styles.uniChips}>
+            <View style={styles.uniChips} accessibilityRole="radiogroup" accessibilityLabel="Target university">
               {UK_UNIVERSITIES.map(u => (
                 <TouchableOpacity
                   key={u}
                   onPress={() => setUniversity(u)}
-                  style={[styles.uniChip, university === u && styles.uniChipActive]}
+                  disabled={saving}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`Target university: ${u}`}
+                  aria-checked={university.trim().toLowerCase() === u.toLowerCase()}
+                  accessibilityState={{ checked: university.trim().toLowerCase() === u.toLowerCase(), disabled: saving }}
+                  style={[styles.uniChip, university.trim().toLowerCase() === u.toLowerCase() && styles.uniChipActive]}
                 >
-                  <Text style={[styles.uniChipText, university === u && styles.uniChipTextActive]}>{u}</Text>
+                  <Text style={[styles.uniChipText, university.trim().toLowerCase() === u.toLowerCase() && styles.uniChipTextActive]}>{u}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -174,17 +191,24 @@ export default function ProfileScreen() {
         {profile.is_admin && (
           <>
             <Text style={styles.sectionLabel}>ADMIN</Text>
-            <TouchableOpacity onPress={() => router.push('/admin/questions')} activeOpacity={0.8}>
+            <TouchableOpacity onPress={() => router.push('/admin/questions')} activeOpacity={0.8} accessibilityRole="button">
               <Card style={styles.adminRow} elevated>
-                <Text style={styles.adminIcon}>QD</Text>
+                <Text style={styles.adminIcon} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">QD</Text>
                 <Text style={styles.adminLabel}>Question Desk</Text>
-                <Text style={styles.chevron}>›</Text>
+                <Text style={styles.chevron} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">›</Text>
               </Card>
             </TouchableOpacity>
           </>
         )}
 
         {/* Sign out */}
+        <Button
+          label="Sign out"
+          onPress={handleSignOut}
+          variant="danger"
+          disabled={signingOut}
+          style={{ marginTop: 32 }}
+        />
         {confirmingSignOut ? (
           <ConfirmAction
             title="Leave this browser session?"
@@ -195,14 +219,7 @@ export default function ProfileScreen() {
             onConfirm={confirmSignOut}
             onCancel={() => setConfirmingSignOut(false)}
           />
-        ) : (
-          <Button
-            label="Sign out"
-            onPress={handleSignOut}
-            variant="danger"
-            style={{ marginTop: 32 }}
-          />
-        )}
+        ) : null}
 
         <LegalFooter />
         <Text style={styles.version}>Interview Station · v1.0.0 · Beta</Text>
@@ -253,7 +270,7 @@ const styles = StyleSheet.create({
   statLabel: { ...text.caption, color: colors.neutral[500], marginTop: 2 },
   statDivider: { width: 1, backgroundColor: colors.bg.tertiary, marginHorizontal: 8 },
 
-  sectionLabel: { ...text.labelMd, color: colors.neutral[400], marginBottom: 10, marginTop: 8 },
+  sectionLabel: { ...text.labelMd, color: colors.neutral[600], marginBottom: 10, marginTop: 8 },
 
   uniCard: { marginBottom: 8 },
   uniValue: { ...text.bodyMd, color: colors.primary[800] },
@@ -273,5 +290,5 @@ const styles = StyleSheet.create({
   adminLabel: { ...text.headingSm, color: colors.primary[800], flex: 1 },
   chevron: { ...text.headingMd, color: colors.neutral[300], fontSize: 22 },
 
-  version: { ...text.caption, color: colors.neutral[300], textAlign: 'center', marginTop: 24 },
+  version: { ...text.caption, color: colors.neutral[600], textAlign: 'center', marginTop: 24 },
 });

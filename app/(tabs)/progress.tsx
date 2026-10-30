@@ -28,7 +28,7 @@ export default function ProgressScreen() {
     {history.map((item) => <Card key={item.sessionId} style={styles.sessionCard}>
       <View style={styles.sessionRow}><View><Text style={styles.date}>{new Date(item.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</Text><Text style={styles.scope}>{item.scope === 'target' ? `${item.targetUniversity ?? 'Target'} practice` : 'All-university practice'}</Text></View><Text style={styles.score}>{item.overallPct === null ? item.status.replace('_', ' ').toUpperCase() : `${item.overallPct}%`}</Text></View>
       {item.domainAttainment.length > 0 ? <Text style={styles.domains}>{item.domainAttainment.map((domain) => `${domain.domain}: ${domain.pct}%`).join(' · ')}</Text> : null}
-      {item.status === 'completed' ? <Button label="View rubric result" small variant="secondary" onPress={() => router.push({ pathname: '/practice/mmi-station' as never, params: { sessionId: item.sessionId, resultOnly: 'true' } })} /> : null}
+      {item.status === 'completed' || (item.status === 'awaiting_scoring' && item.completedAt !== null) ? <Button label={item.status === 'completed' ? 'View rubric result' : 'View available feedback'} small variant="secondary" onPress={() => router.push({ pathname: '/practice/mmi-station' as never, params: { sessionId: item.sessionId, resultOnly: 'true' } })} /> : null}
     </Card>)}
   </ScreenWrapper>;
 }

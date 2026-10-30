@@ -7,8 +7,9 @@ import { previewTabs } from '../../src/navigation/tabConfig';
 function TabIcon({ focused, station, label }: { focused: boolean; station: string; label: string }) {
   return (
     <View style={[styles.tabItem, focused && styles.tabItemActive]}>
-      <Text style={[styles.station, focused && styles.stationActive]}>{station}</Text>
-      <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>{label}</Text>
+      <Text style={[styles.station, focused && styles.stationActive]}>
+        {station}{'\n'}<Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>{label}</Text>
+      </Text>
     </View>
   );
 }
@@ -16,7 +17,9 @@ function TabIcon({ focused, station, label }: { focused: boolean; station: strin
 export default function TabLayout() {
   const { session, profile, loading } = useAuthStore();
 
-  if (loading) {
+  // Keep the selected tab mounted during a refresh of the same restored account.
+  // A new account still waits until its own profile has been loaded.
+  if (loading && (!session || profile?.id !== session.user.id || !profile.onboarding_complete)) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={colors.teal[400]} size="large" />
@@ -37,7 +40,9 @@ export default function TabLayout() {
           height: 72,
           paddingBottom: 6,
         },
-        tabBarShowLabel: false,
+        tabBarShowLabel: true,
+        tabBarIcon: () => null,
+        tabBarIconStyle: { display: 'none' },
       }}
     >
       {previewTabs.map(tab => (
@@ -47,7 +52,7 @@ export default function TabLayout() {
           options={{
             title: tab.label,
             tabBarAccessibilityLabel: `${tab.station} ${tab.label}`,
-            tabBarIcon: ({ focused }) => (
+            tabBarLabel: ({ focused }) => (
               <TabIcon focused={focused} station={tab.station} label={tab.label} />
             ),
           }}
@@ -81,6 +86,7 @@ const styles = StyleSheet.create({
     color: colors.neutral[500],
     fontVariant: ['tabular-nums'],
     lineHeight: 18,
+    textAlign: 'center',
   },
   stationActive: { color: colors.primary[900] },
   tabLabel: {

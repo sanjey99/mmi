@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, KeyboardAvoidingView,
-  Platform, TouchableOpacity,
+  Platform, ScrollView, TouchableOpacity,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -60,6 +60,7 @@ export default function LoginScreen() {
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.kav}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.container}>
           <View style={styles.logoWrap}>
             <Text style={styles.stationNumber}>00</Text>
@@ -87,6 +88,8 @@ export default function LoginScreen() {
             onChangeText={setPassword}
             secureTextEntry
             error={errors.password}
+            returnKeyType="go"
+            onSubmitEditing={() => { if (!loading && captcha.state.canSubmit) void handleLogin(); }}
           />
 
           <AuthCaptcha controller={captcha.controller} action="login" />
@@ -96,6 +99,7 @@ export default function LoginScreen() {
           <Text style={styles.accessNote}>New accounts need email confirmation before sign in.</Text>
           <LegalFooter />
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -109,9 +113,10 @@ const styles = StyleSheet.create({
     height: 1, backgroundColor: colors.primary[800], opacity: 0.04,
   },
   kav: { flex: 1 },
+  scroll: { flexGrow: 1, justifyContent: 'center', paddingVertical: 32 },
   container: {
-    flex: 1, justifyContent: 'center', width: '100%', maxWidth: 520,
-    alignSelf: 'center', paddingHorizontal: 28, paddingBottom: 32,
+    width: '100%', maxWidth: 520,
+    alignSelf: 'center', paddingHorizontal: 28,
   },
   logoWrap: {
     alignItems: 'flex-start', marginBottom: 34,

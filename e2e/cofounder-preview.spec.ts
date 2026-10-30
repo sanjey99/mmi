@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Request } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { scoringAllowanceFixture } from '../tests/fixtures/scoringAllowance';
 
 const userId = '11111111-1111-4111-8111-111111111111';
@@ -567,7 +568,7 @@ test('MMI activity uses server totals and refreshes on focus, request, and profi
   await page.getByRole('button', { name: 'Refresh activity', exact: true }).click();
   await expect(page.getByTestId('mmi-completed-today')).toHaveText('3');
   await expect(page.getByTestId('mmi-completed-total')).toHaveText('39');
-  await page.getByRole('button', { name: 'Open profile', exact: true }).click();
+  await page.getByRole('button', { name: /^profile$/i }).click();
   await expect(page.getByTestId('profile-current-streak')).toHaveText('3');
   await expect(page.getByTestId('profile-longest-streak')).toHaveText('7');
   expect(requests.length).toBeGreaterThanOrEqual(4);
@@ -665,7 +666,7 @@ test('MMI activity cannot publish the previous account request after sign-out an
   });
   await page.goto('/');
   await expect.poll(() => calls).toBeGreaterThanOrEqual(1);
-  await page.getByRole('button', { name: 'Open profile', exact: true }).click();
+  await page.getByRole('button', { name: /^profile$/i }).click();
   await page.getByText('Sign out', { exact: true }).click();
   await page.getByText('Sign out', { exact: true }).last().click();
   await page.getByLabel('Email address').fill(secondUser.email);
@@ -1149,7 +1150,7 @@ test('partner sends feedback, opens the MMI station, and signs out safely', asyn
   await expect(page.getByText('Check your setup', { exact: true })).toBeVisible();
   await page.goto('/');
   await expect(page.getByText('Ready, Partner.')).toBeVisible();
-  await page.getByRole('button', { name: 'Open profile' }).last().click();
+  await page.getByRole('button', { name: /^profile$/i }).last().click();
   await page.getByText('Sign out', { exact: true }).click();
   await page.getByText('Sign out', { exact: true }).last().click();
   await expect(page.getByText('Enter the circuit')).toBeVisible();
@@ -1182,4 +1183,142 @@ test('admin opens the repository and reviews masked partner feedback', async ({ 
   await expect(page.getByText('The station submit state needed a clearer progress indicator.')).toBeVisible();
   await expect(page.getByText('FOLLOW-UP NOT REQUESTED')).toBeVisible();
   await expect(page.getByText(userId)).toHaveCount(0);
+});
+
+test('profile cancel discards the draft and recognizes a lowercase saved target', async ({ page }) => {
+  let profileWrites = 0;
+  await page.route('https://e2e.supabase.co/rest/v1/profiles**', route => {
+    if (route.request().method() === 'PATCH') profileWrites++;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...profile, university_target: 'oxford' }) });
+  });
+  await page.goto('/profile');
+  await page.getByText('Edit', { exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Target university: Oxford', exact: true })).toBeChecked();
+  await page.getByPlaceholder('Your full name', { exact: true }).fill('UNSAVED SYNTHETIC NAME');
+  await page.getByText('Cambridge', { exact: true }).click();
+  await page.getByText('Cancel', { exact: true }).click();
+  await page.getByText('Edit', { exact: true }).click();
+  await expect(page.getByPlaceholder('Your full name', { exact: true })).toHaveValue('Partner Tester');
+  await expect(page.getByRole('radio', { name: 'Target university: Oxford', exact: true })).toBeChecked();
+  await expect(page.getByRole('radio', { name: 'Target university: Cambridge', exact: true })).not.toBeChecked();
+  expect(profileWrites).toBe(0);
+});
+
+test('signed-out profile and station deep links lead to sign in', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const unsigned = await context.newPage();
+  try {
+    await installSupabaseMocks(unsigned);
+    for (const path of ['/profile', '/practice/mmi-station', '/practice/mmi-station?sessionId=not-a-uuid']) {
+      await unsigned.goto(path);
+      await expect(unsigned.getByText('Enter the circuit', { exact: true })).toBeVisible();
+      await expect(unsigned).toHaveURL(/\/login$/);
+      await expect(unsigned.getByRole('button', { name: 'Start station', exact: true })).toHaveCount(0);
+    }
+  } finally { await context.close(); }
+});
+
+test('report confirmation focuses cancel and restores its keyboard launcher', async ({ page }) => {
+  await page.goto('/cofounder-feedback');
+  await page.getByPlaceholder(/What did you try/i).fill('Synthetic keyboard report that will not be sent.');
+  const review = page.getByRole('button', { name: 'Review report', exact: true });
+  await review.focus();
+  await review.press('Enter');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Send report', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(review).toBeFocused();
+  await expect(page.getByPlaceholder(/What did you try/i)).toHaveValue('Synthetic keyboard report that will not be sent.');
+  await page.getByPlaceholder(/What did you try/i).fill('');
+});
+
+test('report navigation asks before discarding and keeps an unsent draft on cancel', async ({ page }) => {
+  await page.goto('/');
+  await page.getByText('SEND FEEDBACK', { exact: true }).click();
+  const message = page.getByPlaceholder(/What did you try/i);
+  await message.fill('Synthetic draft must survive cancelled navigation.');
+  await page.getByRole('button', { name: 'Back to orient', exact: true }).click();
+  await expect(page.getByText('Discard this unsent report?', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(message).toHaveValue('Synthetic draft must survive cancelled navigation.');
+  await page.getByRole('button', { name: 'Back to orient', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard report', exact: true }).click();
+  await expect(page.getByText('Ready, Partner.', { exact: true }).filter({ visible: true })).toBeVisible();
+});
+
+test('pending report submission locks its draft and prevents duplicate sends or navigation', async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let sends = 0;
+  await page.route('https://e2e.supabase.co/rest/v1/rpc/submit_cofounder_feedback', async route => {
+    sends++;
+    await held;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(feedbackId) });
+  });
+  await page.goto('/');
+  await page.getByText('SEND FEEDBACK', { exact: true }).click();
+  const message = page.getByPlaceholder(/What did you try/i);
+  await message.fill('Synthetic draft A must remain locked while sending.');
+  await page.getByRole('button', { name: 'Review report', exact: true }).click();
+  try {
+    await page.getByRole('button', { name: 'Send report', exact: true }).dblclick();
+    await expect.poll(() => sends).toBe(1);
+    await expect(page.getByRole('button', { name: 'Send report', exact: true })).toHaveAttribute('aria-busy', 'true');
+    await expect(page.getByRole('button', { name: 'Send report', exact: true })).toBeDisabled();
+    await expect(message).not.toBeEditable();
+    await expect(page.getByRole('button', { name: 'Back to orient', exact: true })).toBeDisabled();
+    await expect(page.getByRole('checkbox', { name: /Allow a cofounder to follow up/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Bug', exact: true })).toBeDisabled();
+    await expect(message).toHaveValue('Synthetic draft A must remain locked while sending.');
+  } finally { release(); }
+  await expect(page.getByText('Feedback received', { exact: true })).toBeVisible();
+  await expect(message).toBeEditable();
+  await expect(message).toHaveValue('');
+  expect(sends).toBe(1);
+});
+
+test('sign-out confirmation focuses the safe action and cancellation restores focus', async ({ page }) => {
+  await page.goto('/profile');
+  const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
+  await signOut.focus();
+  await signOut.press('Enter');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(signOut).toBeFocused();
+  await expect(page.getByText('Partner Tester', { exact: true })).toBeVisible();
+});
+
+
+for (const size of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  for (const route of [
+    { path: '/', ready: 'Ready, Partner.' },
+    { path: '/practice', ready: 'MMI practice' },
+    { path: '/progress', ready: 'Progress record' },
+    { path: '/profile', ready: 'Partner Tester' },
+    { path: '/cofounder-feedback', ready: 'Tell us what happened' },
+  ]) {
+    test(`signed-in accessibility ${route.path} at ${size.width}px`, async ({ page }) => {
+      await page.setViewportSize(size);
+      await page.goto(route.path);
+      await expect(page.getByText(route.ready, { exact: true }).filter({ visible: true })).toBeVisible();
+      const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+      expect(result.passes.length).toBeGreaterThan(0);
+      expect(result.violations.map(v => ({ id: v.id, impact: v.impact, targets: v.nodes.map(n => n.target) })) ).toEqual([]);
+    });
+  }
+}
+
+test('browser Back keeps an unsent report until discard is confirmed', async ({ page }) => {
+  await page.goto('/');
+  await page.getByText('SEND FEEDBACK', { exact: true }).click();
+  await page.getByPlaceholder(/What did you try/i).fill('Synthetic draft retained across browser Back.');
+  await page.goBack();
+  await expect(page.getByText('Discard this unsent report?', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page.getByPlaceholder(/What did you try/i)).toHaveValue('Synthetic draft retained across browser Back.');
+  await page.getByRole('button', { name: 'Back to orient', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard report', exact: true }).click();
+  await expect(page.getByText('Ready, Partner.', { exact: true }).filter({ visible: true })).toBeVisible();
 });
