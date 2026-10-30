@@ -47,9 +47,8 @@ export default function HomeScreen() {
           onPress={() => router.push('/profile')}
           style={styles.profilePlate}
           accessibilityRole="button"
-          accessibilityLabel="Open profile"
         >
-          <Text style={styles.profileInitials}>{initials}</Text>
+          <Text style={styles.profileInitials} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{initials}</Text>
           <Text style={styles.profileLabel}>PROFILE</Text>
         </TouchableOpacity>
       </View>

@@ -1,8 +1,10 @@
 import { Redirect, router } from 'expo-router';
+import { useNavigation, usePreventRemove, type NavigationAction } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ScrollView,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -57,16 +59,33 @@ export default function CofounderFeedbackScreen() {
   const [allowReply, setAllowReply] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
+  const sending = useRef(false);
+  const navigation = useNavigation();
+  const [discardAction, setDiscardAction] = useState<NavigationAction | null>(null);
   const [notice, setNotice] = useState<{
     title: string;
     message: string;
     tone: 'success' | 'error';
   } | null>(null);
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
+  const hasDraft = message.length > 0 || allowReply;
+  const locked = saving || confirming || discardAction !== null;
+  usePreventRemove(!!session && (hasDraft || saving), ({ data }) => {
+    if (saving || sending.current) return;
+    setConfirming(false);
+    setDiscardAction(data.action);
+  });
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || (!hasDraft && !saving)) return;
+    const protectDraft = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', protectDraft);
+    return () => window.removeEventListener('beforeunload', protectDraft);
+  }, [hasDraft, saving]);
 
   if (!session) return <Redirect href="/(auth)/login" />;
 
   const prepareSubmission = () => {
+    if (locked || sending.current) return;
     if (message.trim().length < 10 || message.trim().length > 2000) {
       setNotice({
         title: 'Add more detail',
@@ -80,6 +99,8 @@ export default function CofounderFeedbackScreen() {
   };
 
   const submit = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setSaving(true);
     try {
       await sendCofounderFeedback({
@@ -106,6 +127,7 @@ export default function CofounderFeedbackScreen() {
         tone: 'error',
       });
     } finally {
+      sending.current = false;
       setSaving(false);
     }
   };
@@ -115,7 +137,9 @@ export default function CofounderFeedbackScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => navigateBackOr(router, '/(tabs)')}
+          disabled={saving}
           accessibilityRole="button"
+          accessibilityState={{ disabled: saving }}
         >
           <Text style={styles.backText}>Back to orient</Text>
         </TouchableOpacity>
@@ -138,6 +162,17 @@ export default function CofounderFeedbackScreen() {
         </View>
 
         {notice ? <InlineNotice {...notice} /> : null}
+        {discardAction ? (
+          <ConfirmAction
+            title="Discard this unsent report?"
+            message="Your draft has not been sent. Stay here to keep editing, or discard it and leave."
+            confirmLabel="Discard report"
+            cancelLabel="Keep editing"
+            destructive
+            onConfirm={() => navigation.dispatch(discardAction)}
+            onCancel={() => setDiscardAction(null)}
+          />
+        ) : null}
         {confirming ? (
           <ConfirmAction
             title="Send this report?"
@@ -157,8 +192,11 @@ export default function CofounderFeedbackScreen() {
               <TouchableOpacity
                 key={option.value}
                 onPress={() => setCategory(option.value)}
+                disabled={locked}
+                accessibilityRole="button"
+                {...(Platform.OS === 'web' ? { 'aria-pressed': category === option.value } : {})}
                 style={[styles.option, category === option.value && styles.optionActive]}
-                accessibilityState={{ selected: category === option.value }}
+                accessibilityState={{ selected: category === option.value, disabled: locked }}
               >
                 <Text style={styles.optionText}>{option.label}</Text>
               </TouchableOpacity>
@@ -171,8 +209,11 @@ export default function CofounderFeedbackScreen() {
               <TouchableOpacity
                 key={option.value}
                 onPress={() => setSeverity(option.value)}
+                disabled={locked}
+                accessibilityRole="button"
+                {...(Platform.OS === 'web' ? { 'aria-pressed': severity === option.value } : {})}
                 style={[styles.option, severity === option.value && styles.optionActive]}
-                accessibilityState={{ selected: severity === option.value }}
+                accessibilityState={{ selected: severity === option.value, disabled: locked }}
               >
                 <Text style={styles.optionText}>{option.label}</Text>
               </TouchableOpacity>
@@ -185,8 +226,11 @@ export default function CofounderFeedbackScreen() {
               <TouchableOpacity
                 key={option.value}
                 onPress={() => setScreen(option.value)}
+                disabled={locked}
+                accessibilityRole="button"
+                {...(Platform.OS === 'web' ? { 'aria-pressed': screen === option.value } : {})}
                 style={[styles.option, screen === option.value && styles.optionActive]}
-                accessibilityState={{ selected: screen === option.value }}
+                accessibilityState={{ selected: screen === option.value, disabled: locked }}
               >
                 <Text style={styles.optionText}>{option.label}</Text>
               </TouchableOpacity>
@@ -197,6 +241,7 @@ export default function CofounderFeedbackScreen() {
           <Text style={styles.fieldLabel}>WHAT HAPPENED?</Text>
           <TextInput
             value={message}
+            editable={!locked}
             onChangeText={setMessage}
             multiline
             maxLength={2000}
@@ -208,9 +253,11 @@ export default function CofounderFeedbackScreen() {
 
           <TouchableOpacity
             onPress={() => setAllowReply(current => !current)}
+            disabled={locked}
             style={styles.replyRow}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: allowReply }}
+            aria-checked={allowReply}
+            accessibilityState={{ checked: allowReply, disabled: locked }}
           >
             <View style={[styles.checkbox, allowReply && styles.checkboxChecked]}>
               <Text style={styles.checkmark}>{allowReply ? 'YES' : ''}</Text>
@@ -224,7 +271,7 @@ export default function CofounderFeedbackScreen() {
           <Button
             label="Review report"
             onPress={prepareSubmission}
-            disabled={saving}
+            disabled={saving || discardAction !== null}
           />
         </View>
       </ScrollView>

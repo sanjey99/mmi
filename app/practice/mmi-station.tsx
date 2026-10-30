@@ -218,6 +218,9 @@ export default function CandidateMmiStationScreen() {
   const sessionId = typeof routeSessionId === 'string' ? routeSessionId : '';
   const scope = routeScope === 'target' ? 'target' : 'all';
   const resultOnly = routeResultOnly === 'true';
+  const invalidRouteLink = (routeSessionId !== undefined && !UUID_PATTERN.test(sessionId))
+    || (routeResultOnly !== undefined && routeResultOnly !== 'true' && routeResultOnly !== 'false')
+    || (resultOnly && !sessionId);
   const apiRef = useRef<CandidateApi | null>(null);
   const runnerRef = useRef<CandidateRunner | null>(null);
   const scoringRef = useRef<CandidateScoringApi | null>(null);
@@ -236,6 +239,8 @@ export default function CandidateMmiStationScreen() {
   const checkpointQueuedRef = useRef(false);
   const volatileFinalizationKeysRef = useRef(new Map<string, string>());
   const completedScoringSessionRef = useRef<string | null>(null);
+  const retainedResultGenerationRef = useRef(0);
+  const retainedScoringGenerationRef = useRef<number | null>(null);
   const [projection, setProjection] = useState<CandidateMmiServerProjection | null>(null);
   const [retainedResult, setRetainedResult] = useState<CandidateMmiStationResult | null>(null);
   const [transcript, setTranscript] = useState<CandidateMmiTranscriptState | null>(null);
@@ -249,6 +254,7 @@ export default function CandidateMmiStationScreen() {
   const [starting, setStarting] = useState(false);
   const [tick, setTick] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [restorationRevision, setRestorationRevision] = useState(0);
   const [advanceFailed, setAdvanceFailed] = useState(false);
   const [responseAction, setResponseAction] = useState<'submit' | 'skip' | 'timer' | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -393,20 +399,68 @@ export default function CandidateMmiStationScreen() {
   }, [dispatchTranscript, runner]);
 
   useEffect(() => {
-    if (!resultOnly || !sessionId) return;
+    if (!resultOnly || invalidRouteLink) return;
     let active = true;
+    const generation = ++retainedResultGenerationRef.current;
+    retainedScoringGenerationRef.current = null;
+    setErrorMessage(null);
+    setRetainedResult(null);
+    setScoringInProgress(false);
+    setScoringFailureMessage(null);
     void api().result(sessionId).then((next) => {
       if (active) setRetainedResult(next);
     }).catch(() => {
       if (active) setErrorMessage('The saved MMI result is unavailable.');
     });
-    return () => { active = false; };
-  }, [api, resultOnly, sessionId]);
+    return () => {
+      active = false;
+      if (retainedResultGenerationRef.current === generation) retainedResultGenerationRef.current += 1;
+    };
+  }, [api, invalidRouteLink, resultOnly, sessionId, restorationRevision]);
+
+  const retryRetainedScoring = useCallback(async () => {
+    if (!resultOnly || retainedResult?.sessionId !== sessionId || retainedScoringGenerationRef.current !== null) return;
+    const generation = retainedResultGenerationRef.current;
+    const isCurrent = () => retainedResultGenerationRef.current === generation;
+    retainedScoringGenerationRef.current = generation;
+    setScoringInProgress(true);
+    setScoringFailureMessage(null);
+    const refreshResult = async () => {
+      const next = await api().result(sessionId);
+      if (isCurrent()) setRetainedResult(next);
+      return next;
+    };
+    try {
+      // Saved-result reads are free. Reread before explicit retry so completed,
+      // expired and already active responses are never added to the retry queue.
+      const latest = await refreshResult();
+      if (!isCurrent()) return;
+      const promptOrders = retryablePromptOrders(latest.feedback);
+      if (promptOrders.length === 0) return;
+      const outcomes = await scoreCandidateMmiResponses(
+        promptOrders,
+        (promptOrder) => {
+          if (!isCurrent()) return Promise.reject(new Error('Result screen was closed.'));
+          return scoringApi().scoreCandidateResponse(sessionId, promptOrder);
+        },
+        { onSettled: async () => { if (isCurrent()) await refreshResult(); } },
+      );
+      if (!isCurrent()) return;
+      setScoringFailureMessage(candidateMmiScoringFailureMessage(outcomes));
+      await refreshResult();
+    } catch {
+      if (isCurrent()) setScoringFailureMessage('Your saved feedback could not be updated. Try again.');
+    } finally {
+      if (retainedScoringGenerationRef.current === generation) retainedScoringGenerationRef.current = null;
+      if (isCurrent()) setScoringInProgress(false);
+    }
+  }, [api, resultOnly, retainedResult, scoringApi, sessionId]);
 
   useEffect(() => {
-    if (resultOnly) return;
-    if (!sessionId || openedSessionRef.current === sessionId) return;
+    if (resultOnly || invalidRouteLink) return;
+    if (!UUID_PATTERN.test(sessionId) || openedSessionRef.current === sessionId) return;
     let active = true;
+    setErrorMessage(null);
     openedSessionRef.current = sessionId;
     void runner().restore(sessionId)
       .then((nextProjection) => {
@@ -418,7 +472,7 @@ export default function CandidateMmiStationScreen() {
         setErrorMessage('The MMI station is unavailable. Return to practice and try again.');
       });
     return () => { active = false; };
-  }, [acceptProjection, resultOnly, runner, sessionId]);
+  }, [acceptProjection, invalidRouteLink, resultOnly, runner, sessionId, restorationRevision]);
 
   useEffect(() => {
     if (projection?.phaseEndsAt === null || projection === null) return;
@@ -555,7 +609,7 @@ export default function CandidateMmiStationScreen() {
     advanceExpiredPhase();
   }, [advanceExpiredPhase, projection, remaining]);
 
-  const completedSessionId = !resultOnly && projection?.phase === 'completed' ? projection.sessionId : null;
+  const completedSessionId = !invalidRouteLink && !resultOnly && projection?.phase === 'completed' ? projection.sessionId : null;
 
   const scoreCompletedStation = useCallback(async (completedId: string) => {
     if (completedScoringSessionRef.current === completedId) return;
@@ -683,21 +737,29 @@ export default function CandidateMmiStationScreen() {
     }
   };
 
-  if (resultOnly && retainedResult !== null) {
+  if (!invalidRouteLink && resultOnly && retainedResult?.sessionId === sessionId) {
+    const retryAvailable = retryablePromptOrders(retainedResult.feedback).length > 0;
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.eyebrow}>SAVED MMI RESULT</Text>
           <Text style={styles.title}>Station result</Text>
           <Text style={styles.status}>{retainedResult.overallPct === null ? 'Rubric scoring is not complete.' : `Overall station score · ${retainedResult.overallPct}%`}</Text>
-          {retainedResult.feedback.map((item) => <FeedbackCard key={item.promptOrder} item={item} />)}
+          {retainedResult.feedback.map((item) => <FeedbackCard key={item.promptOrder} item={item} scoringInProgress={scoringInProgress} retryAvailable={retryAvailable} />)}
+          {scoringInProgress ? <InlineNotice title="AI evaluation in progress" message="Your unscored answers are being evaluated." tone="info" /> : null}
+          {scoringFailureMessage ? <InlineNotice title="AI scoring could not complete" message={scoringFailureMessage} tone="error" /> : null}
+          {retainedResult.status === 'awaiting_scoring' ? <Button label="Refresh feedback" disabled={scoringInProgress} onPress={() => setRestorationRevision(value => value + 1)} variant="secondary" labelStyle={styles.actionLabel} /> : null}
+          {retryAvailable ? <>
+            <Text style={styles.status}>Only unscored answers will be retried. Retrying uses your remaining daily AI allowance.</Text>
+            <Button label="Retry AI scoring" disabled={scoringInProgress} onPress={() => void retryRetainedScoring()} variant="secondary" labelStyle={styles.actionLabel} />
+          </> : null}
           <Button label="Return to progress" onPress={() => router.replace('/(tabs)/progress')} labelStyle={styles.actionLabel} />
         </ScrollView>
       </SafeAreaView>
     );
   }
 
-  if (projection === null && !sessionId && !resultOnly) {
+  if (projection === null && routeSessionId === undefined && !resultOnly && !invalidRouteLink) {
     const supported = speechPort().getCapability().supported;
     return (
       <SafeAreaView style={styles.safe}>
@@ -745,12 +807,17 @@ export default function CandidateMmiStationScreen() {
     );
   }
 
-  if (projection === null) {
+  if (projection === null || invalidRouteLink) {
+    const restorationError = invalidRouteLink
+      ? 'This station link is incomplete or invalid. Return and open the station again.'
+      : errorMessage;
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.centered}>
-          <Text style={styles.title}>Restoring MMI station</Text>
-          {errorMessage ? <InlineNotice title="Station unavailable" message={errorMessage} tone="error" /> : null}
+          <Text style={styles.title}>{restorationError ? 'Station unavailable' : resultOnly ? 'Loading saved MMI result' : 'Restoring MMI station'}</Text>
+          {restorationError ? <InlineNotice title="Station unavailable" message={restorationError} tone="error" /> : null}
+          {restorationError && !invalidRouteLink ? <Button label={resultOnly ? 'Retry loading result' : 'Retry restoring station'} onPress={() => setRestorationRevision(value => value + 1)} variant="secondary" labelStyle={styles.actionLabel} /> : null}
+          <Button label={resultOnly ? 'Return to progress' : 'Return to practice'} onPress={() => router.replace(resultOnly ? '/(tabs)/progress' : '/(tabs)/practice')} labelStyle={styles.actionLabel} />
         </View>
       </SafeAreaView>
     );

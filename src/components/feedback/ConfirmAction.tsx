@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../ui/Button';
 import { colors, text } from '../../theme';
 
@@ -24,8 +24,24 @@ export function ConfirmAction({
   onConfirm,
   onCancel,
 }: ConfirmActionProps) {
+  const panel = useRef<View>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const element = panel.current as unknown as HTMLElement | null;
+    if (!element) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => element.querySelector<HTMLElement>('[role="button"]')?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      // Inline confirmations do not trap focus. Restore their launcher only
+      // when it still belongs to the visible screen after cancellation/result.
+      requestAnimationFrame(() => {
+        if (previous?.isConnected && previous.getClientRects().length > 0 && previous.getAttribute('aria-disabled') !== 'true') previous.focus();
+      });
+    };
+  }, []);
   return (
-    <View accessibilityRole="alert" style={styles.panel}>
+    <View ref={panel} accessibilityRole="alert" style={styles.panel}>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>{message}</Text>
       <View style={styles.actions}>
